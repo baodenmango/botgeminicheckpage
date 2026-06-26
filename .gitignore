@@ -1,0 +1,17 @@
+# KHÓA BÍ MẬT — TUYỆT ĐỐI KHÔNG commit
+.env
+.env.*
+!.env.example
+
+# Phụ thuộc & build
+node_modules/
+
+# Database state (giữ trên persistent disk của Render, không đẩy git)
+*.sqlite
+*.sqlite-*
+data/
+
+# Hệ thống
+.DS_Store
+npm-debug.log*
+*.log
