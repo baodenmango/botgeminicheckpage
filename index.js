@@ -23,47 +23,65 @@ app.get('/', (_req, res) => res.status(200).send('Bot Gemini Hiệp Lợi đang 
  * Payload Pancake có nhiều biến thể → cố gắng đọc linh hoạt nhiều khóa.
  * Trả về null nếu không phải tin của KHÁCH (vd page/bot tự gửi) → bỏ qua tránh loop.
  */
+// Bỏ thẻ HTML + giải mã entity cơ bản (Pancake gửi message bọc <div>...</div>).
+function stripHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .trim();
+}
+
+/**
+ * Trích thông tin tin nhắn từ payload webhook Pancake (messaging event).
+ * Cấu trúc THẬT (đã xác minh qua log): { data: { conversation: {...}, message: {...} } }
+ *  - data.message.conversation_id / data.conversation.id  → conversation_id
+ *  - data.message.page_id                                  → page_id
+ *  - data.message.message                                  → nội dung (bọc <div>)
+ *  - data.message.from.id / .name                          → người gửi (khách hay page)
+ * Trả về null nếu tin do PAGE/bot gửi (from.id === page_id) → tránh loop.
+ */
 function parsePancakeWebhook(body) {
   if (!body || typeof body !== 'object') return null;
 
-  // Một số webhook bọc trong { event, data } hoặc gửi thẳng object hội thoại.
-  // CHỈ lấy nhánh lồng khi nó là object (tránh nhầm 'message' dạng chuỗi nội dung).
-  const isObj = (x) => x && typeof x === 'object';
-  const d = isObj(body.data) ? body.data
-    : isObj(body.conversation) ? body.conversation
-    : isObj(body.message) ? body.message
-    : body;
+  const data = (body.data && typeof body.data === 'object') ? body.data : body;
+  const msg = (data.message && typeof data.message === 'object') ? data.message : data;
+  const conv = (data.conversation && typeof data.conversation === 'object') ? data.conversation : {};
 
   const pageId =
-    d.page_id || d.pageId || body.page_id || d.page?.id || null;
+    msg.page_id || data.page_id || body.page_id || null;
   const conversationId =
-    d.conversation_id || d.conversationId || d.thread_id || d.id || null;
-  const customerId =
-    d.customer_id || d.from?.id || d.sender?.id || d.customer?.id || null;
-  const customerName =
-    d.customer_name || d.from?.name || d.sender?.name || d.customer?.name || null;
+    msg.conversation_id || conv.id || data.conversation_id || null;
 
-  // Nội dung tin: thử nhiều khóa thường gặp.
-  const messageText =
-    d.message || d.text || d.content || d.snippet ||
-    (Array.isArray(d.messages) ? d.messages[d.messages.length - 1]?.message : null) ||
-    null;
+  const fromObj = msg.from || conv.from || {};
+  const senderId = fromObj.id || null;
+  const customerName = fromObj.name || conv.customer_name || null;
 
-  // Loại tin do CHÍNH PAGE/BOT gửi (tránh vòng lặp tự trả lời).
-  // Pancake thường đánh dấu: is_from_page / from_page / type 'page' hoặc sender == page_id.
-  const fromPage =
-    d.is_from_page === true || d.from_page === true ||
-    d.sender_type === 'page' || d.type === 'page_message' ||
-    (customerId && pageId && String(customerId) === String(pageId));
-  if (fromPage) return null;
+  // Nội dung: data.message.message (bọc HTML) — strip ra text sạch.
+  const rawText =
+    (typeof msg.message === 'string' ? msg.message : null) ||
+    msg.text || conv.snippet || null;
+  const messageText = stripHtml(rawText);
+
+  // BỎ QUA tin do chính PAGE/bot gửi (tránh loop): người gửi = page_id.
+  if (senderId && pageId && String(senderId) === String(pageId)) return null;
+  // BỎ QUA tin do AI/hệ thống sinh (vd Meta Agent transfer notice).
+  if (fromObj.ai_generated === true) return null;
 
   if (!conversationId || !pageId || !messageText) return null;
   return {
     pageId: String(pageId),
     conversationId: String(conversationId),
-    customerId: customerId ? String(customerId) : null,
+    customerId: senderId ? String(senderId) : null,
     customerName,
-    messageText: String(messageText),
+    messageText,
   };
 }
 
