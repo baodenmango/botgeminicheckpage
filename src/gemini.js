@@ -51,9 +51,10 @@ function sanitize(obj) {
  * @param {Array<{role:'user'|'model', text:string}>} history - lịch sử hội thoại
  * @param {'reply'|'retouch'} mode
  * @param {string} customerName - tên Facebook của khách (để đoán xưng hô)
+ * @param {string} gender - giới tính từ Pancake ('male'|'female'|null) — chính xác hơn đoán
  * @returns {Promise<object>} object theo định dạng brief
  */
-export async function generateReply(history, mode = 'reply', customerName = null) {
+export async function generateReply(history, mode = 'reply', customerName = null, gender = null) {
   try {
     // Build contents từ history (Gemini dùng role 'user'/'model')
     const contents = history.map((h) => ({
@@ -61,11 +62,14 @@ export async function generateReply(history, mode = 'reply', customerName = null
       parts: [{ text: h.text }],
     }));
 
-    // Chèn TÊN khách (từ Facebook) làm context đầu để bộ não đoán cách xưng hô.
-    if (customerName) {
+    // Chèn TÊN + GIỚI TÍNH khách làm context đầu để bộ não xưng hô chuẩn.
+    if (customerName || gender) {
+      const gt = gender === 'male' ? 'NAM (gọi anh/chú/bác)'
+        : gender === 'female' ? 'NỮ (gọi chị/cô/bác)'
+        : 'chưa rõ (đoán từ tên, không chắc thì anh/chị)';
       contents.unshift({
         role: 'user',
-        parts: [{ text: `[HỆ THỐNG] Tên Facebook của khách: "${customerName}". Hãy dựa vào tên + cách khách xưng hô để gọi tên riêng tự nhiên (xem mục xưng hô trong system prompt).` }],
+        parts: [{ text: `[HỆ THỐNG] Tên Facebook khách: "${customerName || '(ẩn)'}". Giới tính: ${gt}. Hãy gọi tên riêng + đúng giới tính/vai vế cho tự nhiên (xem mục xưng hô trong system prompt). KHÔNG bao giờ chỉ gọi trống tên (vd "Bình") — phải kèm anh/chị/cô/chú.` }],
       });
     }
 
@@ -74,6 +78,15 @@ export async function generateReply(history, mode = 'reply', customerName = null
       contents.push({
         role: 'user',
         parts: [{ text: 'MODE: RETOUCH — khách im lâu chưa cho SĐT, hãy nhắn lại nhẹ nhàng 1–2 tin.' }],
+      });
+    }
+
+    // mode recover: VỚT LEAD bị bỏ rơi — đọc lại đúng câu khách hỏi/băn khoăn còn dang dở,
+    // trả lời thẳng cái đó, rồi LÌ ĐÒN xin SĐT có duyên (bắt buộc kết bằng xin số).
+    if (mode === 'recover') {
+      contents.push({
+        role: 'user',
+        parts: [{ text: 'MODE: RECOVER — Đây là khách quan tâm nhưng hội thoại bị bỏ lửng, CHƯA lấy được SĐT. Hãy: (1) đọc lại đúng điều khách hỏi/băn khoăn gần nhất và trả lời thẳng cho thỏa đáng; (2) khơi lại nỗi đau/mong muốn của họ ngắn gọn; (3) BẮT BUỘC kết thúc bằng câu xin số điện thoại có lý do thuyết phục (Bác sĩ gọi tư vấn miễn phí / giữ suất / báo chi phí cụ thể). Lì đòn nhưng lịch sự, KHÔNG ép lộ liễu, KHÔNG spam. Nếu khách đã từ chối thẳng ("không có nhu cầu") thì lùi nhẹ, để lại thiện cảm, vẫn mở đường để lại số khi cần.' }],
       });
     }
 
