@@ -19,25 +19,39 @@ function pancakeLink(pageId, conversationId) {
   return `https://pages.fm/${pageId}/inbox/${conversationId}`;
 }
 
-async function send(text) {
+async function send(text, replyMarkup) {
   if (!config.telegram.botToken || !config.telegram.chatId) {
     console.warn('[telegram] thiếu token/chat_id → bỏ qua thông báo');
     return;
   }
   try {
+    const payload = {
+      chat_id: config.telegram.chatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    };
+    if (replyMarkup) payload.reply_markup = replyMarkup;
     await axios.post(
       `https://api.telegram.org/bot${config.telegram.botToken}/sendMessage`,
-      {
-        chat_id: config.telegram.chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      },
+      payload,
       { timeout: 15000 }
     );
   } catch (err) {
     console.error('[telegram] gửi lỗi:', err?.response?.data || err.message);
   }
+}
+
+// Nút để telesale xác nhận đã gọi lead. callback_data: bk:<sdt>:<action>
+// (listener booking-listener.js xử lý — ghi ai gọi, lúc nào, sửa thẻ).
+function nutDaGoi(phone) {
+  const ph = String(phone || '').replace(/[^0-9]/g, '').slice(0, 15);
+  if (!ph) return undefined;
+  return { inline_keyboard: [[
+    { text: '✅ Đã gọi', callback_data: `bk:${ph}:daGoi` },
+    { text: '⏳ Gọi lại', callback_data: `bk:${ph}:goiLai` },
+    { text: '❌ Ko nghe', callback_data: `bk:${ph}:khongNghe` },
+  ]] };
 }
 
 // Báo có LEAD mới (đã cho SĐT).
@@ -66,7 +80,7 @@ export async function notifyLead({ name, phone, condition, summary, customerType
   if (kieu) text += `🧭 Kiểu khách: ${kieu}\n`;
   if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
   text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
-  await send(text);
+  await send(text, nutDaGoi(phone));   // giữ NGUYÊN nội dung, chỉ thêm nút telesale bấm
 }
 
 // Báo cần CHUYỂN NGƯỜI (khiếu nại / hỏi sâu chuyên môn).
