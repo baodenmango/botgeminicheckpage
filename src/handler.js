@@ -107,9 +107,13 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     store.setCondition(conversationId, reply.condition);
   }
 
-  // Lấy condition ĐÃ NHỚ trong DB (gối/vai/lưng...) thay vì chỉ của lượt cuối.
-  const knownCondition =
-    (store.getConversation(conversationId)?.condition) || reply.condition || 'unknown';
+  // Lưu summary (tóm tắt bệnh/thông tin giá trị) khi Gemini có sinh ra.
+  if (reply.summary) store.setSummary(conversationId, reply.summary);
+
+  // Lấy condition + summary ĐÃ NHỚ trong DB (qua nhiều lượt) thay vì chỉ lượt cuối.
+  const freshConv = store.getConversation(conversationId);
+  const knownCondition = freshConv?.condition || reply.condition || 'unknown';
+  const knownSummary = freshConv?.summary || reply.summary || null;
 
   // ĐẢM BẢO gửi link sale page đúng bệnh (nếu Gemini quên chèn).
   let outMessages = ensureSalePageLink(reply.messages, knownCondition, conv);
@@ -135,6 +139,8 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       name: reply.name || customerName,
       phone,
       condition: knownCondition,
+      summary: knownSummary,
+      customerType: reply.customer_type,
       pageId,
       conversationId,
     });
@@ -149,6 +155,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       name: reply.name || customerName,
       reason: reply.handover_reason,
       condition: knownCondition,
+      summary: knownSummary,
       pageId,
       conversationId,
     });

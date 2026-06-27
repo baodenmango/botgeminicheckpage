@@ -41,25 +41,43 @@ async function send(text) {
 }
 
 // Báo có LEAD mới (đã cho SĐT).
-export async function notifyLead({ name, phone, condition, pageId, conversationId }) {
+// Nhãn kiểu khách (tâm lý) cho telesale biết cách tiếp cận.
+const CUSTOMER_TYPE_VI = {
+  dau_kho_lau_nam: 'Đau khổ lâu năm (cần đồng cảm + hy vọng)',
+  lo_so: 'Lo sợ/hoang mang (cần trấn an)',
+  tinh_toan: 'Tính toán/quan tâm giá (nhấn giá trị + ưu đãi)',
+  phan_van: 'Phân vân (hạ rào cản, chốt nhẹ)',
+  nguoi_nha: 'Người nhà hỏi giúp (khơi tình thương)',
+  chua_ro: '',
+};
+
+function escapeHtml(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export async function notifyLead({ name, phone, condition, summary, customerType, pageId, conversationId }) {
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
-  const text =
+  const kieu = CUSTOMER_TYPE_VI[customerType] || '';
+  let text =
     `🔥 <b>LEAD MỚI có SĐT</b>\n` +
-    `👤 Tên: ${name || '(chưa rõ)'}\n` +
-    `📞 SĐT: <b>${phone || '(?)'}</b>\n` +
-    `🩺 Bệnh: ${benh}\n` +
-    `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
+    `👤 Tên: ${escapeHtml(name) || '(chưa rõ)'}\n` +
+    `📞 SĐT: <b>${escapeHtml(phone) || '(?)'}</b>\n` +
+    `🩺 Bệnh: ${benh}\n`;
+  if (kieu) text += `🧭 Kiểu khách: ${kieu}\n`;
+  if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
   await send(text);
 }
 
 // Báo cần CHUYỂN NGƯỜI (khiếu nại / hỏi sâu chuyên môn).
-export async function notifyHandover({ name, reason, condition, pageId, conversationId }) {
+export async function notifyHandover({ name, reason, condition, summary, pageId, conversationId }) {
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
-  const text =
+  let text =
     `⚠️ <b>CẦN NGƯỜI XỬ LÝ</b>\n` +
-    `👤 Tên: ${name || '(chưa rõ)'}\n` +
-    `📝 Lý do: ${reason || 'khách cần gặp người'}\n` +
-    `🩺 Bệnh: ${benh}\n` +
-    `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
+    `👤 Tên: ${escapeHtml(name) || '(chưa rõ)'}\n` +
+    `📝 Lý do: ${escapeHtml(reason) || 'khách cần gặp người'}\n` +
+    `🩺 Bệnh: ${benh}\n`;
+  if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
   await send(text);
 }

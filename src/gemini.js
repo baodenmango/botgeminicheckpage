@@ -24,6 +24,8 @@ const FALLBACK = {
   phone: null,
   phone_captured: false,
   condition: 'unknown',
+  customer_type: 'chua_ro',
+  summary: null,
   handover: false,
   handover_reason: null,
 };

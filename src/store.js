@@ -24,18 +24,22 @@ db.exec(`
     last_customer_msg_at INTEGER,                   -- epoch giây
     retouch_count        INTEGER DEFAULT 0,
     sale_link_sent       INTEGER DEFAULT 0,          -- đã gửi link sale page chưa
+    summary              TEXT,                        -- tóm tắt bệnh/thông tin giá trị
     created_at           INTEGER
   );
 `);
 
-// Migration: thêm cột sale_link_sent cho DB cũ (trên persistent disk) nếu thiếu.
+// Migration: thêm cột mới cho DB cũ (trên persistent disk) nếu thiếu.
 try {
   const cols = db.prepare("PRAGMA table_info(conversations)").all().map((c) => c.name);
   if (!cols.includes('sale_link_sent')) {
     db.exec('ALTER TABLE conversations ADD COLUMN sale_link_sent INTEGER DEFAULT 0');
   }
+  if (!cols.includes('summary')) {
+    db.exec('ALTER TABLE conversations ADD COLUMN summary TEXT');
+  }
 } catch (e) {
-  console.warn('[store] migration sale_link_sent:', e?.message || e);
+  console.warn('[store] migration:', e?.message || e);
 }
 
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -97,6 +101,12 @@ export function setCondition(conversationId, condition) {
 export function markSaleLinkSent(conversationId) {
   db.prepare('UPDATE conversations SET sale_link_sent = 1 WHERE conversation_id = ?')
     .run(String(conversationId));
+}
+
+export function setSummary(conversationId, summary) {
+  if (!summary) return;
+  db.prepare('UPDATE conversations SET summary = ? WHERE conversation_id = ?')
+    .run(String(summary).slice(0, 600), String(conversationId));
 }
 
 export function incRetouch(conversationId) {
