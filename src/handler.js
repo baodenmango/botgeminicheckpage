@@ -3,7 +3,7 @@ import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled } from './pancake.js';
 import * as store from './store.js';
 import { extractPhone } from './utils.js';
-import { notifyLead, notifyHandover } from './telegram.js';
+import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
 const locks = new Set();
@@ -53,10 +53,23 @@ export async function handleIncoming(ev) {
   try {
     const conv = store.ensureConversation(conversationId, pageId, customerName);
 
-    // CHỈ handover thật (khiếu nại/đòi gặp người) → bot im, người thật xử.
+    // CHỈ handover thật (khiếu nại/đòi gặp người) → bot KHÔNG tự trả lời.
+    // NHƯNG nếu khách vẫn nhắn tiếp → NHẮC người thật qua Telegram (đừng bỏ quên khách),
+    // gắn cờ KHẨN nếu có dấu hiệu y tế nguy hiểm.
     if (store.isHandover(conv)) {
-      console.log(`[handler] ${conversationId} đã handover (người thật xử) → bot im`);
-      return;
+      const urgent = isUrgent(messageText);
+      console.log(`[handler] ${conversationId} handover + khách nhắn tiếp${urgent ? ' (KHẨN)' : ''} → nhắc người thật`);
+      store.appendHistory(conversationId, 'user', messageText);
+      try {
+        await notifyHandoverNudge({
+          name: customerName || conv.customer_name,
+          messageText,
+          urgent,
+          pageId,
+          conversationId,
+        });
+      } catch (e) { console.error('[handler] nudge lỗi:', e?.message); }
+      return; // vẫn KHÔNG để bot tự trả lời ca handover
     }
 
     // Lưu tin khách + cập nhật mốc thời gian (cho retouch).

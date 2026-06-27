@@ -81,3 +81,23 @@ export async function notifyHandover({ name, reason, condition, summary, pageId,
   text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
   await send(text);
 }
+
+// Từ khóa CẢNH BÁO Y TẾ KHẨN — bot không tự xử, báo người gọi gấp.
+const URGENT_RE = /không đi tiểu|bí tiểu|tê liệt|liệt|không cử động|yếu (hai|2) chân|ngất|khó thở|đau dữ dội|đau quá|cấp cứu|tê cả|mất cảm giác|sốt cao|co giật/i;
+
+export function isUrgent(text) {
+  return URGENT_RE.test(text || '');
+}
+
+// Khách ĐÃ handover (người thật đang xử) NHƯNG vẫn nhắn tiếp → nhắc người thật,
+// gắn cờ KHẨN nếu có dấu hiệu y tế nguy hiểm. KHÔNG để bot im rồi bỏ quên khách.
+export async function notifyHandoverNudge({ name, messageText, urgent, pageId, conversationId }) {
+  const head = urgent ? '🚨 <b>KHẨN — KHÁCH ĐANG NHẮN TIẾP</b> 🚨' : '🔔 <b>Khách (đã giao người) nhắn tiếp</b>';
+  let text =
+    `${head}\n` +
+    `👤 ${escapeHtml(name) || '(chưa rõ)'}\n` +
+    `💬 Khách vừa nhắn: "${escapeHtml((messageText || '').slice(0, 120))}"\n`;
+  if (urgent) text += `❗️ Có dấu hiệu y tế cần xử lý GẤP — gọi khách ngay, khuyên tới cơ sở y tế nếu nặng.\n`;
+  text += `➡️ ${pancakeLink(pageId, conversationId)}`;
+  await send(text);
+}
