@@ -81,6 +81,14 @@ export async function generateReply(history, mode = 'reply', customerName = null
       });
     }
 
+    // mode care: khách ĐÃ cho SĐT mà vẫn nhắn tiếp — CHĂM SÓC, không buông, KHÔNG xin lại số.
+    if (mode === 'care') {
+      contents.push({
+        role: 'user',
+        parts: [{ text: 'MODE: CARE — Khách NÀY ĐÃ cho số điện thoại rồi (telesale sẽ/đang gọi). TUYỆT ĐỐI không xin lại số. Nhiệm vụ bây giờ: giải đáp tiếp điều khách hỏi cho tận tình, trấn an "Bác sĩ/trợ lý sẽ gọi sớm, mình để ý điện thoại nha", và nhẹ nhàng thúc đẩy ĐẶT LỊCH/đến khám (gợi ý sắp xếp thời gian qua khám, nhắc ưu đãi/giữ suất). Giữ giọng ấm, quan tâm như đang chăm sóc một người đã tin tưởng mình. Đặt phone_captured=false, handover=false trừ khi khách khiếu nại.' }],
+      });
+    }
+
     // mode recover: VỚT LEAD bị bỏ rơi — đọc lại đúng câu khách hỏi/băn khoăn còn dang dở,
     // trả lời thẳng cái đó, rồi LÌ ĐÒN xin SĐT có duyên (bắt buộc kết bằng xin số).
     if (mode === 'recover') {

@@ -114,9 +114,19 @@ export function incRetouch(conversationId) {
     .run(String(conversationId));
 }
 
-// Đã giao người? (captured hoặc handover) → ngừng auto-reply.
+// CHỈ handover thật (khiếu nại/đòi gặp người) → bot IM, để người thật xử.
+export function isHandover(conv) {
+  return conv && conv.status === 'handover';
+}
+
+// Đã có SĐT → telesale tiếp quản, NHƯNG bot vẫn chăm sóc nếu khách nhắn tiếp.
+export function isCaptured(conv) {
+  return conv && (conv.status === 'captured' || conv.phone_captured);
+}
+
+// (giữ tương thích) coi như "đã xử lý" = handover thật.
 export function isHandled(conv) {
-  return conv && (conv.status === 'handover' || conv.status === 'captured' || conv.phone_captured);
+  return isHandover(conv);
 }
 
 /**

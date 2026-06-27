@@ -53,9 +53,9 @@ export async function handleIncoming(ev) {
   try {
     const conv = store.ensureConversation(conversationId, pageId, customerName);
 
-    // Đã giao người (có SĐT / handover) → ngừng auto-reply.
-    if (store.isHandled(conv)) {
-      console.log(`[handler] ${conversationId} đã giao người → không auto-reply`);
+    // CHỈ handover thật (khiếu nại/đòi gặp người) → bot im, người thật xử.
+    if (store.isHandover(conv)) {
+      console.log(`[handler] ${conversationId} đã handover (người thật xử) → bot im`);
       return;
     }
 
@@ -66,8 +66,12 @@ export async function handleIncoming(ev) {
     // Chốt SĐT bằng regex ngay cả khi Gemini chưa nhận ra.
     const phoneByRegex = extractPhone(messageText);
 
+    // Đã có SĐT rồi mà khách NHẮN TIẾP → chuyển mode CARE (chăm sóc, KHÔNG xin lại số,
+    // mà nhắc đặt lịch / trấn an chờ Bác sĩ gọi / giải đáp thêm) — không buông khách.
+    const mode = store.isCaptured(conv) ? 'care' : 'reply';
+
     const history = store.getConversation(conversationId).history;
-    const reply = await generateReply(history, 'reply', customerName || conv.customer_name);
+    const reply = await generateReply(history, mode, customerName || conv.customer_name);
 
     await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName);
   } catch (err) {
@@ -132,8 +136,11 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   // ƯU TIÊN SĐT: regex hoặc Gemini báo phone_captured
   const phone = phoneByRegex || reply.phone || null;
   const captured = Boolean(phone) || reply.phone_captured;
+  // CHỈ báo lead lần ĐẦU lấy được số (conv chưa captured) → tránh báo Telegram trùng
+  // khi khách đã cho số rồi nhắn tiếp (mode care).
+  const alreadyCaptured = store.isCaptured(freshConv);
 
-  if (captured && phone) {
+  if (captured && phone && !alreadyCaptured) {
     store.setPhoneCaptured(conversationId, phone, reply.name || customerName);
     await notifyLead({
       name: reply.name || customerName,
