@@ -1,8 +1,8 @@
 // Lõi xử lý hội thoại — dùng chung cho webhook (tin mới) và cron (retouch).
 import { generateReply } from './gemini.js';
-import { sendMessages, isPageEnabled } from './pancake.js';
+import { sendMessages, isPageEnabled } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
-import { extractPhone } from './utils.js';
+import { extractPhone, looksLikeBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
@@ -76,8 +76,22 @@ export async function handleIncoming(ev) {
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
 
-    // Chốt SĐT bằng regex ngay cả khi Gemini chưa nhận ra.
+    // Chốt SĐT bằng regex (CHỈ nhận số VN hợp lệ đúng 10 số).
     const phoneByRegex = extractPhone(messageText);
+
+    // Khách CHO SỐ nhưng SAI/THIẾU (vd 9 số) + chưa có số hợp lệ → bot HỎI LẠI đủ số,
+    // KHÔNG chốt lead số chết. (Bỏ qua nếu đã captured rồi.)
+    if (!phoneByRegex && !store.isCaptured(conv) && looksLikeBadPhone(messageText)) {
+      console.log(`[handler] ${conversationId} khách cho SĐT sai/thiếu số → xin nhắn lại`);
+      const cname = customerName || conv.customer_name;
+      const xung = cname ? '' : 'anh/chị ';
+      await sendMessages(pageId, conversationId, [
+        `Dạ ${xung}ơi, hình như số điện thoại mình gửi bị thiếu/sai một chút rồi ạ 😅`,
+        `Mình kiểm tra gửi lại giúp em số đủ 10 số nha, để Bác sĩ gọi tư vấn cho mình không bị nhầm ạ.`,
+      ]);
+      store.appendHistory(conversationId, 'model', 'Xin khách gửi lại SĐT đủ 10 số (số trước thiếu/sai).');
+      return;
+    }
 
     // Đã có SĐT rồi mà khách NHẮN TIẾP → chuyển mode CARE (chăm sóc, KHÔNG xin lại số,
     // mà nhắc đặt lịch / trấn an chờ Bác sĩ gọi / giải đáp thêm) — không buông khách.
