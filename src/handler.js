@@ -1,6 +1,6 @@
 // Lõi xử lý hội thoại — dùng chung cho webhook (tin mới) và cron (retouch).
 import { generateReply } from './gemini.js';
-import { sendMessages, isPageEnabled } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
+import { sendMessages, isPageEnabled, hasStopLabel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, looksLikeBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
@@ -108,6 +108,17 @@ export async function handleIncoming(ev) {
       return; // vẫn KHÔNG để bot tự trả lời ca handover
     }
 
+    // CỜ TẮT BOT theo NHÃN Pancake: telesale đã gọi/chốt lịch khám (xảy ra NGOÀI inbox)
+    // → gắn nhãn lên hội thoại. Bot thấy nhãn thì IM HẲN, không chồng tin tư vấn nữa.
+    // Đây là lớp chặn cho ca "telesale xử ngoài Pancake" mà cơ chế người-gõ-tay không bắt được.
+    if (await hasStopLabel(pageId, conversationId)) {
+      console.log(`[handler] ${conversationId} có nhãn chốt lịch/telesale xử → bot IM (khách vừa nhắn)`);
+      store.appendHistory(conversationId, 'user', messageText);
+      store.markCustomerMessaged(conversationId);
+      store.markHumanTaken(conversationId); // chặn luôn retouch về sau, khỏi gọi lại API mỗi lượt
+      return;
+    }
+
     // NGƯỜI VÀO, BOT LUI: telesale vừa gõ tay trong HUMAN_HOLD_HOURS giờ → bot IM,
     // không chồng tin. Quá thời gian đó telesale không gõ thêm → bot tiếp quản lại.
     if (store.isHumanActive(conv, HUMAN_HOLD_HOURS)) {
@@ -165,6 +176,12 @@ export async function handleRetouch(conv) {
   try {
     const fresh = store.getConversation(conversationId);
     if (!fresh || store.isHandled(fresh)) return; // đã giao người trong lúc chờ
+    // CỜ TẮT BOT theo nhãn: telesale đã chốt lịch/đang xử → KHÔNG chạm lại tự động.
+    if (await hasStopLabel(pageId, conversationId)) {
+      console.log(`[retouch] ${conversationId} có nhãn chốt lịch/telesale xử → bỏ chạm lại`);
+      store.markHumanTaken(conversationId); // chặn các lượt cron sau, khỏi gọi API mỗi 15'
+      return;
+    }
     const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
     await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name);

@@ -117,7 +117,8 @@ app.post('/webhook', (req, res) => {
 // --- Cron retouch mỗi 15 phút ---
 cron.schedule('*/15 * * * *', async () => {
   try {
-    const targets = store.findRetouchTargets(config.retouch.minIdleHours, config.retouch.maxCount);
+    const holdHours = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+    const targets = store.findRetouchTargets(config.retouch.minIdleHours, config.retouch.maxCount, holdHours);
     if (targets.length === 0) return;
     console.log(`[cron] ${targets.length} hội thoại cần chạm lại`);
     for (const conv of targets) {

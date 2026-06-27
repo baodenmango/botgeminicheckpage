@@ -149,17 +149,20 @@ export function isHandled(conv) {
 
 /**
  * Tìm hội thoại cần chạm lại:
- * chưa có SĐT, chưa handover, khách im >= minIdleHours, retouch_count < maxCount.
+ * chưa có SĐT, chưa handover, khách im >= minIdleHours, retouch_count < maxCount,
+ * VÀ không đang có người thật giữ (telesale gõ tay / chốt lịch trong holdHours qua).
  */
-export function findRetouchTargets(minIdleHours, maxCount) {
+export function findRetouchTargets(minIdleHours, maxCount, holdHours = 6) {
   const cutoff = nowSec() - Math.floor(minIdleHours * 3600);
+  const humanCutoff = nowSec() - Math.floor(holdHours * 3600);
   const rows = db.prepare(`
     SELECT * FROM conversations
     WHERE status = 'active' AND phone_captured = 0
       AND last_customer_msg_at IS NOT NULL
       AND last_customer_msg_at <= ?
       AND retouch_count < ?
-  `).all(cutoff, maxCount);
+      AND (human_taken_at IS NULL OR human_taken_at <= ?)
+  `).all(cutoff, maxCount, humanCutoff);
   return rows.map((r) => ({ ...r, history: JSON.parse(r.history || '[]') }));
 }
 

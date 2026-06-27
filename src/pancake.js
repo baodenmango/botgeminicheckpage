@@ -41,6 +41,110 @@ export function isPageEnabled(pageId) {
   return Boolean(config.pancakePages[String(pageId)]);
 }
 
+// --- CỜ TẮT BOT THEO NHÃN PANCAKE ---
+// Telesale chốt lịch khám / đang xử tay → gắn 1 trong các nhãn này lên hội thoại.
+// Bot đọc nhãn TRƯỚC khi gửi; thấy cờ thì IM, không chồng tin tư vấn.
+// Tùy biến qua env STOP_BOT_LABELS (phân tách bằng dấu phẩy). So khớp KHÔNG dấu, không phân biệt hoa thường.
+const STOP_BOT_LABELS = (process.env.STOP_BOT_LABELS ||
+  'đã đặt lịch,đã hẹn khám,đã hẹn,đã đến khám,telesale xử lý,chốt lịch,đã chốt,không gửi bot,bot dừng'
+).split(',').map((s) => normalizeLabel(s)).filter(Boolean);
+
+function normalizeLabel(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036F]/g, "") // bỏ dấu tiếng Việt
+    .replace(/đ/gi, 'd')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+// Cache nhẹ kết quả nhãn (15s) để 1 loạt tin dồn không gọi API nhiều lần.
+const labelCache = new Map(); // conversationId -> { stop, at }
+
+/**
+ * Hội thoại này có nhãn "cờ tắt bot" không? → true thì bot phải IM.
+ * Đọc qua Pancake Public API: GET .../conversations/{id} (trả tags/label_ids/labels tùy biến thể).
+ * Lỗi mạng / không đọc được nhãn → trả false (KHÔNG chặn nhầm, ưu tiên bot vẫn chạy được;
+ * cơ chế "người vào bot lui" vẫn là lớp bảo vệ thứ 2).
+ */
+export async function hasStopLabel(pageId, conversationId) {
+  if (STOP_BOT_LABELS.length === 0) return false;
+  const token = getPageToken(pageId);
+  if (!token) return false;
+
+  const cached = labelCache.get(String(conversationId));
+  if (cached && Date.now() - cached.at < 15000) return cached.stop;
+
+  let stop = false;
+  try {
+    // ⚠️ Pancake KHÔNG cho đọc nhãn 1 hội thoại lẻ (endpoint /conversations/{id} trả mảng tin nhắn,
+    // endpoint /tags trả HTML). Nhãn CHỈ có ở endpoint LIST conversations, field `tags[].text`.
+    // → Kéo các hội thoại có hoạt động gần đây rồi tìm đúng id. `since` hẹp để đỡ nặng.
+    const conv = await fetchConversationFromList(pageId, token, conversationId);
+    if (conv) {
+      const names = extractLabelNames(conv);
+      stop = names.some((n) => {
+        const nn = normalizeLabel(n);
+        return STOP_BOT_LABELS.some((stopLbl) => nn === stopLbl || nn.includes(stopLbl));
+      });
+      if (stop) {
+        console.log(`[pancake] 🚫 conv ${conversationId} có nhãn cờ-tắt-bot (${names.join(', ')}) → bot IM`);
+      }
+    }
+  } catch (err) {
+    const status = err?.response?.status;
+    console.warn(`[pancake] đọc nhãn lỗi (conv ${conversationId}) status=${status || err?.message} → coi như KHÔNG có cờ`);
+    stop = false;
+  }
+  labelCache.set(String(conversationId), { stop, at: Date.now() });
+  return stop;
+}
+
+// Số ngày nhìn lại khi quét list conversations để tìm nhãn (mặc định 14 ngày — đủ phủ lead đang chăm).
+const LABEL_LOOKBACK_DAYS = parseInt(process.env.LABEL_LOOKBACK_DAYS || '14', 10);
+// Quét tối đa bao nhiêu trang list (mỗi trang ~200 hội thoại) để tìm đúng id, tránh quét vô hạn.
+const LABEL_MAX_PAGES = parseInt(process.env.LABEL_MAX_PAGES || '3', 10);
+
+/**
+ * Tìm 1 hội thoại theo id trong endpoint LIST (nơi DUY NHẤT trả nhãn `tags`).
+ * Trả về object hội thoại (có .tags) hoặc null nếu không thấy trong phạm vi quét.
+ */
+async function fetchConversationFromList(pageId, token, conversationId) {
+  const until = Math.floor(Date.now() / 1000);
+  const since = until - LABEL_LOOKBACK_DAYS * 24 * 3600;
+  for (let page = 1; page <= LABEL_MAX_PAGES; page++) {
+    const res = await axios.get(`${API_BASE}/pages/${pageId}/conversations`, {
+      params: { page_access_token: token, since, until, page_number: page },
+      timeout: 15000,
+    });
+    const list = res?.data?.conversations || res?.data?.data || [];
+    if (!Array.isArray(list) || list.length === 0) break;
+    const hit = list.find((c) => String(c.id || c.conversation_id) === String(conversationId));
+    if (hit) return hit;
+    if (list.length < 200) break; // trang cuối, khỏi quét tiếp
+  }
+  return null; // không thấy trong phạm vi → coi như không có nhãn chặn (fail-open)
+}
+
+// Pancake trả nhãn ở field `tags` (mảng object có .text). Gom hết tên nhãn về 1 mảng string.
+// Vẫn đọc thêm vài khóa biến thể để chống đổi schema.
+function extractLabelNames(conv) {
+  if (!conv || typeof conv !== 'object') return [];
+  const pools = [
+    conv.tags, conv.labels, conv.label_names,
+    conv.page_customer?.tags, conv.customer?.tags,
+  ];
+  const out = [];
+  for (const pool of pools) {
+    if (!Array.isArray(pool)) continue;
+    for (const item of pool) {
+      if (typeof item === 'string') out.push(item);
+      else if (item && typeof item === 'object') out.push(item.text || item.name || item.title || '');
+    }
+  }
+  return out.filter(Boolean);
+}
+
 /**
  * Gửi 1 tin tới 1 hội thoại Pancake.
  * Endpoint mặc định: POST {API_BASE}/pages/{pageId}/conversations/{conversationId}/messages
