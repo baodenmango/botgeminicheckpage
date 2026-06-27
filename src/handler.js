@@ -8,6 +8,42 @@ import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './tel
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
 const locks = new Set();
 
+// Lưu nội dung tin BOT vừa gửi (để phân biệt với tin telesale gõ tay khi webhook dội về).
+// Map: conversationId -> [{text, at}]. Tự dọn entry cũ > 60s.
+const botSent = new Map();
+function noteBotSent(conversationId, text) {
+  const arr = botSent.get(conversationId) || [];
+  arr.push({ text: normalizeMsg(text), at: Date.now() });
+  botSent.set(conversationId, arr.filter((x) => Date.now() - x.at < 60000));
+}
+function wasSentByBot(conversationId, text) {
+  const arr = botSent.get(conversationId) || [];
+  const n = normalizeMsg(text);
+  return arr.some((x) => Date.now() - x.at < 60000 && (x.text === n || x.text.includes(n) || n.includes(x.text)));
+}
+function normalizeMsg(s) {
+  return String(s || '').replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().toLowerCase().slice(0, 120);
+}
+
+// Số giờ telesale "giữ" hội thoại sau khi gõ tay (quá thì bot tiếp quản lại).
+const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+
+/**
+ * Xử lý tin TỪ PAGE: phân biệt BOT tự gửi (bỏ qua) vs TELESALE gõ tay (đánh dấu human → bot lui).
+ */
+export async function handlePageMessage(ev) {
+  const { conversationId, pageId, messageText, aiGenerated } = ev;
+  if (!conversationId || !pageId) return;
+  if (!isPageEnabled(pageId)) return;
+  if (aiGenerated) return; // tin AI/hệ thống (Meta transfer...) — bỏ qua
+  // Tin này có phải do BOT vừa gửi không? → đúng thì bỏ qua, không coi là người gõ.
+  if (wasSentByBot(conversationId, messageText)) return;
+  // Còn lại = TELESALE GÕ TAY → đánh dấu người tiếp quản, bot lui.
+  store.ensureConversation(conversationId, pageId, null);
+  store.markHumanTaken(conversationId);
+  console.log(`[handler] 👤 ${conversationId}: telesale gõ tay → bot LUI (giữ ${HUMAN_HOLD_HOURS}h)`);
+}
+
 // Map bệnh → sale page (đồng bộ với mục 6 system prompt).
 const SALE_PAGE = {
   goi: 'https://thoaihoakhop.phongkhamhieploi.vn/',
@@ -72,6 +108,15 @@ export async function handleIncoming(ev) {
       return; // vẫn KHÔNG để bot tự trả lời ca handover
     }
 
+    // NGƯỜI VÀO, BOT LUI: telesale vừa gõ tay trong HUMAN_HOLD_HOURS giờ → bot IM,
+    // không chồng tin. Quá thời gian đó telesale không gõ thêm → bot tiếp quản lại.
+    if (store.isHumanActive(conv, HUMAN_HOLD_HOURS)) {
+      console.log(`[handler] ${conversationId} telesale đang giữ → bot lui (khách vừa nhắn)`);
+      store.appendHistory(conversationId, 'user', messageText);
+      store.markCustomerMessaged(conversationId);
+      return; // bot im, để telesale trả lời
+    }
+
     // Lưu tin khách + cập nhật mốc thời gian (cho retouch).
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
@@ -85,10 +130,12 @@ export async function handleIncoming(ev) {
       console.log(`[handler] ${conversationId} khách cho SĐT sai/thiếu số → xin nhắn lại`);
       const cname = customerName || conv.customer_name;
       const xung = cname ? '' : 'anh/chị ';
-      await sendMessages(pageId, conversationId, [
+      const askAgain = [
         `Dạ ${xung}ơi, hình như số điện thoại mình gửi bị thiếu/sai một chút rồi ạ 😅`,
         `Mình kiểm tra gửi lại giúp em số đủ 10 số nha, để Bác sĩ gọi tư vấn cho mình không bị nhầm ạ.`,
-      ]);
+      ];
+      askAgain.forEach((m) => noteBotSent(conversationId, m));
+      await sendMessages(pageId, conversationId, askAgain);
       store.appendHistory(conversationId, 'model', 'Xin khách gửi lại SĐT đủ 10 số (số trước thiếu/sai).');
       return;
     }
@@ -152,6 +199,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     outMessages.some((m, i) => m !== reply.messages[i]);
 
   // Gửi các ô thoại về khách qua Pancake
+  outMessages.forEach((m) => noteBotSent(conversationId, m)); // đánh dấu bot gửi (để khỏi nhầm là người gõ)
   await sendMessages(pageId, conversationId, outMessages);
   // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
   store.appendHistory(conversationId, 'model', outMessages.join('\n'));

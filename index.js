@@ -5,7 +5,7 @@ import express from 'express';
 import cron from 'node-cron';
 
 import { config, checkConfig } from './src/config.js';
-import { handleIncoming, handleRetouch } from './src/handler.js';
+import { handleIncoming, handleRetouch, handlePageMessage } from './src/handler.js';
 import { isPageEnabled } from './src/pancake.js';
 import * as store from './src/store.js';
 
@@ -70,18 +70,20 @@ function parsePancakeWebhook(body) {
     msg.text || conv.snippet || null;
   const messageText = stripHtml(rawText);
 
-  // BỎ QUA tin do chính PAGE/bot gửi (tránh loop): người gửi = page_id.
-  if (senderId && pageId && String(senderId) === String(pageId)) return null;
-  // BỎ QUA tin do AI/hệ thống sinh (vd Meta Agent transfer notice).
-  if (fromObj.ai_generated === true) return null;
-
   if (!conversationId || !pageId || !messageText) return null;
+
+  // Tin TỪ PAGE (người gửi = page_id): có thể là BOT tự gửi HOẶC telesale gõ tay.
+  // Không bỏ qua nữa — trả về kèm cờ để handler phân biệt (phục vụ "người vào, bot lui").
+  const fromPage = !!(senderId && pageId && String(senderId) === String(pageId));
+
   return {
     pageId: String(pageId),
     conversationId: String(conversationId),
     customerId: senderId ? String(senderId) : null,
     customerName,
     messageText,
+    fromPage,
+    aiGenerated: fromObj.ai_generated === true,
   };
 }
 
@@ -93,10 +95,16 @@ app.post('/webhook', (req, res) => {
   try {
     const ev = parsePancakeWebhook(req.body);
     if (!ev) {
-      return; // tin của page/bot/AI hoặc payload không đủ → bỏ qua (im lặng cho gọn log)
+      return; // payload không đủ → bỏ qua
     }
     if (!isPageEnabled(ev.pageId)) {
       console.log(`[webhook] page ${ev.pageId} chưa bật bot → bỏ qua`);
+      return;
+    }
+    // Tin TỪ PAGE: nếu là telesale gõ tay → đánh dấu "người tiếp quản" (bot lui).
+    // Nếu là bot tự gửi / tin hệ thống → bỏ qua.
+    if (ev.fromPage) {
+      handlePageMessage(ev); // không await
       return;
     }
     console.log(`[webhook] tin từ ${ev.customerName || ev.customerId} (conv ${ev.conversationId}): ${ev.messageText.slice(0, 80)}`);

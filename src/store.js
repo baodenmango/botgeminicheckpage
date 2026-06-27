@@ -25,6 +25,7 @@ db.exec(`
     retouch_count        INTEGER DEFAULT 0,
     sale_link_sent       INTEGER DEFAULT 0,          -- đã gửi link sale page chưa
     summary              TEXT,                        -- tóm tắt bệnh/thông tin giá trị
+    human_taken_at       INTEGER,                     -- epoch: lần cuối NGƯỜI THẬT gõ tay (telesale vào)
     created_at           INTEGER
   );
 `);
@@ -37,6 +38,9 @@ try {
   }
   if (!cols.includes('summary')) {
     db.exec('ALTER TABLE conversations ADD COLUMN summary TEXT');
+  }
+  if (!cols.includes('human_taken_at')) {
+    db.exec('ALTER TABLE conversations ADD COLUMN human_taken_at INTEGER');
   }
 } catch (e) {
   console.warn('[store] migration:', e?.message || e);
@@ -107,6 +111,20 @@ export function setSummary(conversationId, summary) {
   if (!summary) return;
   db.prepare('UPDATE conversations SET summary = ? WHERE conversation_id = ?')
     .run(String(summary).slice(0, 600), String(conversationId));
+}
+
+// Đánh dấu NGƯỜI THẬT (telesale) vừa gõ tay vào hội thoại này.
+export function markHumanTaken(conversationId) {
+  db.prepare('UPDATE conversations SET human_taken_at = ? WHERE conversation_id = ?')
+    .run(nowSec(), String(conversationId));
+}
+
+// Telesale có đang "giữ" hội thoại không? (đã gõ tay trong vòng holdHours giờ)
+// → true thì bot IM, để người thật xử. Quá holdHours không gõ thêm → bot được tiếp quản lại.
+export function isHumanActive(conv, holdHours) {
+  if (!conv || !conv.human_taken_at) return false;
+  const cutoff = nowSec() - Math.floor((holdHours || 6) * 3600);
+  return conv.human_taken_at > cutoff;
 }
 
 export function incRetouch(conversationId) {
