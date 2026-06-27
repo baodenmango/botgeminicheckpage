@@ -67,7 +67,7 @@ export async function handleIncoming(ev) {
     const phoneByRegex = extractPhone(messageText);
 
     const history = store.getConversation(conversationId).history;
-    const reply = await generateReply(history, 'reply');
+    const reply = await generateReply(history, 'reply', customerName || conv.customer_name);
 
     await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName);
   } catch (err) {
@@ -87,7 +87,7 @@ export async function handleRetouch(conv) {
   try {
     const fresh = store.getConversation(conversationId);
     if (!fresh || store.isHandled(fresh)) return; // đã giao người trong lúc chờ
-    const reply = await generateReply(fresh.history, 'retouch');
+    const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
     await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name);
     store.incRetouch(conversationId);

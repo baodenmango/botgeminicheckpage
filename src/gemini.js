@@ -48,15 +48,24 @@ function sanitize(obj) {
  * Gọi Gemini sinh phản hồi.
  * @param {Array<{role:'user'|'model', text:string}>} history - lịch sử hội thoại
  * @param {'reply'|'retouch'} mode
+ * @param {string} customerName - tên Facebook của khách (để đoán xưng hô)
  * @returns {Promise<object>} object theo định dạng brief
  */
-export async function generateReply(history, mode = 'reply') {
+export async function generateReply(history, mode = 'reply', customerName = null) {
   try {
     // Build contents từ history (Gemini dùng role 'user'/'model')
     const contents = history.map((h) => ({
       role: h.role === 'model' ? 'model' : 'user',
       parts: [{ text: h.text }],
     }));
+
+    // Chèn TÊN khách (từ Facebook) làm context đầu để bộ não đoán cách xưng hô.
+    if (customerName) {
+      contents.unshift({
+        role: 'user',
+        parts: [{ text: `[HỆ THỐNG] Tên Facebook của khách: "${customerName}". Hãy dựa vào tên + cách khách xưng hô để gọi tên riêng tự nhiên (xem mục xưng hô trong system prompt).` }],
+      });
+    }
 
     // mode retouch: chèn tín hiệu vào lượt cuối để bộ não biết đây là chạm lại
     if (mode === 'retouch') {
