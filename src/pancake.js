@@ -13,9 +13,18 @@ const API_BASE = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_ap
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Delay ngẫu nhiên 1.5–3s giữa các ô cho giống người thật.
-function humanDelay() {
-  return 1500 + Math.floor(Math.random() * 1500);
+// Delay "giống người thật" TRƯỚC khi gửi ô thứ i (i bắt đầu từ 0).
+// Tin đầu (i=0) gửi ngay. Từ tin 2 trở đi: mô phỏng người đang LẮNG NGHE + suy nghĩ
+// + gõ phím — thời gian tỉ lệ với độ dài tin, cộng chút ngẫu nhiên cho tự nhiên.
+function humanDelay(text, index) {
+  if (index === 0) return 0; // tin đầu phản hồi nhanh
+  const len = (text || '').length;
+  // tốc độ gõ ~ 18 ký tự/giây + 1 nhịp "nghĩ" 1.2–2.2s
+  const typing = Math.min(len * 55, 4500);          // gõ: tối đa ~4.5s cho tin dài
+  const thinking = 1200 + Math.floor(Math.random() * 1000); // nghĩ: 1.2–2.2s
+  // tin càng về sau nghĩ thêm chút (như đang cân nhắc nói tiếp)
+  const lean = (index - 1) * 400;
+  return Math.min(typing + thinking + lean, 7000);  // trần 7s/ô, tránh khách chờ quá lâu
 }
 
 // Lấy token của 1 trang theo page_id; null nếu trang không được cấu hình.
@@ -76,8 +85,9 @@ async function sendOne(pageId, conversationId, text) {
  */
 export async function sendMessages(pageId, conversationId, messages) {
   for (let i = 0; i < messages.length; i++) {
+    // Chờ "đọc + nghĩ + gõ" TRƯỚC khi gửi ô này (tin đầu = 0, gửi ngay).
+    await sleep(humanDelay(messages[i], i));
     const ok = await sendOne(pageId, conversationId, messages[i]);
     if (!ok) break; // gửi lỗi thì dừng, tránh spam nửa vời
-    if (i < messages.length - 1) await sleep(humanDelay());
   }
 }
