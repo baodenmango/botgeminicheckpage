@@ -8,6 +8,33 @@ import { notifyLead, notifyHandover } from './telegram.js';
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
 const locks = new Set();
 
+// Map bệnh → sale page (đồng bộ với mục 6 system prompt).
+const SALE_PAGE = {
+  goi: 'https://thoaihoakhop.phongkhamhieploi.vn/',
+  vai: 'https://dauvai.phongkhamhieploi.vn/',
+  gut: 'https://benhgut.phongkhamhieploi.vn/',
+  lung: 'https://daulung.phongkhamhieploi.vn/',
+  tvdd: 'https://tvdd.phongkhamhieploi.vn/',
+  covaigay: 'https://covaigay.phongkhamhieploi.vn/',
+};
+
+// Đảm bảo có 1 ô chứa link sale page đúng bệnh (nếu Gemini quên chèn).
+// Trả về mảng messages đã được bổ sung link khi cần.
+function ensureSalePageLink(messages, condition, conv) {
+  const link = SALE_PAGE[condition];
+  if (!link) return messages; // bệnh chưa rõ / khác → không ép link
+  const already = messages.some((m) => m.includes('phongkhamhieploi.vn'));
+  if (already) return messages;
+  // đã gửi link cho hội thoại này trước đó chưa? (tránh spam lại mỗi lượt)
+  if (conv && conv.condition && conv.sale_link_sent) return messages;
+  // chèn link thành 1 ô riêng, đặt trước ô cuối (thường ô cuối là xin SĐT)
+  const out = [...messages];
+  const linkMsg = `Anh/chị tham khảo thêm thông tin tình trạng của mình ở đây nha ạ: ${link}`;
+  if (out.length >= 2) out.splice(out.length - 1, 0, linkMsg);
+  else out.push(linkMsg);
+  return out.slice(0, 5); // tối đa 5 ô
+}
+
 /**
  * Xử lý 1 tin nhắn mới của khách.
  * @param {object} ev - { conversationId, pageId, customerId, customerName, messageText }
@@ -74,13 +101,29 @@ export async function handleRetouch(conv) {
 
 // Gửi phản hồi + xử lý SĐT / handover + lưu lịch sử bot.
 async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName) {
-  // Phân loại bệnh để thống kê
-  store.setCondition(conversationId, reply.condition);
+  // Phân loại bệnh để thống kê — chỉ lưu khi nhận diện được (khác unknown),
+  // để KHÔNG ghi đè condition đã biết ở lượt trước bằng 'unknown' của lượt cuối.
+  if (reply.condition && reply.condition !== 'unknown') {
+    store.setCondition(conversationId, reply.condition);
+  }
+
+  // Lấy condition ĐÃ NHỚ trong DB (gối/vai/lưng...) thay vì chỉ của lượt cuối.
+  const knownCondition =
+    (store.getConversation(conversationId)?.condition) || reply.condition || 'unknown';
+
+  // ĐẢM BẢO gửi link sale page đúng bệnh (nếu Gemini quên chèn).
+  let outMessages = ensureSalePageLink(reply.messages, knownCondition, conv);
+  const linkWasAdded = outMessages.length !== reply.messages.length ||
+    outMessages.some((m, i) => m !== reply.messages[i]);
 
   // Gửi các ô thoại về khách qua Pancake
-  await sendMessages(pageId, conversationId, reply.messages);
+  await sendMessages(pageId, conversationId, outMessages);
   // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
-  store.appendHistory(conversationId, 'model', reply.messages.join('\n'));
+  store.appendHistory(conversationId, 'model', outMessages.join('\n'));
+  // Đánh dấu đã gửi link để không lặp lại mỗi lượt
+  if (linkWasAdded && SALE_PAGE[knownCondition]) {
+    store.markSaleLinkSent(conversationId);
+  }
 
   // ƯU TIÊN SĐT: regex hoặc Gemini báo phone_captured
   const phone = phoneByRegex || reply.phone || null;
@@ -91,7 +134,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     await notifyLead({
       name: reply.name || customerName,
       phone,
-      condition: reply.condition,
+      condition: knownCondition,
       pageId,
       conversationId,
     });
@@ -105,7 +148,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     await notifyHandover({
       name: reply.name || customerName,
       reason: reply.handover_reason,
-      condition: reply.condition,
+      condition: knownCondition,
       pageId,
       conversationId,
     });

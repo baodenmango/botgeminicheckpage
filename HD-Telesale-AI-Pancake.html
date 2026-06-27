@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Hướng dẫn dùng AI Pancake cho Telesale - Phòng khám Hiệp Lợi</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1f2933; line-height: 1.5; font-size: 13px; margin: 0;
+  }
+  h1 { font-size: 22px; color: #0b6b5e; margin: 0 0 2px; }
+  .sub { color: #52606d; font-size: 12px; margin-bottom: 14px; }
+  h2 {
+    font-size: 15px; color: #fff; background: #0b8c79; padding: 6px 10px;
+    border-radius: 5px; margin: 18px 0 8px;
+  }
+  h3 { font-size: 13.5px; color: #0b6b5e; margin: 12px 0 4px; }
+  p { margin: 5px 0; }
+  ul, ol { margin: 5px 0 5px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+  th { background: #d7f2ec; color: #0b4f45; text-align: left; padding: 6px 8px; border: 1px solid #b6e0d7; }
+  td { padding: 6px 8px; border: 1px solid #d9e2ec; vertical-align: top; }
+  .box {
+    background: #f0fdfa; border-left: 4px solid #0b8c79; padding: 8px 12px;
+    border-radius: 4px; margin: 8px 0;
+  }
+  .warn {
+    background: #fff7ed; border-left: 4px solid #f59e0b; padding: 8px 12px;
+    border-radius: 4px; margin: 8px 0;
+  }
+  .danger {
+    background: #fef2f2; border-left: 4px solid #ef4444; padding: 8px 12px;
+    border-radius: 4px; margin: 8px 0;
+  }
+  .key { background: #e0f2fe; padding: 1px 6px; border-radius: 3px; font-weight: 600; color: #075985; }
+  .step { font-weight: 700; color: #0b8c79; }
+  code { background: #eef2f7; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .footer { margin-top: 20px; padding-top: 8px; border-top: 1px solid #d9e2ec; color: #829ab1; font-size: 11px; }
+  .pill { display: inline-block; background: #0b8c79; color: #fff; font-size: 11px; padding: 1px 8px; border-radius: 10px; }
+  .nobreak { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<h1>Hướng dẫn dùng AI Pancake cho Telesale</h1>
+<div class="sub">Phòng khám Cơ Xương Khớp Hiệp Lợi · Tài liệu nội bộ · Cập nhật 26/06/2026</div>
+
+<div class="box">
+<b>Tóm tắt 1 câu:</b> AI Pancake là <b>trợ lý GỢI Ý</b> cho bạn — nó nhắc bạn nên trả lời gì, KHÔNG tự nhắn khách. Bạn vẫn là người quyết định và bấm gửi. Dùng đúng thì rep nhanh gấp đôi, chốt lead tốt hơn.
+</div>
+
+<h2>1. AI Pancake làm được gì cho bạn?</h2>
+<table class="nobreak">
+<tr><th style="width:34%">Tính năng</th><th>Nó giúp gì</th></tr>
+<tr><td><b>Gợi ý 3 câu trả lời</b></td><td>Khi khách nhắn, AI tự hiện 3 câu trả lời gợi ý phía trên ô soạn tin. Bạn đọc, chọn câu hợp nhất, sửa lại cho mượt rồi gửi.</td></tr>
+<tr><td><b>Gợi ý khi gõ "/"</b></td><td>Gõ dấu <span class="key">/</span> trong ô chat → hiện cả Quick Reply có sẵn (kb1–kb9) <b>và</b> câu AI gợi ý theo ngữ cảnh. Chọn nhanh, đỡ gõ tay.</td></tr>
+<tr><td><b>Tự gắn thẻ hội thoại</b></td><td>AI tự phân loại và gắn thẻ lead giúp bạn đỡ thao tác thủ công.</td></tr>
+<tr><td><b>Gợi ý bài đăng từ ảnh</b></td><td>Khi khách gửi ảnh, AI gợi ý bài viết liên quan (ít dùng trong telesale).</td></tr>
+</table>
+
+<div class="warn">
+<b>QUAN TRỌNG — AI chỉ GỢI Ý, không tự gửi.</b> Mọi câu AI đưa ra, bạn <b>phải đọc lại và sửa</b> trước khi gửi. AI không biết hết về phòng khám, có thể gợi ý sai giá / sai thông tin. Bạn là người chịu trách nhiệm với khách.
+</div>
+
+<h2>2. Quy trình dùng AI khi chat với khách (4 bước)</h2>
+<ol>
+<li><span class="step">Đọc kỹ tin khách trước.</span> Hiểu khách đang đau gì, lo gì — đừng vội bấm câu AI.</li>
+<li><span class="step">Liếc 3 câu AI gợi ý.</span> Chọn câu sát ý nhất làm "khung sườn".</li>
+<li><span class="step">SỬA lại cho giống người thật.</span> Thêm "dạ/ạ", thêm tên khách nếu biết, bỏ chỗ máy móc. Tách thành 2–3 tin ngắn, đừng gửi 1 đoạn dài.</li>
+<li><span class="step">Luôn hướng tới xin SỐ ĐIỆN THOẠI.</span> Dù AI gợi ý gì, câu cuối của bạn phải kéo khách để lại SĐT cho Bác sĩ gọi.</li>
+</ol>
+
+<h2>3. Luật vàng khi dùng AI (đọc kỹ — tránh mất lead & sai quy định)</h2>
+<table class="nobreak">
+<tr><th style="width:50%">✅ NÊN</th><th style="width:50%">❌ TRÁNH</th></tr>
+<tr>
+<td>Dùng AI làm <b>gợi ý khởi đầu</b>, rồi viết lại bằng giọng mình</td>
+<td>Copy y nguyên câu AI rồi gửi — khách đọc ra ngay "máy trả lời"</td>
+</tr>
+<tr>
+<td>Tách <b>2–3 tin ngắn</b>, mỗi tin 1 ý, có "dạ/ạ"</td>
+<td>Gửi 1 đoạn dài AI sinh ra — khách ngợp, bỏ qua</td>
+</tr>
+<tr>
+<td>Luôn <b>thấu cảm trước</b> rồi mới tư vấn ("đau lâu vậy mệt mỏi lắm ạ")</td>
+<td>Vào thẳng bán hàng, gửi link ngay câu đầu</td>
+</tr>
+<tr>
+<td>Câu nào cũng dẫn về <b>xin SĐT</b> để Bác sĩ gọi</td>
+<td>Trả lời cụt rồi im, không kéo về số điện thoại</td>
+</tr>
+<tr>
+<td>Tự kiểm tra <b>giá, thông tin</b> trước khi gửi</td>
+<td>Để AI báo <b>giá cụ thể</b> — TUYỆT ĐỐI không báo số, chỉ nói "tùy tình trạng, Bác sĩ khám mới báo chính xác"</td>
+</tr>
+<tr>
+<td>Nói "hỗ trợ cải thiện", "nhiều cô chú đỡ hơn"</td>
+<td>Hứa "khỏi 100%", cam kết kết quả, chẩn đoán bệnh online</td>
+</tr>
+</table>
+
+<h2>4. Xử lý nhanh 4 tình huống hay gặp (dùng AI gợi ý + chỉnh)</h2>
+
+<h3>① Khách hỏi giá</h3>
+<div class="box">
+"Dạ chi phí tùy tình trạng nên Bác sĩ khám mới báo chính xác được ạ." → "Bên em ưu tiên điều trị bảo tồn nên tiết kiệm hơn để bệnh nặng phải can thiệp lớn ạ." → "Anh/chị cho em xin số để Bác sĩ tư vấn cụ thể nha."
+</div>
+
+<h3>② Khách kể bệnh đau lâu năm</h3>
+<div class="box">
+Thấu cảm sâu ("đau mấy năm trời mệt mỏi lắm ạ 😔") → khơi nhẹ ảnh hưởng đời sống ("để lâu đi lại với giấc ngủ ảnh hưởng nhiều ạ") → trao hy vọng ("trường hợp như mình bên em gặp nhiều, cải thiện tốt") → xin số.
+</div>
+
+<h3>③ Khách sợ đau / sợ mổ</h3>
+<div class="box">
+Trấn an hạ nỗi sợ trước ("bên em ưu tiên bảo tồn, không vội mổ đâu ạ") → rồi mới xin số để Bác sĩ tư vấn kỹ.
+</div>
+
+<h3>④ Khách lưỡng lự "để xem"</h3>
+<div class="box">
+Hạ rào cản tối đa: "Mình cứ để lại số, Bác sĩ gọi tư vấn miễn phí, thấy hợp thì tới, không thì thôi, không sao ạ 😊"
+</div>
+
+<h2>5. AI Pancake TỐN TIỀN — dùng tiết kiệm</h2>
+<div class="danger">
+AI Pancake trừ tiền trực tiếp từ <b>ví USD của phòng khám</b> (hiện còn <b>$29.42</b>), tính phí theo mỗi lượt AI gợi ý. Nếu để chạy phung phí, ví hết nhanh.
+</div>
+<ul>
+<li>Chỉ dùng gợi ý AI khi <b>thật sự cần</b> (khách hỏi khó, mình bí câu trả lời). Câu chào hỏi quen thuộc thì dùng Quick Reply <span class="key">/kb1–kb9</span> (miễn phí).</li>
+<li>Đừng spam bấm gợi ý nhiều lần cho 1 tin — mỗi lần sinh lại là một lần tốn phí.</li>
+<li>Nếu thấy ví tụt nhanh bất thường, báo quản lý ngay.</li>
+</ul>
+
+<h2>6. Nhớ: AI là trợ lý, KHÁCH cần CON NGƯỜI</h2>
+<div class="box">
+Người bệnh nhắn tin vì họ <b>đang lo, đang đau, cần được lắng nghe</b>. AI giúp bạn nhanh hơn, nhưng cái khách nhớ là <b>sự ấm áp và quan tâm thật</b> từ bạn. Hãy để AI lo phần "gõ nhanh", còn bạn lo phần "có tình người". Đó mới là thứ chốt được lead.
+</div>
+
+<div class="footer">
+Tài liệu nội bộ Phòng khám Hiệp Lợi · Soạn cho đội Telesale · Mọi thắc mắc báo quản lý.
+</div>
+
+</body>
+</html>

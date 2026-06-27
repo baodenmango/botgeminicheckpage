@@ -91,13 +91,9 @@ app.post('/webhook', (req, res) => {
   res.status(200).json({ received: true });
 
   try {
-    // LOG RAW: in toàn bộ payload thật của Pancake để soi cấu trúc (gọn 1200 ký tự).
-    console.log('[webhook RAW]', JSON.stringify(req.body).slice(0, 1200));
-
     const ev = parsePancakeWebhook(req.body);
     if (!ev) {
-      console.log('[webhook] BỎ QUA (parser trả null — tin page/bot hoặc thiếu field). Xem [webhook RAW] ở trên.');
-      return; // tin của page/bot hoặc payload không đủ → bỏ qua
+      return; // tin của page/bot/AI hoặc payload không đủ → bỏ qua (im lặng cho gọn log)
     }
     if (!isPageEnabled(ev.pageId)) {
       console.log(`[webhook] page ${ev.pageId} chưa bật bot → bỏ qua`);
