@@ -9,17 +9,29 @@ import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './tel
 const locks = new Set();
 
 // Lưu nội dung tin BOT vừa gửi (để phân biệt với tin telesale gõ tay khi webhook dội về).
-// Map: conversationId -> [{text, at}]. Tự dọn entry cũ > 60s.
+// Map: conversationId -> [{text, at}]. Tự dọn entry cũ.
+// CỬA SỔ 180s (không phải 60s): bot có humanDelay tới ~7s/ô + Pancake xử lý + webhook
+// dội về có thể chậm. 60s quá ngắn → webhook tin-của-bot về muộn bị tưởng là telesale gõ tay.
+const BOT_ECHO_WINDOW_MS = 180000;
 const botSent = new Map();
 function noteBotSent(conversationId, text) {
   const arr = botSent.get(conversationId) || [];
   arr.push({ text: normalizeMsg(text), at: Date.now() });
-  botSent.set(conversationId, arr.filter((x) => Date.now() - x.at < 60000));
+  botSent.set(conversationId, arr.filter((x) => Date.now() - x.at < BOT_ECHO_WINDOW_MS));
 }
 function wasSentByBot(conversationId, text) {
   const arr = botSent.get(conversationId) || [];
   const n = normalizeMsg(text);
-  return arr.some((x) => Date.now() - x.at < 60000 && (x.text === n || x.text.includes(n) || n.includes(x.text)));
+  if (!n) return true; // tin rỗng/ảnh/sticker từ page → không coi là telesale gõ tay
+  return arr.some((x) => {
+    if (Date.now() - x.at >= BOT_ECHO_WINDOW_MS) return false;
+    if (!x.text) return false;
+    // khớp khít HOẶC một bên chứa bên kia (Pancake hay thêm/bớt ký tự, bọc link)
+    if (x.text === n || x.text.includes(n) || n.includes(x.text)) return true;
+    // khớp mềm: trùng phần lớn đầu chuỗi (link bị Pancake rút gọn/đổi đuôi)
+    const head = n.slice(0, 40);
+    return head.length >= 20 && x.text.includes(head);
+  });
 }
 function normalizeMsg(s) {
   return String(s || '').replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().toLowerCase().slice(0, 120);
@@ -27,6 +39,16 @@ function normalizeMsg(s) {
 
 // Số giờ telesale "giữ" hội thoại sau khi gõ tay (quá thì bot tiếp quản lại).
 const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+
+// Mốc thời gian bot gửi tin GẦN NHẤT cho mỗi hội thoại (epoch ms).
+// Dùng để loại echo: tin page về NGAY sau khi bot vừa gửi (vài giây) gần như chắc chắn là
+// echo của chính bot, KHÔNG phải telesale gõ tay. Telesale thật cần thời gian để đọc + gõ.
+const lastBotSendAt = new Map();
+export function noteBotJustSent(conversationId) {
+  lastBotSendAt.set(String(conversationId), Date.now());
+}
+// Cửa sổ nghi-ngờ-echo: tin page về trong khoảng này sau lần bot gửi cuối → coi là echo, bỏ qua.
+const ECHO_GRACE_MS = parseInt(process.env.ECHO_GRACE_MS || '30000', 10);
 
 /**
  * Xử lý tin TỪ PAGE: phân biệt BOT tự gửi (bỏ qua) vs TELESALE gõ tay (đánh dấu human → bot lui).
@@ -36,8 +58,16 @@ export async function handlePageMessage(ev) {
   if (!conversationId || !pageId) return;
   if (!isPageEnabled(pageId)) return;
   if (aiGenerated) return; // tin AI/hệ thống (Meta transfer...) — bỏ qua
-  // Tin này có phải do BOT vừa gửi không? → đúng thì bỏ qua, không coi là người gõ.
+  // LỚP 1: khớp nội dung với tin bot vừa gửi → đúng thì bỏ qua.
   if (wasSentByBot(conversationId, messageText)) return;
+  // LỚP 2 (chống race condition): nếu bot VỪA gửi tin trong ECHO_GRACE_MS giây qua mà
+  // nội dung không khớp kịp (Pancake đổi text / webhook về trước khi noteBotSent ghi xong)
+  // → vẫn coi là echo của bot, KHÔNG đánh telesale. Đây chính là ca đã làm rớt khách Nguyên.
+  const last = lastBotSendAt.get(String(conversationId));
+  if (last && Date.now() - last < ECHO_GRACE_MS) {
+    console.log(`[handler] ${conversationId}: tin page về ${Math.round((Date.now()-last)/1000)}s sau khi bot gửi → coi là echo, KHÔNG đánh telesale`);
+    return;
+  }
   // Còn lại = TELESALE GÕ TAY → đánh dấu người tiếp quản, bot lui.
   store.ensureConversation(conversationId, pageId, null);
   store.markHumanTaken(conversationId);
@@ -146,6 +176,7 @@ export async function handleIncoming(ev) {
         `Mình kiểm tra gửi lại giúp em số đủ 10 số nha, để Bác sĩ gọi tư vấn cho mình không bị nhầm ạ.`,
       ];
       askAgain.forEach((m) => noteBotSent(conversationId, m));
+      noteBotJustSent(conversationId); // chống race: đánh dấu bot vừa gửi (echo sắp về)
       await sendMessages(pageId, conversationId, askAgain);
       store.appendHistory(conversationId, 'model', 'Xin khách gửi lại SĐT đủ 10 số (số trước thiếu/sai).');
       return;
@@ -217,6 +248,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
 
   // Gửi các ô thoại về khách qua Pancake
   outMessages.forEach((m) => noteBotSent(conversationId, m)); // đánh dấu bot gửi (để khỏi nhầm là người gõ)
+  noteBotJustSent(conversationId); // chống race: đánh dấu thời điểm bot gửi (echo sắp dội về)
   await sendMessages(pageId, conversationId, outMessages);
   // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
   store.appendHistory(conversationId, 'model', outMessages.join('\n'));
