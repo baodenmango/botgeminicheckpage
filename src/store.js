@@ -119,6 +119,19 @@ export function markHumanTaken(conversationId) {
     .run(nowSec(), String(conversationId));
 }
 
+// Gỡ cờ "người giữ" cho 1 hội thoại (bot được tiếp quản lại ngay). Dùng khi cờ bị đánh nhầm.
+export function clearHumanTaken(conversationId) {
+  const r = db.prepare('UPDATE conversations SET human_taken_at = NULL WHERE conversation_id = ?')
+    .run(String(conversationId));
+  return r.changes;
+}
+
+// Gỡ cờ "người giữ" cho TẤT CẢ hội thoại (dọn sạch cờ kẹt do bug). Trả về số dòng đổi.
+export function clearAllHumanTaken() {
+  const r = db.prepare('UPDATE conversations SET human_taken_at = NULL WHERE human_taken_at IS NOT NULL').run();
+  return r.changes;
+}
+
 // Telesale có đang "giữ" hội thoại không? (đã gõ tay trong vòng holdHours giờ)
 // → true thì bot IM, để người thật xử. Quá holdHours không gõ thêm → bot được tiếp quản lại.
 export function isHumanActive(conv, holdHours) {

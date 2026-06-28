@@ -68,11 +68,21 @@ export async function handlePageMessage(ev) {
     console.log(`[handler] ${conversationId}: tin page về ${Math.round((Date.now()-last)/1000)}s sau khi bot gửi → coi là echo, KHÔNG đánh telesale`);
     return;
   }
-  // Còn lại = TELESALE GÕ TAY → đánh dấu người tiếp quản, bot lui.
+  // LỚP 3 (chống đánh nhầm cờ human): telesale THẬT tư vấn bằng câu tử tế, không phải mẩu cụt
+  // ("alo", "ok", emoji...). Tin page ngắn dưới ngưỡng → nhiều khả năng là echo/tin test/Pancake AI
+  // sót → KHÔNG đánh cờ human. Ngưỡng chỉnh qua HUMAN_MIN_CHARS (mặc định 12 ký tự).
+  const cleaned = normalizeMsg(messageText);
+  if (cleaned.length < HUMAN_MIN_CHARS) {
+    console.log(`[handler] ${conversationId}: tin page quá ngắn ("${messageText.slice(0,20)}") → KHÔNG coi là telesale gõ tay`);
+    return;
+  }
+  // Còn lại = TELESALE GÕ TAY THẬT → đánh dấu người tiếp quản, bot lui.
   store.ensureConversation(conversationId, pageId, null);
   store.markHumanTaken(conversationId);
   console.log(`[handler] 👤 ${conversationId}: telesale gõ tay → bot LUI (giữ ${HUMAN_HOLD_HOURS}h)`);
 }
+// Ngưỡng ký tự tối thiểu để coi tin page là "telesale gõ tay thật" (lọc mẩu cụt/echo).
+const HUMAN_MIN_CHARS = parseInt(process.env.HUMAN_MIN_CHARS || '12', 10);
 
 // Map bệnh → sale page (đồng bộ với mục 6 system prompt).
 const SALE_PAGE = {
@@ -149,13 +159,15 @@ export async function handleIncoming(ev) {
       return;
     }
 
-    // NGƯỜI VÀO, BOT LUI: telesale vừa gõ tay trong HUMAN_HOLD_HOURS giờ → bot IM,
-    // không chồng tin. Quá thời gian đó telesale không gõ thêm → bot tiếp quản lại.
+    // NGƯỜI THẬT VÀO → BOT LUI. (Thiết kế mới chốt với anh 28/06: bot TOÀN QUYỀN xử tới khi
+    // gửi sale page + xin SĐT. Telesale KHÔNG đụng check page, chỉ xử qua Telegram; muốn bot im
+    // thì GẮN NHÃN — đã chặn ở hasStopLabel trên.) Cờ human CHỈ được đánh khi CHẮC CHẮN telesale
+    // gõ tay thật (handlePageMessage đã lọc echo/Pancake AI nhiều lớp), nên ở đây tin tưởng nó.
     if (store.isHumanActive(conv, HUMAN_HOLD_HOURS)) {
-      console.log(`[handler] ${conversationId} telesale đang giữ → bot lui (khách vừa nhắn)`);
+      console.log(`[handler] ${conversationId} người thật đang giữ → bot lui (khách vừa nhắn)`);
       store.appendHistory(conversationId, 'user', messageText);
       store.markCustomerMessaged(conversationId);
-      return; // bot im, để telesale trả lời
+      return; // bot im, để người thật trả lời
     }
 
     // Lưu tin khách + cập nhật mốc thời gian (cho retouch).

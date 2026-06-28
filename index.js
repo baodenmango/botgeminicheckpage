@@ -18,6 +18,21 @@ app.use(express.json({ limit: '2mb' }));
 app.get('/health', (_req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
 app.get('/', (_req, res) => res.status(200).send('Bot Gemini Hiệp Lợi đang chạy ✅'));
 
+// --- Admin: gỡ cờ "người giữ" bị kẹt (do bug nhận nhầm echo là telesale) ---
+// GET /admin/reset-human?token=XXX            → gỡ cờ TẤT CẢ hội thoại
+// GET /admin/reset-human?token=XXX&conv=<id>  → gỡ cờ 1 hội thoại
+// Token lấy từ env ADMIN_TOKEN (đặt trên Render). Không có token → 403.
+app.get('/admin/reset-human', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const conv = req.query.conv;
+  const changed = conv ? store.clearHumanTaken(String(conv)) : store.clearAllHumanTaken();
+  console.log(`[admin] gỡ cờ human-taken ${conv ? `conv ${conv}` : 'TẤT CẢ'} → ${changed} dòng`);
+  res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed });
+});
+
 /**
  * Trích thông tin tin nhắn từ payload webhook Pancake.
  * Payload Pancake có nhiều biến thể → cố gắng đọc linh hoạt nhiều khóa.
