@@ -2,7 +2,7 @@
 // Bắt các kiểu: 0912345678, 0912 345 678, 0912.345.678, +84912345678.
 
 // Cụm chữ số (kèm dấu cách/chấm/gạch) — để dò mọi chuỗi giống số điện thoại.
-const DIGIT_GROUP_RE = /(?:(?:\+?84)|0)[\d .\-]{7,13}\d/g;
+const DIGIT_GROUP_RE = /(?:(?:\+?84)|0)[\d .\-]{6,13}\d/g;
 
 // Chuẩn hóa: bỏ khoảng trắng/dấu chấm/gạch; +84 → 0; 84... → 0...
 function normalize(raw) {
@@ -39,17 +39,33 @@ export function extractPhone(text) {
  * @returns {boolean}
  */
 export function looksLikeBadPhone(text) {
-  if (!text) return false;
+  return diagnoseBadPhone(text) !== null;
+}
+
+/**
+ * Chẩn LÝ DO số sai để bot nhắn ĐÚNG bệnh (đừng nói "thiếu số" khi thật ra sai đầu số).
+ * Trả về:
+ *  - 'wrong_prefix' : đủ 10 số nhưng đầu KHÔNG phải 03/05/07/08/09 (vd 0123888777, 0223...).
+ *  - 'too_short'    : ít hơn 10 số (vd 038383882 = 9 số).
+ *  - 'too_long'     : nhiều hơn 10 số (vd dư số).
+ *  - null           : không phải ý định cho SĐT / đã có số hợp lệ.
+ */
+export function diagnoseBadPhone(text) {
+  if (!text) return null;
   const matches = text.match(DIGIT_GROUP_RE);
-  if (!matches) return false;
+  if (!matches) return null;
   for (const m of matches) {
-    const n = normalize(m);
-    if (VALID_VN_MOBILE.test(n)) return false; // có số hợp lệ rồi → không "bad"
+    if (VALID_VN_MOBILE.test(normalize(m))) return null; // đã có số hợp lệ → không sai
   }
-  // có cụm số nhiều chữ số (giống ý định cho SĐT) nhưng không hợp lệ
+  // xét cụm số GIỐNG SĐT nhất (dài 8–11, bắt đầu 0/84)
   for (const m of matches) {
-    const digits = normalize(m).replace(/\D/g, '');
-    if (digits.length >= 8 && digits.length <= 11 && /^0|^84/.test(digits)) return true;
+    const d = normalize(m).replace(/\D/g, '');
+    if (!/^0|^84/.test(d)) continue;
+    const local = d.startsWith('84') ? '0' + d.slice(2) : d; // chuẩn về dạng 0...
+    if (local.length < 10) return 'too_short';
+    if (local.length > 10) return 'too_long';
+    // đúng 10 số mà tới đây = đầu số sai (vì VALID_VN_MOBILE đã loại ở trên)
+    return 'wrong_prefix';
   }
-  return false;
+  return null;
 }

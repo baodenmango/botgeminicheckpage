@@ -2,7 +2,7 @@
 import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled, hasStopLabel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
-import { extractPhone, looksLikeBadPhone } from './utils.js';
+import { extractPhone, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
@@ -177,20 +177,31 @@ export async function handleIncoming(ev) {
     // Chốt SĐT bằng regex (CHỈ nhận số VN hợp lệ đúng 10 số).
     const phoneByRegex = extractPhone(messageText);
 
-    // Khách CHO SỐ nhưng SAI/THIẾU (vd 9 số) + chưa có số hợp lệ → bot HỎI LẠI đủ số,
+    // Khách CHO SỐ nhưng SAI + chưa có số hợp lệ → bot HỎI LẠI, nói ĐÚNG LÝ DO sai
+    // (thiếu số vs SAI ĐẦU SỐ là 2 chuyện khác nhau — nói nhầm làm khách bối rối, rớt lead).
     // KHÔNG chốt lead số chết. (Bỏ qua nếu đã captured rồi.)
-    if (!phoneByRegex && !store.isCaptured(conv) && looksLikeBadPhone(messageText)) {
-      console.log(`[handler] ${conversationId} khách cho SĐT sai/thiếu số → xin nhắn lại`);
+    const badPhoneReason = !phoneByRegex && !store.isCaptured(conv) ? diagnoseBadPhone(messageText) : null;
+    if (badPhoneReason) {
+      console.log(`[handler] ${conversationId} khách cho SĐT sai (${badPhoneReason}) → xin nhắn lại`);
       const cname = customerName || conv.customer_name;
       const xung = cname ? '' : 'anh/chị ';
+      // Câu giải thích theo đúng lý do
+      let why;
+      if (badPhoneReason === 'wrong_prefix') {
+        why = `Dạ ${xung}ơi, số mình gửi đầu số chưa đúng rồi ạ 😅 Số di động Việt Nam mình đầu là 03/05/07/08/09 đó ạ.`;
+      } else if (badPhoneReason === 'too_long') {
+        why = `Dạ ${xung}ơi, hình như số mình gửi bị dư mất một số rồi ạ 😅`;
+      } else { // too_short
+        why = `Dạ ${xung}ơi, hình như số mình gửi bị thiếu mất một số rồi ạ 😅`;
+      }
       const askAgain = [
-        `Dạ ${xung}ơi, hình như số điện thoại mình gửi bị thiếu/sai một chút rồi ạ 😅`,
+        why,
         `Mình kiểm tra gửi lại giúp em số đủ 10 số nha, để Bác sĩ gọi tư vấn cho mình không bị nhầm ạ.`,
       ];
       askAgain.forEach((m) => noteBotSent(conversationId, m));
       noteBotJustSent(conversationId); // chống race: đánh dấu bot vừa gửi (echo sắp về)
       await sendMessages(pageId, conversationId, askAgain);
-      store.appendHistory(conversationId, 'model', 'Xin khách gửi lại SĐT đủ 10 số (số trước thiếu/sai).');
+      store.appendHistory(conversationId, 'model', `Xin khách gửi lại SĐT (lý do: ${badPhoneReason}).`);
       return;
     }
 
