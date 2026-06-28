@@ -14,17 +14,33 @@ const API_BASE = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_ap
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Delay "giống người thật" TRƯỚC khi gửi ô thứ i (i bắt đầu từ 0).
-// Tin đầu (i=0) gửi ngay. Từ tin 2 trở đi: mô phỏng người đang LẮNG NGHE + suy nghĩ
-// + gõ phím — thời gian tỉ lệ với độ dài tin, cộng chút ngẫu nhiên cho tự nhiên.
+// Mô phỏng người tư vấn thật: ĐỌC tin khách → NGHĨ (lắng nghe, đồng cảm) → GÕ trên điện thoại.
+// Tốc độ gõ ĐT thật ~4–5 ký tự/giây (KHÔNG phải máy bắn tức thì). Tin đầu cũng phải có
+// nhịp đọc+nghĩ, KHÔNG gửi ngay — trả lời tức thì là dấu hiệu lộ "bot" rõ nhất.
+//
+// Có thể tinh chỉnh qua env:
+//   TYPE_MS_PER_CHAR (mặc định 180ms/ký tự ≈ 5.5 ký tự/s)
+//   THINK_MIN_MS / THINK_RAND_MS (nhịp nghĩ trước khi gõ)
+//   FIRST_READ_MS (nhịp đọc tin khách trước khi gõ ô ĐẦU)
+//   DELAY_CAP_MS (trần mỗi ô, tránh khách chờ quá lâu)
+// Mục tiêu (chốt với anh): 1 câu thường ~45 ký tự hiện ra sau ~4–6s — giống người đọc+gõ.
+const TYPE_MS_PER_CHAR = parseInt(process.env.TYPE_MS_PER_CHAR || '70', 10);  // ~14 ký tự/s, gõ nhanh tay
+const THINK_MIN_MS = parseInt(process.env.THINK_MIN_MS || '1000', 10);
+const THINK_RAND_MS = parseInt(process.env.THINK_RAND_MS || '1200', 10);
+const FIRST_READ_MS = parseInt(process.env.FIRST_READ_MS || '800', 10);       // nhịp đọc tin khách trước khi gõ ô đầu
+const DELAY_CAP_MS = parseInt(process.env.DELAY_CAP_MS || '8000', 10);        // trần 8s/ô (câu rất dài)
+
 function humanDelay(text, index) {
-  if (index === 0) return 0; // tin đầu phản hồi nhanh
   const len = (text || '').length;
-  // tốc độ gõ ~ 18 ký tự/giây + 1 nhịp "nghĩ" 1.2–2.2s
-  const typing = Math.min(len * 55, 4500);          // gõ: tối đa ~4.5s cho tin dài
-  const thinking = 1200 + Math.floor(Math.random() * 1000); // nghĩ: 1.2–2.2s
+  // gõ: tỉ lệ độ dài, tốc độ người thật trên ĐT
+  const typing = len * TYPE_MS_PER_CHAR;
+  // nghĩ: nhịp "lắng nghe + cân nhắc" trước khi gõ, có ngẫu nhiên cho tự nhiên
+  const thinking = THINK_MIN_MS + Math.floor(Math.random() * THINK_RAND_MS);
+  // ô ĐẦU: thêm nhịp ĐỌC tin khách (người thật đọc xong mới gõ — không bắn ngay)
+  const read = index === 0 ? FIRST_READ_MS + Math.floor(Math.random() * 1500) : 0;
   // tin càng về sau nghĩ thêm chút (như đang cân nhắc nói tiếp)
-  const lean = (index - 1) * 400;
-  return Math.min(typing + thinking + lean, 7000);  // trần 7s/ô, tránh khách chờ quá lâu
+  const lean = index > 0 ? (index - 1) * 500 : 0;
+  return Math.min(read + thinking + typing + lean, DELAY_CAP_MS);
 }
 
 // Lấy token của 1 trang theo page_id; null nếu trang không được cấu hình.
