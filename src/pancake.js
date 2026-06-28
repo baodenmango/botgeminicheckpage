@@ -195,3 +195,34 @@ export async function sendMessages(pageId, conversationId, messages) {
     if (!ok) break; // gửi lỗi thì dừng, tránh spam nửa vời
   }
 }
+
+// Bỏ thẻ HTML cơ bản (tin Pancake bọc <div>).
+function stripHtmlBasic(s) {
+  return String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim();
+}
+
+/**
+ * Đọc TIN CUỐI CÙNG CỦA KHÁCH trong 1 hội thoại (để "poke" bot xử lại thủ công).
+ * Dùng cho endpoint /admin/poke — ép bot trả lời ca đã bị bỏ lửng mà khách chưa nhắn mới.
+ * Trả về { messageText, customerName } hoặc null nếu không đọc được / tin cuối là của page.
+ */
+export async function getLastCustomerMessage(pageId, conversationId) {
+  const token = getPageToken(pageId);
+  if (!token) return null;
+  const url = `${API_BASE}/pages/${pageId}/conversations/${conversationId}/messages`;
+  const res = await axios.get(url, { params: { page_access_token: token }, timeout: 20000, validateStatus: () => true });
+  const msgs = res?.data?.messages;
+  if (!Array.isArray(msgs) || msgs.length === 0) return null;
+  // messages xếp CŨ→MỚI; tìm tin gần nhất KHÔNG phải do page gửi (from.id !== pageId).
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    const from = m.from || {};
+    const isPage = String(from.id) === String(pageId);
+    if (isPage) continue;
+    const text = stripHtmlBasic(m.message || m.original_message || '');
+    if (!text) continue;
+    return { messageText: text, customerName: from.name || null };
+  }
+  return null; // tin cuối là của page → khách chưa hỏi gì mới, không poke
+}

@@ -6,7 +6,7 @@ import cron from 'node-cron';
 
 import { config, checkConfig } from './src/config.js';
 import { handleIncoming, handleRetouch, handlePageMessage } from './src/handler.js';
-import { isPageEnabled } from './src/pancake.js';
+import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
 import * as store from './src/store.js';
 
 checkConfig();
@@ -31,6 +31,36 @@ app.get('/admin/reset-human', (req, res) => {
   const changed = conv ? store.clearHumanTaken(String(conv)) : store.clearAllHumanTaken();
   console.log(`[admin] gỡ cờ human-taken ${conv ? `conv ${conv}` : 'TẤT CẢ'} → ${changed} dòng`);
   res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed });
+});
+
+// --- Admin: ÉP bot trả lời lại 1 hội thoại bị bỏ lửng (khách chưa nhắn mới) ---
+// GET /admin/poke?token=XXX&page=<pageId>&conv=<conversationId>
+// Đọc tin cuối của KHÁCH trong conv đó rồi đẩy vào handleIncoming như webhook thật.
+// Cũng gỡ cờ human-taken trước, để bot không bị chính cờ cũ chặn.
+app.get('/admin/poke', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const pageId = String(req.query.page || '');
+  const conv = String(req.query.conv || '');
+  if (!pageId || !conv) return res.status(400).json({ ok: false, error: 'thiếu page hoặc conv' });
+  if (!isPageEnabled(pageId)) return res.status(400).json({ ok: false, error: 'page chưa bật bot' });
+
+  try {
+    store.clearHumanTaken(conv); // gỡ cờ kẹt trước khi xử
+    const last = await getLastCustomerMessage(pageId, conv);
+    if (!last) {
+      return res.status(200).json({ ok: false, error: 'không thấy tin cuối của khách (tin cuối là của page hoặc rỗng)' });
+    }
+    console.log(`[admin] 🤖 poke conv ${conv}: ép bot trả lời tin khách "${last.messageText.slice(0, 50)}"`);
+    // gọi như webhook tin khách mới (không await để trả response nhanh)
+    handleIncoming({ conversationId: conv, pageId, customerName: last.customerName, messageText: last.messageText });
+    res.status(200).json({ ok: true, conv, poked: last.messageText.slice(0, 80), name: last.customerName });
+  } catch (err) {
+    console.error('[admin] poke lỗi:', err?.message || err);
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
 });
 
 /**
