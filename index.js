@@ -29,8 +29,13 @@ app.get('/admin/reset-human', (req, res) => {
   }
   const conv = req.query.conv;
   const changed = conv ? store.clearHumanTaken(String(conv)) : store.clearAllHumanTaken();
-  console.log(`[admin] gỡ cờ human-taken ${conv ? `conv ${conv}` : 'TẤT CẢ'} → ${changed} dòng`);
-  res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed });
+  // thêm &handover=1 để gỡ luôn trạng thái handover (đưa conv về active) — dùng khi bot handover OAN
+  let handoverCleared = 0;
+  if (conv && (req.query.handover === '1' || req.query.handover === 'true')) {
+    handoverCleared = store.clearHandover(String(conv));
+  }
+  console.log(`[admin] gỡ cờ human-taken ${conv ? `conv ${conv}` : 'TẤT CẢ'} → ${changed} dòng${handoverCleared ? ` + gỡ handover ${handoverCleared}` : ''}`);
+  res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed, handoverCleared });
 });
 
 // --- Admin: ÉP bot trả lời lại 1 hội thoại bị bỏ lửng (khách chưa nhắn mới) ---

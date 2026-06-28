@@ -132,6 +132,14 @@ export function clearAllHumanTaken() {
   return r.changes;
 }
 
+// Gỡ trạng thái handover (đưa về active) cho 1 conv → bot tư vấn lại từ đầu.
+// Dùng khi bot handover OAN (ca thật ra nhẹ, là lead). KHÔNG đụng phone đã có.
+export function clearHandover(conversationId) {
+  const r = db.prepare("UPDATE conversations SET status = 'active', human_taken_at = NULL WHERE conversation_id = ? AND status = 'handover'")
+    .run(String(conversationId));
+  return r.changes;
+}
+
 // Telesale có đang "giữ" hội thoại không? (đã gõ tay trong vòng holdHours giờ)
 // → true thì bot IM, để người thật xử. Quá holdHours không gõ thêm → bot được tiếp quản lại.
 export function isHumanActive(conv, holdHours) {
