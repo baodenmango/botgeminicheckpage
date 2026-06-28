@@ -118,7 +118,18 @@ function parsePancakeWebhook(body) {
   const rawText =
     (typeof msg.message === 'string' ? msg.message : null) ||
     msg.text || conv.snippet || null;
-  const messageText = stripHtml(rawText);
+  let messageText = stripHtml(rawText);
+
+  // Khách KHÔNG gõ chữ mà gửi ẢNH/STICKER/FILE/VOICE (rất hay gặp ở người lớn tuổi:
+  // gửi ảnh phim X-quang, ảnh đơn thuốc, ảnh chỗ đau). Đừng bỏ qua → bot phải phản hồi.
+  // Đặt placeholder để bot biết khách vừa gửi gì (handler/Gemini xử như tin có nội dung).
+  if (!messageText) {
+    const att = msg.attachments || msg.attachment || conv.attachments || data.attachments;
+    const hasAttachment = Array.isArray(att) ? att.length > 0 : Boolean(att);
+    if (hasAttachment) {
+      messageText = '[khách vừa gửi một hình ảnh/tệp]';
+    }
+  }
 
   if (!conversationId || !pageId || !messageText) return null;
 

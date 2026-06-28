@@ -98,7 +98,25 @@ export async function generateReply(history, mode = 'reply', customerName = null
       });
     }
 
-    const result = await model.generateContent({ contents });
+    // Gọi Gemini có RETRY cho lỗi tạm thời (429 quá tải / timeout / 5xx).
+    // Các lỗi này thường qua sau 1–2s; retry 1 lần cứu được nhiều lượt thay vì bot trả "chờ chút".
+    let result;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        result = await model.generateContent({ contents });
+        break;
+      } catch (e) {
+        const code = e?.status || e?.code || (e?.message || '').match(/\b(429|500|503)\b/)?.[1];
+        const retriable = ['429', '500', '503', 429, 500, 503].includes(code) ||
+          /quota|overload|rate|timeout|deadline|unavailable/i.test(e?.message || '');
+        if (attempt === 1 && retriable) {
+          console.warn(`[gemini] lỗi tạm (${code || e?.message?.slice(0,40)}) → retry sau 1.5s`);
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        throw e; // lỗi không retriable, hoặc đã retry rồi → ném ra catch ngoài
+      }
+    }
     const text = result.response.text();
 
     let parsed;

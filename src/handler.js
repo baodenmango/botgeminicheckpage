@@ -6,7 +6,18 @@ import { extractPhone, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
-const locks = new Set();
+// Map (không Set): lưu thời điểm khóa để TỰ HẾT HẠN sau LOCK_TTL — chống kẹt vĩnh viễn
+// nếu 1 lượt xử lý bị treo (Gemini/sendMessages hang) → conv đó sẽ không câm mãi.
+const locks = new Map();
+const LOCK_TTL_MS = parseInt(process.env.LOCK_TTL_MS || '60000', 10);
+function lockHeld(id) {
+  const at = locks.get(String(id));
+  if (!at) return false;
+  if (Date.now() - at > LOCK_TTL_MS) { locks.delete(String(id)); return false; } // hết hạn → coi như mở
+  return true;
+}
+function lockAcquire(id) { locks.set(String(id), Date.now()); }
+function lockRelease(id) { locks.delete(String(id)); }
 
 // Lưu nội dung tin BOT vừa gửi (để phân biệt với tin telesale gõ tay khi webhook dội về).
 // Map: conversationId -> [{text, at}]. Tự dọn entry cũ.
@@ -121,11 +132,11 @@ export async function handleIncoming(ev) {
   if (!isPageEnabled(pageId)) return; // trang chưa bật bot → bỏ qua
   if (!messageText || !messageText.trim()) return;
 
-  if (locks.has(conversationId)) {
+  if (lockHeld(conversationId)) {
     console.log(`[handler] ${conversationId} đang xử lý, bỏ qua tin chồng`);
     return;
   }
-  locks.add(conversationId);
+  lockAcquire(conversationId);
   try {
     const conv = store.ensureConversation(conversationId, pageId, customerName);
 
@@ -216,7 +227,7 @@ export async function handleIncoming(ev) {
   } catch (err) {
     console.error('[handler] lỗi handleIncoming:', err?.message || err);
   } finally {
-    locks.delete(conversationId);
+    lockRelease(conversationId);
   }
 }
 
@@ -225,8 +236,8 @@ export async function handleIncoming(ev) {
  */
 export async function handleRetouch(conv) {
   const { conversation_id: conversationId, page_id: pageId } = conv;
-  if (locks.has(conversationId)) return;
-  locks.add(conversationId);
+  if (lockHeld(conversationId)) return;
+  lockAcquire(conversationId);
   try {
     const fresh = store.getConversation(conversationId);
     if (!fresh || store.isHandled(fresh)) return; // đã giao người trong lúc chờ
@@ -244,7 +255,7 @@ export async function handleRetouch(conv) {
   } catch (err) {
     console.error('[handler] lỗi handleRetouch:', err?.message || err);
   } finally {
-    locks.delete(conversationId);
+    lockRelease(conversationId);
   }
 }
 
