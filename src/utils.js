@@ -47,6 +47,26 @@ export function extractPhone(text) {
 }
 
 /**
+ * Quét SĐT hợp lệ trong TOÀN BỘ lịch sử tin của KHÁCH (role 'user'),
+ * lấy số khách cho GẦN NHẤT. Vá ca: khách cho số ở lượt trước rồi nhắn câu khác
+ * → extractPhone(tin hiện tại) trả null → bot tưởng chưa có số rồi XIN LẠI (lỗi chị Hoa).
+ * Bằng cách soi cả lịch sử, bot nhận ra "đã có số rồi" → chuyển chăm sóc, không xin lại.
+ * @param {Array<{role:string,text:string}>} history
+ * @returns {string|null} số hợp lệ khách cho gần nhất, hoặc null
+ */
+export function extractPhoneFromHistory(history) {
+  if (!Array.isArray(history)) return null;
+  // duyệt từ MỚI → CŨ, lấy số khách cho gần nhất
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (!h || h.role !== 'user') continue; // chỉ tin KHÁCH (không quét tin bot/model)
+    const p = extractPhone(h.text);
+    if (p) return p;
+  }
+  return null;
+}
+
+/**
  * Khách CÓ VẺ đang cho số nhưng SAI/THIẾU (vd "037661694" = 9 số, hoặc 11 số).
  * Dùng để bot chủ động xin khách nhắn lại đủ số — tránh chốt nhầm số chết.
  * Trả về true khi: có cụm chữ số dài 8–11, bắt đầu 0 hoặc 84, NHƯNG không hợp lệ.

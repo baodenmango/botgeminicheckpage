@@ -5,8 +5,10 @@ import express from 'express';
 import cron from 'node-cron';
 
 import { config, checkConfig } from './src/config.js';
-import { handleIncoming, handleRetouch, handlePageMessage } from './src/handler.js';
+import { handleIncoming, handleRetouch, handlePageMessage, handleBotTouch } from './src/handler.js';
+import { BOT_TOUCHES } from './src/touches.js';
 import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
+import { isCommentEvent, parseComment, handleComment } from './src/comment.js';
 import * as store from './src/store.js';
 
 checkConfig();
@@ -148,12 +150,38 @@ function parsePancakeWebhook(body) {
   };
 }
 
+// In payload thô của COMMENT lần đầu mỗi khởi động (để đối chiếu field nếu parse hụt).
+// Chỉ in 1 lần cho gọn log; comment sau parse thẳng.
+let rawCommentLogged = false;
+
 // --- Webhook nhận tin từ Pancake ---
 app.post('/webhook', (req, res) => {
   // Trả 200 NGAY để Pancake không retry; xử lý bất đồng bộ sau.
   res.status(200).json({ received: true });
 
   try {
+    // COMMENT dưới bài → xử riêng (rep công khai mời + nhắn riêng vào inbox).
+    // Phải kiểm tra TRƯỚC parsePancakeWebhook vì payload comment khác tin nhắn inbox.
+    if (isCommentEvent(req.body)) {
+      if (!rawCommentLogged) {
+        console.log('[comment] payload thô (lần đầu, để đối chiếu field):',
+          JSON.stringify(req.body).slice(0, 1500));
+        rawCommentLogged = true;
+      }
+      const cev = parseComment(req.body);
+      if (!cev) {
+        console.warn('[comment] không parse được payload comment → bỏ qua. Body:',
+          JSON.stringify(req.body).slice(0, 800));
+        return;
+      }
+      if (!isPageEnabled(cev.pageId)) {
+        console.log(`[comment] page ${cev.pageId} chưa bật bot → bỏ qua`);
+        return;
+      }
+      handleComment(cev); // không await — chạy nền
+      return;
+    }
+
     const ev = parsePancakeWebhook(req.body);
     if (!ev) {
       return; // payload không đủ → bỏ qua
@@ -189,6 +217,35 @@ cron.schedule('*/15 * * * *', async () => {
     }
   } catch (err) {
     console.error('[cron] lỗi retouch:', err?.message || err);
+  }
+});
+
+// --- Cron ENGINE 7 CHẠM (chạm bot 3/4/6) mỗi 15 phút, lệch 5' với retouch ---
+// Mỗi lead tới mốc T+ của chạm nào (3=2h, 4=6h, 6=30h) mà chưa gửi → bot tự gửi tin giá trị.
+// Chạm 2/5/7 do telesale gọi (engine nhac-7cham bắn nhắc Telegram, KHÔNG ở đây).
+const HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+const TOUCH_GRACE_HOURS = parseFloat(process.env.TOUCH_GRACE_HOURS || '6'); // trễ tối đa sau mốc
+const TOUCH_WINDOW_HOURS = parseFloat(process.env.TOUCH_WINDOW_HOURS || '48');
+cron.schedule('5,20,35,50 * * * *', async () => {
+  try {
+    // Gom theo LEAD: mỗi lead 1 lượt CHỈ gửi 1 chạm — chạm có mốc CAO NHẤT đã tới hạn & chưa gửi.
+    // (Tránh dồn chạm 3+4 liền nhau khi bot ngủ qua đêm rồi sáng lead đã quá nhiều mốc → lộ bot.)
+    const chonChamCho = new Map(); // conversation_id -> { conv, touchNo, hours }
+    for (const t of BOT_TOUCHES) {
+      const targets = store.findTouchTargets(t.no, t.hours, HOLD_HOURS, TOUCH_GRACE_HOURS, TOUCH_WINDOW_HOURS);
+      for (const conv of targets) {
+        const cur = chonChamCho.get(conv.conversation_id);
+        if (!cur || t.hours > cur.hours) chonChamCho.set(conv.conversation_id, { conv, touchNo: t.no, hours: t.hours });
+      }
+    }
+    if (chonChamCho.size === 0) return;
+    console.log(`[cron-cham] ${chonChamCho.size} lead tới mốc chạm bot`);
+    for (const { conv, touchNo } of chonChamCho.values()) {
+      if (!isPageEnabled(conv.page_id)) continue;
+      await handleBotTouch(conv, touchNo);
+    }
+  } catch (err) {
+    console.error('[cron-cham] lỗi engine 7 chạm:', err?.message || err);
   }
 });
 

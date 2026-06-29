@@ -2,8 +2,9 @@
 import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled, hasStopLabel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
-import { extractPhone, diagnoseBadPhone } from './utils.js';
+import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
+import { buildTouchMessages } from './touches.js';
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
 // Map (không Set): lưu thời điểm khóa để TỰ HẾT HẠN sau LOCK_TTL — chống kẹt vĩnh viễn
@@ -186,7 +187,19 @@ export async function handleIncoming(ev) {
     store.markCustomerMessaged(conversationId);
 
     // Chốt SĐT bằng regex (CHỈ nhận số VN hợp lệ đúng 10 số).
-    const phoneByRegex = extractPhone(messageText);
+    let phoneByRegex = extractPhone(messageText);
+
+    // VÁ LỖI "XIN SỐ LẶP" (ca chị Hoa): khách đã cho số ở LƯỢT TRƯỚC rồi nhắn câu khác
+    // → tin hiện tại không có số → bot tưởng chưa có rồi xin lại. Soi cả LỊCH SỬ: nếu khách
+    // TỪNG cho số hợp lệ mà conv chưa captured → coi như có số NGAY tại lượt này (sẽ chốt +
+    // báo Telegram + chuyển care ở dispatch), TUYỆT ĐỐI không xin lại nữa.
+    if (!phoneByRegex && !store.isCaptured(conv)) {
+      const phoneInHistory = extractPhoneFromHistory(store.getConversation(conversationId).history);
+      if (phoneInHistory) {
+        console.log(`[handler] ${conversationId} khách ĐÃ cho số ${phoneInHistory} ở lượt trước → chốt lại, KHÔNG xin nữa`);
+        phoneByRegex = phoneInHistory; // ép vào nhánh capture phía dưới
+      }
+    }
 
     // Khách CHO SỐ nhưng SAI + chưa có số hợp lệ → bot HỎI LẠI, nói ĐÚNG LÝ DO sai
     // (thiếu số vs SAI ĐẦU SỐ là 2 chuyện khác nhau — nói nhầm làm khách bối rối, rớt lead).
@@ -218,7 +231,8 @@ export async function handleIncoming(ev) {
 
     // Đã có SĐT rồi mà khách NHẮN TIẾP → chuyển mode CARE (chăm sóc, KHÔNG xin lại số,
     // mà nhắc đặt lịch / trấn an chờ Bác sĩ gọi / giải đáp thêm) — không buông khách.
-    const mode = store.isCaptured(conv) ? 'care' : 'reply';
+    // phoneByRegex (kể cả vừa vớt từ lịch sử) → cũng coi như đã có số → care, đừng xin lại.
+    const mode = (store.isCaptured(conv) || phoneByRegex) ? 'care' : 'reply';
 
     const history = store.getConversation(conversationId).history;
     const reply = await generateReply(history, mode, customerName || conv.customer_name);
@@ -254,6 +268,62 @@ export async function handleRetouch(conv) {
     console.log(`[retouch] đã chạm lại ${conversationId} (lần ${fresh.retouch_count + 1})`);
   } catch (err) {
     console.error('[handler] lỗi handleRetouch:', err?.message || err);
+  } finally {
+    lockRelease(conversationId);
+  }
+}
+
+/**
+ * Xử lý 1 CHẠM BOT (3/4/6) do cron 7-chạm gọi — bot TỰ GỬI tin giá trị cho khách.
+ * Khác handleRetouch (Gemini sinh tự do): chạm dùng NỘI DUNG SOẠN SẴN theo bệnh (touches.js)
+ * → kiểm soát chất lượng, không lệch giọng, gửi đúng cẩm nang/mẹo của phòng khám.
+ * @param {object} conv  bản ghi hội thoại (từ findTouchTargets)
+ * @param {number} touchNo  3 | 4 | 6
+ */
+export async function handleBotTouch(conv, touchNo) {
+  const { conversation_id: conversationId, page_id: pageId } = conv;
+  if (!isPageEnabled(pageId)) return;
+  if (lockHeld(conversationId)) return;
+  lockAcquire(conversationId);
+  try {
+    const fresh = store.getConversation(conversationId);
+    if (!fresh) return;
+    if (store.isTouchDone(fresh, touchNo)) return;      // đã gửi chạm này rồi (đua cron)
+    if (store.isHandover(fresh)) return;                  // khiếu nại/cần người → bot không chen
+    if (store.isHumanActive(fresh, HUMAN_HOLD_HOURS)) {   // telesale đang giữ → để người thật
+      console.log(`[cham${touchNo}] ${conversationId} người thật đang giữ → bỏ chạm bot`);
+      return;
+    }
+    // Nhãn chốt lịch / telesale xử ngoài inbox → IM, đánh dấu để khỏi gọi API mỗi cron.
+    if (await hasStopLabel(pageId, conversationId)) {
+      console.log(`[cham${touchNo}] ${conversationId} có nhãn chốt lịch/telesale xử → bỏ chạm`);
+      store.markTouchDone(conversationId, touchNo);
+      return;
+    }
+
+    const daCoSo = store.isCaptured(fresh);
+    const condition = fresh.condition || 'unknown';
+    const messages = buildTouchMessages(touchNo, condition, daCoSo);
+    if (!messages) {
+      // Chạm 3 chưa có review clip → coi như đã làm (khỏi kẹt cron), bỏ qua nhẹ nhàng.
+      console.log(`[cham${touchNo}] ${conversationId} không có nội dung (vd review chưa nạp) → đánh dấu xong, bỏ qua`);
+      store.markTouchDone(conversationId, touchNo);
+      return;
+    }
+
+    messages.forEach((m) => noteBotSent(conversationId, m));
+    noteBotJustSent(conversationId); // chống race echo
+    await sendMessages(pageId, conversationId, messages);
+    store.appendHistory(conversationId, 'model', `[CHẠM ${touchNo}] ` + messages.join('\n'));
+    store.markTouchDone(conversationId, touchNo);
+    // Bỏ qua các chạm THẤP hơn còn sót (lead vào đêm, sáng đã quá nhiều mốc → ta gửi mốc cao nhất,
+    // các mốc cũ coi như lỡ, đánh dấu xong để KHÔNG gửi ngược chạm 3 sau khi đã gửi chạm 4).
+    for (const lower of [3, 4, 6]) {
+      if (lower < touchNo) store.markTouchDone(conversationId, lower);
+    }
+    console.log(`[cham${touchNo}] ✅ đã gửi chạm bot cho ${conversationId} (bệnh ${condition}, ${daCoSo ? 'đã có số' : 'chưa số'})`);
+  } catch (err) {
+    console.error(`[handler] lỗi handleBotTouch (chạm ${touchNo}):`, err?.message || err);
   } finally {
     lockRelease(conversationId);
   }
