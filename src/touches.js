@@ -48,23 +48,47 @@ function tenBenhKey(condition) {
   return (condition && CAM_NANG_PDF[condition]) ? condition : FALLBACK_BENH;
 }
 
-// ===================== CHẠM 3 — BẰNG CHỨNG / REVIEW (T+2h) =====================
-// PLACEHOLDER: chờ nhân viên bổ sung clip bệnh nhân tương tự đã khỏi (anh dặn 29/06).
-// Khi có clip thật → điền vào REVIEW_THEO_BENH (link clip/album), bot sẽ gửi link đó.
-// Hiện chưa có clip → gửi review dạng CHỮ (an toàn, không bịa link), vẫn tạo niềm tin.
+// ===================== CHẠM 3 — BẰNG CHỨNG / NIỀM TIN CHUYÊN GIA (T+2h) =====================
+// THỰC TẾ (rà page 29/06): page drnhattrinh CHƯA có clip review bệnh nhân khỏi bệnh rõ ràng;
+// nội dung chủ yếu là VIDEO CHUYÊN MÔN của Bác sĩ Trình, đã gom thành PLAYLIST theo bệnh.
+// → Chạm 3 dùng PLAYLIST video chuyên môn đúng bệnh để tạo NIỀM TIN CHUYÊN GIA (Bác sĩ phân tích
+//   đúng tình trạng của khách), KHÔNG nói "ca khỏi bệnh" để tránh review giả + sai luật QC y tế.
+// Khi có clip BN thật → thay link trong REVIEW_THEO_BENH (ưu tiên hơn playlist).
+//
+// Link playlist video chuyên môn của page Dr Nhật Trình (id page 61585970317073):
+//   KHỚP VÀ THOÁI HÓA (34) · THOÁT VỊ ĐĨA ĐỆM (7) · CỘT SỐNG (4) · VIÊM KHỚP VÀ GOUT (10)
+const PLAYLIST_CHUYEN_MON = {
+  goi:      'https://www.facebook.com/watch/61585970317073/1737088327264712/',  // KHỚP & THOÁI HÓA
+  vai:      'https://www.facebook.com/watch/61585970317073/1737088327264712/',  // (chung nhóm khớp)
+  gut:      'https://www.facebook.com/watch/61585970317073/1289540823081958/',  // VIÊM KHỚP & GOUT
+  lung:     'https://www.facebook.com/watch/61585970317073/914497364559843/',   // CỘT SỐNG
+  tvdd:     'https://www.facebook.com/watch/61585970317073/26141737182149874/', // THOÁT VỊ ĐĨA ĐỆM
+  covaigay: 'https://www.facebook.com/watch/61585970317073/914497364559843/',   // (chung nhóm cột sống/cổ)
+};
+
+// Khi nhân viên có clip BN THẬT đã khỏi → điền vào đây (ưu tiên hơn playlist chuyên môn).
 export const REVIEW_THEO_BENH = {
-  // goi: 'https://...link album/clip review khớp gối...',
+  // goi: 'https://...link clip BN khỏi khớp gối...',
   // vai: '...', gut: '...', lung: '...', tvdd: '...', covaigay: '...',
 };
 
 function noiDungCham3(condition, daCoSo) {
   const key = tenBenhKey(condition);
-  const link = REVIEW_THEO_BENH[key]; // chỉ gửi khi nhân viên đã nạp clip thật
+  const reviewLink = REVIEW_THEO_BENH[key];           // clip BN thật (nếu có)
+  const link = reviewLink || PLAYLIST_CHUYEN_MON[key]; // không có review thì dùng video chuyên môn
+  const coReview = Boolean(reviewLink);
   const msgs = [];
-  if (daCoSo) {
-    msgs.push('Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem qua vài trường hợp cô chú lớn tuổi bị giống mình, sau khi khám và chăm đúng cách đã đi lại thoải mái hơn nhiều ạ 🥰');
+
+  if (coReview) {
+    // có clip BN thật → nói bằng chứng người thật
+    msgs.push(daCoSo
+      ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem qua trường hợp cô chú bị giống mình, sau khi khám và chăm đúng cách đã đỡ hơn nhiều ạ 🥰'
+      : 'Dạ em gửi mình tham khảo trường hợp cô chú bị giống mình, sau khi được khám và xử lý đúng đã cải thiện rõ ạ, để mình yên tâm hơn 🥰');
   } else {
-    msgs.push('Dạ em gửi mình tham khảo vài trường hợp cô chú bị tình trạng giống mình, sau khi được khám và xử lý đúng đã cải thiện rõ ạ, để mình yên tâm hơn 🥰');
+    // chưa có review → giới thiệu video Bác sĩ phân tích đúng bệnh (niềm tin chuyên gia)
+    msgs.push(daCoSo
+      ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ đúng tình trạng của mình, để mình hiểu rõ hơn nha ạ 🥰'
+      : 'Dạ em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ về đúng tình trạng của mình nha ạ, mình xem cho yên tâm hơn 🥰');
   }
   if (link) {
     msgs.push(`Mình xem ở đây nha ạ: ${link}`);
