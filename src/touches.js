@@ -53,16 +53,45 @@ function tenBenhKey(condition) {
 // khách đang quan tâm. Nhân viên sẽ gom clip theo bệnh gửi sau → điền link vào CLIP_THEO_BENH.
 //
 // CLIP_THEO_BENH[<bệnh>] = [link1, link2, link3]  (tối đa 3 clip, đúng bệnh).
-// Hiện TRỐNG — chờ nhân viên gom clip. Khi trống: bot KHÔNG gửi link, chỉ nhắn 1 câu nuôi dưỡng
-// (an toàn, không gửi link rỗng / không bịa review). Điền link xong là chạy ngay, không sửa code.
+// Link clip thật từ 2 page (nhân viên gom 29/06). Khi trống (vd covaigay): bot KHÔNG gửi link,
+// chỉ nhắn 1 câu nuôi dưỡng (an toàn). Bổ sung/đổi link là chạy ngay, không cần sửa code khác.
 export const CLIP_THEO_BENH = {
-  goi:      [], // vd: ['https://www.facebook.com/.../videos/<id>/', '...', '...']
-  vai:      [],
-  gut:      [],
-  lung:     [],
-  tvdd:     [],
+  // Thoái hóa khớp gối (Dr Nhật Trình + Pk Hiệp Lợi)
+  goi: [
+    'https://www.facebook.com/share/r/1LZWzyopfW/',
+    'https://www.facebook.com/share/r/1DFYq7aNR5/',
+  ],
+  // Khớp vai: thoái hóa vai + viêm quanh khớp vai + đau khớp vai (lấy 3 clip đại diện nhất)
+  vai: [
+    'https://www.facebook.com/share/v/1bUZLUJQaz/', // thoái hóa khớp vai
+    'https://www.facebook.com/share/r/17qGggo8BS/', // viêm quanh khớp vai
+    'https://www.facebook.com/share/r/1945KUU4AE/', // đau khớp vai (Pk Hiệp Lợi)
+  ],
+  // Bệnh gout (lấy 3 clip đại diện)
+  gut: [
+    'https://www.facebook.com/share/r/192Dk5Ct5H/',
+    'https://www.facebook.com/share/v/1J4YGvXQHo/',
+    'https://www.facebook.com/share/r/1TF4ciks2B/', // (Pk Hiệp Lợi)
+  ],
+  // Đau lưng / cột sống thắt lưng (low back pain)
+  lung: [
+    'https://www.facebook.com/share/r/19E639pQmE/',
+    'https://www.facebook.com/share/r/1B4UumKN4a/',
+  ],
+  // Thoát vị đĩa đệm + đau thần kinh tọa (tọa thường do TVDD chèn rễ thần kinh)
+  tvdd: [
+    'https://www.facebook.com/share/r/15xvpESyDix/',
+    'https://www.facebook.com/share/r/18z8xc7fZZ/', // (Pk Hiệp Lợi)
+    'https://www.facebook.com/share/r/1ERSFS6Aj8/', // đau thần kinh tọa (Pk Hiệp Lợi)
+  ],
+  // Cổ vai gáy: chưa có clip riêng → bot dùng cơ chế nuôi dưỡng an toàn (không gửi link)
   covaigay: [],
 };
+// Clip DỰ TRỮ (nhân viên gửi nhưng vượt giới hạn 3/bệnh) — đổi vào trên nếu muốn:
+//   vai (viêm quanh khớp vai #2):  https://www.facebook.com/share/r/1D3PF7veue/
+//   vai (chẹn dưới khoang bả vai): https://www.facebook.com/share/r/1EdTRfVFGy/
+//   gut (#4):                      https://www.facebook.com/share/r/19JKjNL4dE/
+//   tvdd (#4):                     https://www.facebook.com/share/r/14jA49nJXyv/
 
 // (giữ tương thích) clip review BN THẬT đã khỏi — nếu có thì cũng đưa vào CLIP_THEO_BENH luôn.
 export const REVIEW_THEO_BENH = CLIP_THEO_BENH;
