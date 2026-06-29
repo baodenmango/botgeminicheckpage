@@ -49,51 +49,47 @@ function tenBenhKey(condition) {
 }
 
 // ===================== CHẠM 3 — BẰNG CHỨNG / NIỀM TIN CHUYÊN GIA (T+2h) =====================
-// THỰC TẾ (rà page 29/06): page drnhattrinh CHƯA có clip review bệnh nhân khỏi bệnh rõ ràng;
-// nội dung chủ yếu là VIDEO CHUYÊN MÔN của Bác sĩ Trình, đã gom thành PLAYLIST theo bệnh.
-// → Chạm 3 dùng PLAYLIST video chuyên môn đúng bệnh để tạo NIỀM TIN CHUYÊN GIA (Bác sĩ phân tích
-//   đúng tình trạng của khách), KHÔNG nói "ca khỏi bệnh" để tránh review giả + sai luật QC y tế.
-// Khi có clip BN thật → thay link trong REVIEW_THEO_BENH (ưu tiên hơn playlist).
+// Anh CHỐT 29/06: KHÔNG gửi playlist (lùa cả mớ). Gửi ĐÚNG 3 CLIP tâm đắc nhất, đúng loại bệnh
+// khách đang quan tâm. Nhân viên sẽ gom clip theo bệnh gửi sau → điền link vào CLIP_THEO_BENH.
 //
-// Link playlist video chuyên môn của page Dr Nhật Trình (id page 61585970317073):
-//   KHỚP VÀ THOÁI HÓA (34) · THOÁT VỊ ĐĨA ĐỆM (7) · CỘT SỐNG (4) · VIÊM KHỚP VÀ GOUT (10)
-const PLAYLIST_CHUYEN_MON = {
-  goi:      'https://www.facebook.com/watch/61585970317073/1737088327264712/',  // KHỚP & THOÁI HÓA
-  vai:      'https://www.facebook.com/watch/61585970317073/1737088327264712/',  // (chung nhóm khớp)
-  gut:      'https://www.facebook.com/watch/61585970317073/1289540823081958/',  // VIÊM KHỚP & GOUT
-  lung:     'https://www.facebook.com/watch/61585970317073/914497364559843/',   // CỘT SỐNG
-  tvdd:     'https://www.facebook.com/watch/61585970317073/26141737182149874/', // THOÁT VỊ ĐĨA ĐỆM
-  covaigay: 'https://www.facebook.com/watch/61585970317073/914497364559843/',   // (chung nhóm cột sống/cổ)
+// CLIP_THEO_BENH[<bệnh>] = [link1, link2, link3]  (tối đa 3 clip, đúng bệnh).
+// Hiện TRỐNG — chờ nhân viên gom clip. Khi trống: bot KHÔNG gửi link, chỉ nhắn 1 câu nuôi dưỡng
+// (an toàn, không gửi link rỗng / không bịa review). Điền link xong là chạy ngay, không sửa code.
+export const CLIP_THEO_BENH = {
+  goi:      [], // vd: ['https://www.facebook.com/.../videos/<id>/', '...', '...']
+  vai:      [],
+  gut:      [],
+  lung:     [],
+  tvdd:     [],
+  covaigay: [],
 };
 
-// Khi nhân viên có clip BN THẬT đã khỏi → điền vào đây (ưu tiên hơn playlist chuyên môn).
-export const REVIEW_THEO_BENH = {
-  // goi: 'https://...link clip BN khỏi khớp gối...',
-  // vai: '...', gut: '...', lung: '...', tvdd: '...', covaigay: '...',
-};
+// (giữ tương thích) clip review BN THẬT đã khỏi — nếu có thì cũng đưa vào CLIP_THEO_BENH luôn.
+export const REVIEW_THEO_BENH = CLIP_THEO_BENH;
 
 function noiDungCham3(condition, daCoSo) {
   const key = tenBenhKey(condition);
-  const reviewLink = REVIEW_THEO_BENH[key];           // clip BN thật (nếu có)
-  const link = reviewLink || PLAYLIST_CHUYEN_MON[key]; // không có review thì dùng video chuyên môn
-  const coReview = Boolean(reviewLink);
+  const clips = (CLIP_THEO_BENH[key] || []).filter(Boolean).slice(0, 3); // tối đa 3 clip đúng bệnh
   const msgs = [];
 
-  if (coReview) {
-    // có clip BN thật → nói bằng chứng người thật
+  // Lời mở: giới thiệu video Bác sĩ Trình phân tích đúng tình trạng của khách (niềm tin chuyên gia).
+  msgs.push(daCoSo
+    ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ đúng tình trạng của mình, để mình hiểu rõ hơn nha ạ 🥰'
+    : 'Dạ em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ về đúng tình trạng của mình nha ạ, mình xem cho yên tâm hơn 🥰');
+
+  if (clips.length === 0) {
+    // Chưa có clip cho bệnh này → KHÔNG gửi link rỗng. Chỉ nuôi dưỡng nhẹ + nhắc giá trị khám.
     msgs.push(daCoSo
-      ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem qua trường hợp cô chú bị giống mình, sau khi khám và chăm đúng cách đã đỡ hơn nhiều ạ 🥰'
-      : 'Dạ em gửi mình tham khảo trường hợp cô chú bị giống mình, sau khi được khám và xử lý đúng đã cải thiện rõ ạ, để mình yên tâm hơn 🥰');
-  } else {
-    // chưa có review → giới thiệu video Bác sĩ phân tích đúng bệnh (niềm tin chuyên gia)
-    msgs.push(daCoSo
-      ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ đúng tình trạng của mình, để mình hiểu rõ hơn nha ạ 🥰'
-      : 'Dạ em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ về đúng tình trạng của mình nha ạ, mình xem cho yên tâm hơn 🥰');
+      ? 'Mình cứ yên tâm nha, Bác sĩ sẽ xem kỹ tình trạng và tư vấn hướng phù hợp cho mình ạ 🙏'
+      : 'Tình trạng của mình nên được Bác sĩ xem kỹ phim chụp để tư vấn đúng hướng ạ, mình để lại số để Bác sĩ gọi tư vấn miễn phí nha 🙏');
+    return msgs;
   }
-  if (link) {
-    msgs.push(`Mình xem ở đây nha ạ: ${link}`);
-  }
-  return msgs;
+
+  // Gửi từng clip thành 1 ô riêng (link đứng riêng để FB bung preview đẹp) — tối đa 3.
+  clips.forEach((link, i) => {
+    msgs.push(i === 0 ? `Mình xem nha ạ: ${link}` : link);
+  });
+  return msgs.slice(0, 4); // 1 lời mở + tối đa 3 clip
 }
 
 // ===================== CHẠM 4 — CHO GIÁ TRỊ / BÀI TẬP (T+6h) =====================
