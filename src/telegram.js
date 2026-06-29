@@ -96,6 +96,17 @@ export async function notifyHandover({ name, reason, condition, summary, pageId,
   await send(text);
 }
 
+// Báo có COMMENT mới dưới bài → bot đã rep mời + nhắn riêng, telesale theo dõi inbox.
+export async function notifyComment({ name, commentText, pageId, conversationId, privateOk }) {
+  let text =
+    `💬 <b>COMMENT MỚI dưới bài</b>\n` +
+    `👤 ${escapeHtml(name) || '(chưa rõ)'}\n` +
+    `📝 Nội dung: "${escapeHtml((commentText || '').slice(0, 150))}"\n` +
+    `🤖 Bot đã rep mời công khai${privateOk ? ' + nhắn riêng kéo vào inbox' : ' (private reply CHƯA gửi được — xem inbox/log)'}\n`;
+  if (conversationId) text += `➡️ ${pancakeLink(pageId, conversationId)}`;
+  await send(text);
+}
+
 // Từ khóa CẢNH BÁO Y TẾ KHẨN — bot không tự xử, báo người gọi gấp.
 const URGENT_RE = /không đi tiểu|bí tiểu|tê liệt|liệt|không cử động|yếu (hai|2) chân|ngất|khó thở|đau dữ dội|đau quá|cấp cứu|tê cả|mất cảm giác|sốt cao|co giật/i;
 

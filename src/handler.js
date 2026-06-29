@@ -1,6 +1,6 @@
 // Lõi xử lý hội thoại — dùng chung cho webhook (tin mới) và cron (retouch).
 import { generateReply } from './gemini.js';
-import { sendMessages, isPageEnabled, hasStopLabel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
+import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
@@ -232,7 +232,15 @@ export async function handleIncoming(ev) {
     // Đã có SĐT rồi mà khách NHẮN TIẾP → chuyển mode CARE (chăm sóc, KHÔNG xin lại số,
     // mà nhắc đặt lịch / trấn an chờ Bác sĩ gọi / giải đáp thêm) — không buông khách.
     // phoneByRegex (kể cả vừa vớt từ lịch sử) → cũng coi như đã có số → care, đừng xin lại.
-    const mode = (store.isCaptured(conv) || phoneByRegex) ? 'care' : 'reply';
+    //
+    // NGOÀI RA: khách ĐÃ THÀNH KHÁCH (nhãn Pancake "đã đến khám/đã thu tiền/đã cọc..." — số
+    // vào qua POS chứ không qua chat, ca anh Cầu) → cũng care: chăm sóc, KHÔNG chào mới/xin số.
+    let isCustomer = store.isCaptured(conv) || Boolean(phoneByRegex);
+    if (!isCustomer) {
+      try { isCustomer = await hasCustomerLabel(pageId, conversationId); } catch { /* fail-open */ }
+      if (isCustomer) store.setPhoneCaptured(conversationId, conv.phone || null, customerName || conv.customer_name); // nhớ trạng thái để lần sau khỏi gọi API
+    }
+    const mode = isCustomer ? 'care' : 'reply';
 
     const history = store.getConversation(conversationId).history;
     const reply = await generateReply(history, mode, customerName || conv.customer_name);

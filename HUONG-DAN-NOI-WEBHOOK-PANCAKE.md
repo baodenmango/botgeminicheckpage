@@ -21,8 +21,12 @@ Pancake → trang **Phòng Khám Hiệp Lợi** → **Cài đặt → Công cụ
   ```
   https://botgeminicheckpage.onrender.com/webhook
   ```
-- **Event:** chọn **messaging** (tin nhắn mới / cập nhật tin trong inbox & comment).
-  *(Bỏ qua `subscription` và `post` — bot chỉ cần `messaging`.)*
+- **Event:** chọn **messaging** (tin nhắn mới / cập nhật tin trong inbox).
+  - ⚠️ **NẾU Pancake có event riêng cho COMMENT** (vd `comment` / `feed` / `post_comment`)
+    → **tick luôn event đó** để bot nhận được comment dưới bài. Bot đã xử comment:
+    rep công khai 1 câu mời + nhắn riêng kéo khách vào inbox (xem `src/comment.js`).
+  - Nếu gói chỉ có `messaging` mà comment KHÔNG về → báo lại để chuyển sang phương án POLL.
+  *(Bỏ qua `subscription` / `post` nếu không phải kênh comment.)*
 - Nếu có nút **"Verify endpoint URL"** → bấm verify (bot trả HTTP 200 ở cả `/` và `/webhook` nên sẽ pass).
 - **Lưu.**
 

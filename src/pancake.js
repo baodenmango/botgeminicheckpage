@@ -61,8 +61,21 @@ export function isPageEnabled(pageId) {
 // Telesale chốt lịch khám / đang xử tay → gắn 1 trong các nhãn này lên hội thoại.
 // Bot đọc nhãn TRƯỚC khi gửi; thấy cờ thì IM, không chồng tin tư vấn.
 // Tùy biến qua env STOP_BOT_LABELS (phân tách bằng dấu phẩy). So khớp KHÔNG dấu, không phân biệt hoa thường.
+//
+// ⚠️ CHỈ chứa nhãn "TELESALE ĐANG XỬ / CẦN NGƯỜI / BOT DỪNG HẲN".
+// KHÔNG cho nhãn "đã mua / đã thu tiền / checkin" vào đây — vì khách ĐÃ MUA thì bot
+// KHÔNG im hẳn, mà CHUYỂN SANG chăm sóc (chạm CSKH). Việc "đã có số → không xin số nữa,
+// chỉ chăm" do isCaptured() + STOP_BOT_LABELS_SOFT điều khiển bên dưới, KHÔNG phải tắt bot.
 const STOP_BOT_LABELS = (process.env.STOP_BOT_LABELS ||
-  'đã đặt lịch,đã hẹn khám,đã hẹn,đã đến khám,telesale xử lý,chốt lịch,đã chốt,không gửi bot,bot dừng'
+  'đã đặt lịch,đã hẹn khám,đã hẹn,telesale xử lý,chốt lịch,đã chốt,không gửi bot,bot dừng'
+).split(',').map((s) => normalizeLabel(s)).filter(Boolean);
+
+// --- NHÃN "ĐÃ THÀNH KHÁCH" (đã mua/đã đến khám/đã thu tiền) ---
+// Khác STOP ở trên: gặp các nhãn này, bot KHÔNG im hẳn mà coi như khách ĐÃ CÓ SỐ →
+// chuyển chế độ CHĂM SÓC (chạm CSKH, KHÔNG chào mới, KHÔNG xin số). Đây là sửa ca anh Cầu
+// (đã check-in + bắn bill POS mà bot đi chào "cô" + xin số như lead lạ).
+const CUSTOMER_LABELS = (process.env.CUSTOMER_LABELS ||
+  'đã đến khám,đã thu tiền,đã thanh toán,checkin,check-in,đã cọc,đã đặt cọc,đã mua,khách cũ,đang điều trị,chờ hàng'
 ).split(',').map((s) => normalizeLabel(s)).filter(Boolean);
 
 function normalizeLabel(s) {
@@ -74,46 +87,62 @@ function normalizeLabel(s) {
     .toLowerCase();
 }
 
-// Cache nhẹ kết quả nhãn (15s) để 1 loạt tin dồn không gọi API nhiều lần.
-const labelCache = new Map(); // conversationId -> { stop, at }
+// Cache nhẹ tên nhãn (15s) để 1 loạt tin dồn không gọi API nhiều lần. 1 lần gọi dùng cho cả
+// hasStopLabel + hasCustomerLabel (đều cần đọc nhãn của cùng conv).
+const labelCache = new Map(); // conversationId -> { names: string[], at }
+
+// Đọc DANH SÁCH TÊN NHÃN của 1 hội thoại (có cache 15s). Lỗi → trả [] (fail-open).
+// ⚠️ Pancake KHÔNG cho đọc nhãn 1 hội thoại lẻ; nhãn chỉ có ở endpoint LIST conversations
+// (field tags[].text) → fetchConversationFromList tìm đúng id trong list.
+async function getLabelNames(pageId, conversationId) {
+  const token = getPageToken(pageId);
+  if (!token) return [];
+  const cached = labelCache.get(String(conversationId));
+  if (cached && Date.now() - cached.at < 15000) return cached.names;
+  let names = [];
+  try {
+    const conv = await fetchConversationFromList(pageId, token, conversationId);
+    if (conv) names = extractLabelNames(conv);
+  } catch (err) {
+    const status = err?.response?.status;
+    console.warn(`[pancake] đọc nhãn lỗi (conv ${conversationId}) status=${status || err?.message} → coi như KHÔNG có nhãn`);
+    names = [];
+  }
+  labelCache.set(String(conversationId), { names, at: Date.now() });
+  return names;
+}
+
+// Tên nhãn có khớp 1 trong danh sách từ khóa (đã normalize) không.
+function matchAnyLabel(names, keywords) {
+  return names.some((n) => {
+    const nn = normalizeLabel(n);
+    return keywords.some((k) => nn === k || nn.includes(k));
+  });
+}
 
 /**
- * Hội thoại này có nhãn "cờ tắt bot" không? → true thì bot phải IM.
- * Đọc qua Pancake Public API: GET .../conversations/{id} (trả tags/label_ids/labels tùy biến thể).
- * Lỗi mạng / không đọc được nhãn → trả false (KHÔNG chặn nhầm, ưu tiên bot vẫn chạy được;
- * cơ chế "người vào bot lui" vẫn là lớp bảo vệ thứ 2).
+ * Hội thoại có nhãn "cờ tắt bot" không? → true thì bot IM (telesale chốt lịch/cần người/bot dừng).
+ * Lỗi mạng → false (fail-open, bot vẫn chạy được).
  */
 export async function hasStopLabel(pageId, conversationId) {
   if (STOP_BOT_LABELS.length === 0) return false;
-  const token = getPageToken(pageId);
-  if (!token) return false;
-
-  const cached = labelCache.get(String(conversationId));
-  if (cached && Date.now() - cached.at < 15000) return cached.stop;
-
-  let stop = false;
-  try {
-    // ⚠️ Pancake KHÔNG cho đọc nhãn 1 hội thoại lẻ (endpoint /conversations/{id} trả mảng tin nhắn,
-    // endpoint /tags trả HTML). Nhãn CHỈ có ở endpoint LIST conversations, field `tags[].text`.
-    // → Kéo các hội thoại có hoạt động gần đây rồi tìm đúng id. `since` hẹp để đỡ nặng.
-    const conv = await fetchConversationFromList(pageId, token, conversationId);
-    if (conv) {
-      const names = extractLabelNames(conv);
-      stop = names.some((n) => {
-        const nn = normalizeLabel(n);
-        return STOP_BOT_LABELS.some((stopLbl) => nn === stopLbl || nn.includes(stopLbl));
-      });
-      if (stop) {
-        console.log(`[pancake] 🚫 conv ${conversationId} có nhãn cờ-tắt-bot (${names.join(', ')}) → bot IM`);
-      }
-    }
-  } catch (err) {
-    const status = err?.response?.status;
-    console.warn(`[pancake] đọc nhãn lỗi (conv ${conversationId}) status=${status || err?.message} → coi như KHÔNG có cờ`);
-    stop = false;
-  }
-  labelCache.set(String(conversationId), { stop, at: Date.now() });
+  const names = await getLabelNames(pageId, conversationId);
+  const stop = matchAnyLabel(names, STOP_BOT_LABELS);
+  if (stop) console.log(`[pancake] 🚫 conv ${conversationId} có nhãn cờ-tắt-bot (${names.join(', ')}) → bot IM`);
   return stop;
+}
+
+/**
+ * Hội thoại có nhãn "ĐÃ THÀNH KHÁCH" (đã mua/đã đến khám/đã thu tiền/đã cọc) không?
+ * → true thì bot coi như khách ĐÃ CÓ SỐ: KHÔNG chào mới, KHÔNG xin số, chỉ CHĂM SÓC.
+ * (Sửa ca anh Cầu: đã check-in + bắn bill POS mà bot vẫn đi chào + xin số như lead lạ.)
+ */
+export async function hasCustomerLabel(pageId, conversationId) {
+  if (CUSTOMER_LABELS.length === 0) return false;
+  const names = await getLabelNames(pageId, conversationId);
+  const isCus = matchAnyLabel(names, CUSTOMER_LABELS);
+  if (isCus) console.log(`[pancake] 🧡 conv ${conversationId} có nhãn ĐÃ-THÀNH-KHÁCH (${names.join(', ')}) → bot chăm sóc, KHÔNG xin số`);
+  return isCus;
 }
 
 // Số ngày nhìn lại khi quét list conversations để tìm nhãn (mặc định 14 ngày — đủ phủ lead đang chăm).
@@ -216,6 +245,80 @@ export async function sendMessages(pageId, conversationId, messages) {
 function stripHtmlBasic(s) {
   return String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim();
+}
+
+/**
+ * REP CÔNG KHAI dưới 1 comment (để lại 1 câu mời ngắn).
+ * Pancake Public API: POST {API_BASE}/pages/{pageId}/conversations/{conversationId}/messages
+ * với action 'reply_comment' (trả lời ngay dưới comment đó).
+ * ⚠️ Một số kênh/biến thể dùng đường dẫn /comments riêng — nếu lỗi, đối chiếu docs &
+ * chỉnh tại đây (log dưới sẽ in nguyên body lỗi để biết phải sửa gì).
+ */
+export async function replyComment(pageId, conversationId, commentId, text) {
+  const token = getPageToken(pageId);
+  if (!token) {
+    console.warn(`[pancake] không có token cho page ${pageId} → bỏ rep comment`);
+    return false;
+  }
+  const url = `${API_BASE}/pages/${pageId}/conversations/${conversationId}/messages`;
+  try {
+    const res = await axios.post(
+      url,
+      { message: text, action: 'reply_comment', comment_id: commentId },
+      { params: { page_access_token: token }, timeout: 15000 }
+    );
+    const data = res?.data;
+    if (data && data.success === false) {
+      console.error(`[pancake] REP COMMENT hụt (page ${pageId}, conv ${conversationId}, comment ${commentId}):`,
+        JSON.stringify(data).slice(0, 400),
+        '\n   → đối chiếu action/đường dẫn reply comment Pancake (xem cảnh báo đầu file).');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    console.error(`[pancake] rep comment lỗi (page ${pageId}, comment ${commentId}) status=${status}`,
+      typeof data === 'object' ? JSON.stringify(data).slice(0, 400) : String(data || err.message));
+    return false;
+  }
+}
+
+/**
+ * NHẮN RIÊNG (private reply) cho người vừa comment → kéo họ vào inbox.
+ * Facebook/Pancake: private reply phải tham chiếu comment_id (chỉ được gửi 1 lần/comment,
+ * trong vòng 7 ngày kể từ comment). Dùng action 'private_reply'.
+ * Trả về true nếu Pancake nhận; false (kèm log) nếu hụt — để handler vẫn báo Telegram đỡ.
+ */
+export async function sendPrivateReply(pageId, conversationId, commentId, messages) {
+  const token = getPageToken(pageId);
+  if (!token) return false;
+  const url = `${API_BASE}/pages/${pageId}/conversations/${conversationId}/messages`;
+  let okAny = false;
+  for (let i = 0; i < messages.length; i++) {
+    await sleep(humanDelay(messages[i], i));
+    try {
+      const res = await axios.post(
+        url,
+        { message: messages[i], action: 'private_reply', comment_id: commentId },
+        { params: { page_access_token: token }, timeout: 15000 }
+      );
+      const data = res?.data;
+      if (data && data.success === false) {
+        console.error(`[pancake] PRIVATE REPLY hụt (page ${pageId}, comment ${commentId}):`,
+          JSON.stringify(data).slice(0, 400));
+        break; // private reply lỗi ô đầu → dừng, đừng spam
+      }
+      okAny = true;
+    } catch (err) {
+      const status = err?.response?.status;
+      const data = err?.response?.data;
+      console.error(`[pancake] private reply lỗi (page ${pageId}, comment ${commentId}) status=${status}`,
+        typeof data === 'object' ? JSON.stringify(data).slice(0, 400) : String(data || err.message));
+      break;
+    }
+  }
+  return okAny;
 }
 
 /**
