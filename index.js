@@ -8,7 +8,7 @@ import { config, checkConfig } from './src/config.js';
 import { handleIncoming, handleRetouch, handlePageMessage, handleBotTouch } from './src/handler.js';
 import { BOT_TOUCHES } from './src/touches.js';
 import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
-import { isCommentEvent, parseComment, handleComment } from './src/comment.js';
+import { isCommentEvent } from './src/comment.js'; // chỉ để NHẬN DIỆN comment và bỏ qua (Meta lo rep comment)
 import * as store from './src/store.js';
 
 checkConfig();
@@ -150,36 +150,19 @@ function parsePancakeWebhook(body) {
   };
 }
 
-// In payload thô của COMMENT lần đầu mỗi khởi động (để đối chiếu field nếu parse hụt).
-// Chỉ in 1 lần cho gọn log; comment sau parse thẳng.
-let rawCommentLogged = false;
-
 // --- Webhook nhận tin từ Pancake ---
 app.post('/webhook', (req, res) => {
   // Trả 200 NGAY để Pancake không retry; xử lý bất đồng bộ sau.
   res.status(200).json({ received: true });
 
   try {
-    // COMMENT dưới bài → xử riêng (rep công khai mời + nhắn riêng vào inbox).
-    // Phải kiểm tra TRƯỚC parsePancakeWebhook vì payload comment khác tin nhắn inbox.
+    // COMMENT dưới bài → BỎ QUA HẲN. Việc rep comment + kéo vào inbox đã do
+    // META BUSINESS SUITE (Automation "Bình luận để nhắn tin") lo. Bot Gemini KHÔNG đụng
+    // comment nữa để tránh TRÙNG + tránh lỗi sai tham số Pancake (action private_replies /
+    // thiếu message_id — đã thấy hụt trong log 29/06). comment.js giữ lại làm dự phòng,
+    // chỉ KHÔNG gọi. Vẫn phải nhận diện để comment không rơi xuống parse như tin inbox.
     if (isCommentEvent(req.body)) {
-      if (!rawCommentLogged) {
-        console.log('[comment] payload thô (lần đầu, để đối chiếu field):',
-          JSON.stringify(req.body).slice(0, 1500));
-        rawCommentLogged = true;
-      }
-      const cev = parseComment(req.body);
-      if (!cev) {
-        console.warn('[comment] không parse được payload comment → bỏ qua. Body:',
-          JSON.stringify(req.body).slice(0, 800));
-        return;
-      }
-      if (!isPageEnabled(cev.pageId)) {
-        console.log(`[comment] page ${cev.pageId} chưa bật bot → bỏ qua`);
-        return;
-      }
-      handleComment(cev); // không await — chạy nền
-      return;
+      return; // Meta lo comment; bot chỉ xử inbox
     }
 
     const ev = parsePancakeWebhook(req.body);
