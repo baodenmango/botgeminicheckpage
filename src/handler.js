@@ -171,6 +171,31 @@ export async function handleIncoming(ev) {
       return;
     }
 
+    // ⚠️ CHỐT LEAD TRƯỚC KHI BOT LUI (sửa ca Kim Anh 29/06): nếu tin khách chứa SĐT hợp lệ
+    // và conv CHƯA captured → BẮN TELEGRAM NGAY, bất kể sau đó bot có lui vì cờ human hay không.
+    // Trước đây notifyLead chỉ nằm trong dispatch (cuối luồng) → khi telesale gõ tay nhanh hơn bot
+    // (đánh cờ human), bot return SỚM ở isHumanActive → lead có số mà KHÔNG bao giờ báo Telegram.
+    // Số điện thoại là tài sản — không để lọt vì bất kỳ lý do gì.
+    {
+      const leadPhone = extractPhone(messageText) ||
+        (!store.isCaptured(conv) ? extractPhoneFromHistory(store.getConversation(conversationId).history) : null);
+      if (leadPhone && !store.isCaptured(conv)) {
+        store.setPhoneCaptured(conversationId, leadPhone, customerName || conv.customer_name);
+        try {
+          await notifyLead({
+            name: customerName || conv.customer_name,
+            phone: leadPhone,
+            condition: conv.condition || 'unknown',
+            summary: conv.summary || null,
+            customerType: 'chua_ro',
+            pageId,
+            conversationId,
+          });
+          console.log(`[lead] 🔥 ${conversationId} có SĐT ${leadPhone} (chốt sớm trước khi xét cờ human) → đã báo Telegram`);
+        } catch (e) { console.error('[lead] báo Telegram lỗi:', e?.message); }
+      }
+    }
+
     // NGƯỜI THẬT VÀO → BOT LUI. (Thiết kế mới chốt với anh 28/06: bot TOÀN QUYỀN xử tới khi
     // gửi sale page + xin SĐT. Telesale KHÔNG đụng check page, chỉ xử qua Telegram; muốn bot im
     // thì GẮN NHÃN — đã chặn ở hasStopLabel trên.) Cờ human CHỈ được đánh khi CHẮC CHẮN telesale
