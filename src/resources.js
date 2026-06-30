@@ -18,19 +18,23 @@ export const BROCHURE_PDF = {
   lung:     'https://drive.google.com/file/d/1xDDc8QbgEoifGHvfNiYhH6axlwTha5Ho/view',
   tvdd:     'https://drive.google.com/file/d/1b-huOqDvWVbOpL2hjDNKXfaSnNeyaoEH/view',
   covaigay: 'https://drive.google.com/file/d/1o98wx_wW63ZVHTiWlkByh100Wb2hHwpp/view',
-  // mở rộng (CHƯA có — anh điền link Drive khi xong) —
-  chopxoay: '',
-  ngontay:  '',
-  cochan:   '',
-  hang:     '',
-  chomdui:  '',
-  csc:      '',
-  loangxuong: '',
-  dequervain: '',
-  ongcotay:   '',
-  tenniselbow:'',
-  gangotchan: '',
+  // mở rộng (đã render PDF + up Drive 30/06 — folder Tài nguyên Telesale 18vagh28...) —
+  chopxoay:   'https://drive.google.com/file/d/1Sk6ml_iLoA7Hagwd4m1nppK9NgrqXovd/view',
+  csc:        'https://drive.google.com/file/d/1H8bqZLQlkN1AYfkCiIuuglys4SEc58qd/view',
+  ngontay:    'https://drive.google.com/file/d/14BPYR5UeCejeDXIXnyXs8iCVWoJkM2-h/view',
+  cochan:     'https://drive.google.com/file/d/1l-9Gh6CcIahgVraz2vUyMwkVUSEsFsgJ/view',
+  hang:       'https://drive.google.com/file/d/18hXgJ_FyKiwv-H1v-T91s6HiWe-QDj5S/view',
+  chomdui:    'https://drive.google.com/file/d/1cl7bu9gX8AP_1bZtdq2J0GkTZmrijpO4/view',
+  loangxuong: 'https://drive.google.com/file/d/1aDA0tzj4zil8PbW6ipcYEEO6l3JEw2Gm/view',
+  dequervain: 'https://drive.google.com/file/d/1GYUxcwTcCOoYmyT8p4BLpJT6DIvO45O_/view',
+  ongcotay:   'https://drive.google.com/file/d/1U0a6Pu_sWK7He2ArMkEcZys3ZiWWEb3s/view',
+  tenniselbow:'https://drive.google.com/file/d/1GccnKxqUlYMnDYzs5_kkVlFnH_NXp9_C/view',
+  gangotchan: 'https://drive.google.com/file/d/1AWsoCeBidT2U5E9PVHw0BRVu9URQsfY7/view',
 };
+
+// Link 2 TỜ CHUNG (gửi khi follow OA / chăm sóc) — cùng folder Drive, đã set public-link.
+export const PERK_PDF_URL    = 'https://drive.google.com/file/d/1bzYOw1CczJcUgOhH5MvyAUbWFPVHq1LX/view'; // tờ quyền lợi
+export const SERVICE_PDF_URL = 'https://drive.google.com/file/d/1HeyCpy3GpklJXznV12LxNeQuLZ6Uork6/view'; // tờ dịch vụ
 
 // Tên brochure (để câu mời tự nhiên).
 export const BROCHURE_NAME = {
@@ -162,11 +166,11 @@ export function suggestServices(condition, max = 2) {
 // ---------- CHECKLIST ĐỀ XUẤT (để anh Trình duyệt & sản xuất nội dung) ----------
 // KHÔNG dùng trong code — chỉ là ghi chú điều hướng việc. Xem cũng được, xóa cũng được.
 export const RESOURCE_TODO = `
-[ ] Brochure PDF 6 bệnh MỚI: chopxoay, ngontay, cochan, hang, chomdui, csc (BROCHURE_PDF còn trống).
-[ ] Clip Bác sĩ phân tích cho: covaigay + 6 bệnh mới (CLIP_BY_CONDITION còn []).
-[ ] PDF "quyền lợi khách hàng" 1 trang: gộp PERKS thành tờ rơi đẹp (Canva) để gửi khi follow OA.
-[ ] Tờ giới thiệu DỊCH VỤ/CÔNG NGHỆ (SERVICES) — ảnh máy móc + giải thích dễ hiểu cho cô chú.
-[ ] Nếu có công nghệ MỚI (sóng xung kích, laser...) → điền vào SERVICES + map SERVICE_BY_CONDITION.
-[ ] Brochure theo GIAI ĐOẠN: (a) trước khám "vì sao nên khám", (b) sau khám "chăm tại nhà",
-    (c) đang liệu trình "vì sao theo đủ buổi", (d) duy trì "giữ kết quả + giới thiệu".
+[x] Brochure PDF 17 bệnh — ĐÃ render + up Drive 30/06 (BROCHURE_PDF đủ link). Nội dung gốc:
+    02-Marketing-SalePage/Tai-lieu-cham-soc-Zalo/ (markdown) → đã ra PDF folder PDF-da-render.
+[x] Tờ quyền lợi (PERK_PDF_URL) + tờ dịch vụ (SERVICE_PDF_URL) — ĐÃ up Drive.
+[ ] Nâng cấp PDF từ bản Chrome-render lên bản Canva ĐẸP hơn (tùy chọn) → chỉ đổi link Drive.
+[ ] Clip Bác sĩ phân tích cho: covaigay + các bệnh mới (CLIP_BY_CONDITION còn []) — gom clip 2 fanpage.
+[ ] Nếu có công nghệ MỚI (sóng xung kích, laser...) → điền vào SERVICES + map SERVICE_BY_CONDITION
+    + cập nhật tờ dịch vụ (02-...-Zalo/02-To-dich-vu-cong-nghe.md) rồi render lại PDF.
 `;
