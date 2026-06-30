@@ -20,6 +20,7 @@
 //   → Tên cột có thể khác; chỉnh COL_MAP bên dưới cho khớp header thật khi đấu data.
 import axios from 'axios';
 import crypto from 'node:crypto';
+import * as store from './store.js';
 
 // Map "khóa chuẩn nội bộ" → các tên header CÓ THỂ gặp trong Sheet (khớp không phân biệt hoa thường, bỏ dấu).
 const COL_MAP = {
@@ -205,6 +206,16 @@ export async function lookupMedi(phone) {
   try {
     const p = normPhone(phone);
     if (!p || p.length < 9) return null;
+    // 1) ƯU TIÊN cache local (cron local đẩy lên qua /admin/medi-upsert) — chuẩn + nhanh.
+    const c = store.getMediByPhone(p);
+    if (c) {
+      return {
+        name: c.name || '', diagnosis: c.diagnosis || '',
+        lastVisit: c.last_visit ? new Date(c.last_visit * 1000).toISOString() : '',
+        treatment: c.treatment || '', sessionsDone: '', sessionsTotal: '', prescription: '',
+      };
+    }
+    // 2) fallback: Sheet công khai/riêng tư (nếu có cấu hình)
     const table = await getTable();
     if (!table) return null; // nguồn chưa sẵn → fail-open (BN mới)
     return table.get(p) || null;
@@ -216,7 +227,8 @@ export async function lookupMedi(phone) {
 
 // Nguồn MEDi đã được cấu hình chưa (để engine biết có nên enrich không / log rõ).
 export function isMediConfigured() {
-  return Boolean(process.env.MEDI_SHEET_CSV_URL || process.env.MEDI_SHEET_ID);
+  if (process.env.MEDI_SHEET_CSV_URL || process.env.MEDI_SHEET_ID) return true;
+  try { return store.mediCacheCount() > 0; } catch { return false; } // có cache local đẩy lên
 }
 
 /**
@@ -225,6 +237,16 @@ export function isMediConfigured() {
  */
 export async function getAllMediRecords() {
   try {
+    // 1) ƯU TIÊN cache local (cron local đẩy lên) — nguồn chuẩn cho engine đánh thức BN ngủ.
+    const cached = store.getAllMediCache();
+    if (cached && cached.length) {
+      return cached.map((c) => ({
+        phone: c.phone, name: c.name || '', diagnosis: c.diagnosis || '',
+        lastVisit: c.last_visit ? new Date(c.last_visit * 1000).toISOString() : '',
+        treatment: c.treatment || '',
+      }));
+    }
+    // 2) fallback Sheet
     const table = await getTable();
     if (!table) return [];
     return [...table.entries()].map(([phone, rec]) => ({ phone, ...rec }));

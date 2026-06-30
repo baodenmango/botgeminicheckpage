@@ -97,6 +97,25 @@ app.post('/admin/bill-ingest', (req, res) => {
   }
 });
 
+// --- Admin: NHẬN hồ sơ BN MEDi đẩy từ cron LOCAL (việc 2) ---
+// POST /admin/medi-upsert?token=XXX  body JSON: { records: [ {phone,name,diagnosis,last_visit,treatment,visits,raw}... ] }
+// Credentials EMR ở LOCAL; cron local gom BN qua medi-source.js rồi đẩy lên đây (PII không lên cloud dưới dạng login).
+app.post('/admin/medi-upsert', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const recs = Array.isArray(req.body?.records) ? req.body.records : [];
+    let n = 0;
+    for (const r of recs) { if (store.upsertMedi(r)) n++; }
+    console.log(`[medi-upsert] nhận ${recs.length} hồ sơ BN, lưu ${n} (tổng cache ${store.mediCacheCount()})`);
+    res.status(200).json({ ok: true, received: recs.length, saved: n, total: store.mediCacheCount() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 // --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---
 // Zalo gửi event 'follow' về URL này (cấu hình trong Zalo Developer Console).
 app.post('/zalo/webhook', (req, res) => {

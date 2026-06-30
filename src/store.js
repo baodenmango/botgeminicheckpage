@@ -103,6 +103,21 @@ db.exec(`
   );
 `);
 
+// Hồ sơ BN từ MEDi, ĐẨY TỪ CRON LOCAL (credentials EMR ở local, không lên cloud).
+// Bot tra theo SĐT khi ENRICH (khách nhắn Zalo) + engine đánh thức BN ngủ.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS medi_cache (
+    phone        TEXT PRIMARY KEY,   -- SĐT chuẩn 10 số
+    name         TEXT,
+    diagnosis    TEXT,               -- bệnh (tên Việt)
+    last_visit   INTEGER,            -- epoch giây lần khám cuối
+    treatment    TEXT,               -- họ liệu trình (PRP/biogen/TBG/kham_thuong...)
+    visits       INTEGER,            -- số lần khám
+    raw          TEXT,               -- JSON gốc (dự phòng)
+    updated_at   INTEGER
+  );
+`);
+
 // Nhật ký "đánh thức BN ngủ" (bước D) — chống nhắc lại 1 BN quá dày.
 db.exec(`
   CREATE TABLE IF NOT EXISTS wakeup_log (
@@ -127,6 +142,32 @@ export function markWokeUp(phone) {
   db.prepare(`INSERT INTO wakeup_log (phone, last_wake_at, wake_count) VALUES (?, ?, 1)
     ON CONFLICT(phone) DO UPDATE SET last_wake_at = excluded.last_wake_at, wake_count = wake_count + 1`)
     .run(String(phone), nowSec());
+}
+
+// ---------- MEDi cache (đẩy từ cron local) ----------
+function normPhone10(p){ let s=String(p||'').replace(/[^\d]/g,''); if(s.startsWith('84')&&s.length>=11)s='0'+s.slice(2); if(!s.startsWith('0')&&s.length===9)s='0'+s; return s; }
+// Upsert 1 hồ sơ BN. rec: { phone, name, diagnosis, last_visit(epoch), treatment, visits, raw }
+export function upsertMedi(rec){
+  const phone=normPhone10(rec?.phone); if(!phone||phone.length<9) return false;
+  db.prepare(`INSERT INTO medi_cache (phone,name,diagnosis,last_visit,treatment,visits,raw,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(phone) DO UPDATE SET name=excluded.name, diagnosis=excluded.diagnosis,
+      last_visit=excluded.last_visit, treatment=excluded.treatment, visits=excluded.visits,
+      raw=excluded.raw, updated_at=excluded.updated_at`)
+    .run(phone, rec.name||null, rec.diagnosis||null, rec.last_visit||null, rec.treatment||null,
+      rec.visits||null, rec.raw?JSON.stringify(rec.raw):null, nowSec());
+  return true;
+}
+export function getMediByPhone(phone){
+  const p=normPhone10(phone); if(!p) return null;
+  return db.prepare('SELECT * FROM medi_cache WHERE phone = ?').get(p) || null;
+}
+// Toàn bộ hồ sơ (cho engine đánh thức BN ngủ đọc từ cache local thay vì Sheet).
+export function getAllMediCache(){
+  return db.prepare('SELECT * FROM medi_cache').all();
+}
+export function mediCacheCount(){
+  return db.prepare('SELECT COUNT(*) AS n FROM medi_cache').get().n;
 }
 
 // Đánh dấu 1 comment đã được bot xử. Trả về TRUE nếu đây là lần ĐẦU (chưa từng xử),
