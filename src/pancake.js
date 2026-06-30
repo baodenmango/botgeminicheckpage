@@ -43,18 +43,49 @@ function humanDelay(text, index) {
   return Math.min(read + thinking + typing + lean, DELAY_CAP_MS);
 }
 
+// Tra cấu hình 1 page theo page_id, KHỚP LINH HOẠT tiền tố kênh.
+// Lý do: Pancake gửi webhook page Zalo có thể là "3136..." (không tiền tố) HOẶC "zl_3136..."
+// tùy endpoint/sự kiện. Token generate lại theo dạng "zl_...". Ta khớp cả 2 để không rớt tin.
+// Chuẩn hoá: bỏ tiền tố kênh (zl_/pzl_/ttm_/fb_) rồi so phần lõi.
+function stripChannelPrefix(id) {
+  return String(id || '').replace(/^(zl_|pzl_|ttm_|fb_|tt_)/i, '');
+}
+function findPageConfig(pageId) {
+  const pages = config.pancakePages;
+  const key = String(pageId);
+  if (pages[key]) return pages[key];                 // khớp khít trước
+  const core = stripChannelPrefix(key);              // khớp theo phần lõi (bỏ tiền tố)
+  for (const k of Object.keys(pages)) {
+    if (stripChannelPrefix(k) === core) return pages[k];
+  }
+  return null;
+}
+
 // Lấy token của 1 trang theo page_id; null nếu trang không được cấu hình.
 export function getPageToken(pageId) {
-  return config.pancakePages[String(pageId)]?.token || null;
+  return findPageConfig(pageId)?.token || null;
 }
 
 export function getPageChannel(pageId) {
-  return config.pancakePages[String(pageId)]?.channel || 'facebook';
+  return findPageConfig(pageId)?.channel || 'facebook';
 }
 
 // Có biết trang này không (để bỏ qua webhook của trang chưa bật bot).
 export function isPageEnabled(pageId) {
-  return Boolean(config.pancakePages[String(pageId)]);
+  return Boolean(findPageConfig(pageId));
+}
+
+// Trả về page_id ĐÚNG như đã cấu hình (key trong config) — dùng khi GỬI để khớp token/endpoint.
+// Webhook có thể đưa id thiếu tiền tố; khi gửi phải dùng id chuẩn (vd zl_3136...).
+export function canonicalPageId(pageId) {
+  const pages = config.pancakePages;
+  const key = String(pageId);
+  if (pages[key]) return key;
+  const core = stripChannelPrefix(key);
+  for (const k of Object.keys(pages)) {
+    if (stripChannelPrefix(k) === core) return k;
+  }
+  return key;
 }
 
 // --- CỜ TẮT BOT THEO NHÃN PANCAKE ---
@@ -201,6 +232,7 @@ async function sendOne(pageId, conversationId, text) {
     console.warn(`[pancake] không có token cho page ${pageId} → bỏ gửi`);
     return false;
   }
+  pageId = canonicalPageId(pageId); // gửi bằng page_id chuẩn (vd zl_3136...) để khớp token/endpoint
   const url = `${API_BASE}/pages/${pageId}/conversations/${conversationId}/messages`;
   try {
     const res = await axios.post(

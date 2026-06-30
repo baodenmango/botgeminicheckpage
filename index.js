@@ -221,6 +221,12 @@ app.post('/webhook', (req, res) => {
 
     const ev = parsePancakeWebhook(req.body);
     if (!ev) {
+      // DEBUG tạm (gỡ sau khi đấu xong Zalo): log gọn payload không parse được để bắt format Zalo.
+      try {
+        const b = req.body?.data || req.body || {};
+        const pid = b.message?.page_id || b.page_id || b.conversation?.page_id;
+        if (pid) console.log(`[webhook][raw] không parse được — page_id=${pid} keys=${Object.keys(b).join(',')}`);
+      } catch {}
       return; // payload không đủ → bỏ qua
     }
     if (!isPageEnabled(ev.pageId)) {
