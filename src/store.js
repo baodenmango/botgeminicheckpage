@@ -27,6 +27,13 @@ db.exec(`
     summary              TEXT,                        -- tóm tắt bệnh/thông tin giá trị
     human_taken_at       INTEGER,                     -- epoch: lần cuối NGƯỜI THẬT gõ tay (telesale vào)
     touch_done           TEXT DEFAULT '[]',           -- JSON mảng số chạm bot ĐÃ gửi (vd [3,4]) — chống gửi lặp
+    channel              TEXT,                          -- 'facebook' | 'zalo' (kênh của hội thoại)
+    zalo_user_id         TEXT,                          -- zalo user_id (KHÔNG kèm "zl_") nếu là kênh Zalo
+    medi_status          TEXT,                          -- 'cu' | 'moi' | NULL (chưa tra MEDi)
+    medi_record          TEXT,                          -- JSON hồ sơ MEDi đã tra (cache để khỏi tra lại mỗi lượt)
+    bill_cham_done       TEXT DEFAULT '[]',           -- JSON mảng mốc chuỗi "ca ra bill" đã gửi (ngày 0/1/3/6/7)
+    chuoi_done           TEXT DEFAULT '[]',           -- JSON mảng mã chạm tái bill 4 nhóm đã gửi
+    opt_out              INTEGER DEFAULT 0,             -- khách nhắn ngừng → dừng mọi chuỗi chăm
     created_at           INTEGER
   );
 `);
@@ -46,6 +53,14 @@ try {
   if (!cols.includes('touch_done')) {
     db.exec("ALTER TABLE conversations ADD COLUMN touch_done TEXT DEFAULT '[]'");
   }
+  // Cột cho hệ chăm sóc Zalo OA (bước 2–7).
+  if (!cols.includes('channel'))        db.exec('ALTER TABLE conversations ADD COLUMN channel TEXT');
+  if (!cols.includes('zalo_user_id'))   db.exec('ALTER TABLE conversations ADD COLUMN zalo_user_id TEXT');
+  if (!cols.includes('medi_status'))    db.exec('ALTER TABLE conversations ADD COLUMN medi_status TEXT');
+  if (!cols.includes('medi_record'))    db.exec('ALTER TABLE conversations ADD COLUMN medi_record TEXT');
+  if (!cols.includes('bill_cham_done')) db.exec("ALTER TABLE conversations ADD COLUMN bill_cham_done TEXT DEFAULT '[]'");
+  if (!cols.includes('chuoi_done'))     db.exec("ALTER TABLE conversations ADD COLUMN chuoi_done TEXT DEFAULT '[]'");
+  if (!cols.includes('opt_out'))        db.exec('ALTER TABLE conversations ADD COLUMN opt_out INTEGER DEFAULT 0');
 } catch (e) {
   console.warn('[store] migration:', e?.message || e);
 }
@@ -59,7 +74,60 @@ db.exec(`
   );
 `);
 
+// ---------- BẢNG "CA RA BILL" (bước 5) + "TÁI BILL theo nhóm" (bước 6) ----------
+// Nguồn: POS/MEDi (ca ra bill có thuốc/tiêm; BN theo liệu trình). KHÁC bảng conversations
+// (lead 48h trên FB). Mỗi BN ra bill 1 dòng; engine tính mốc ngày 0→7 (bill) hoặc theo nhóm (tái bill).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bill_care (
+    id              TEXT PRIMARY KEY,        -- khóa duy nhất 1 ca (vd "<phone>:<billDate>" hoặc bill id POS)
+    phone           TEXT,
+    name            TEXT,
+    zalo_user_id    TEXT,                     -- để gửi qua Zalo OA (nếu đã follow)
+    page_id         TEXT,                     -- page Zalo OA (để gửi qua Pancake nếu không dùng OpenAPI)
+    conversation_id TEXT,                     -- hội thoại Zalo của BN này (nếu đã map)
+    condition       TEXT,                     -- mã bệnh (goi/vai/...)
+    has_medicine    INTEGER DEFAULT 0,
+    has_injection   INTEGER DEFAULT 0,
+    bill_date       INTEGER,                  -- epoch giây NGÀY RA BILL (= ngày 0)
+    group_no        INTEGER,                  -- nhóm tái bill: 1/2/3/4 (bước 6); NULL nếu chỉ chuỗi bill
+    treatment       TEXT,                     -- liệu trình (PRP/biogen/TBG...) cho nhóm 2
+    sessions_done   INTEGER,                  -- số buổi đã làm (nhóm 2)
+    sessions_total  INTEGER,                  -- tổng buổi (nhóm 2)
+    next_session_at INTEGER,                  -- epoch hẹn buổi tiếp (nhóm 2) — để nhắc trước/sau
+    bill_cham_done  TEXT DEFAULT '[]',        -- JSON mốc chuỗi ca-ra-bill đã gửi (d0/d1/d3/d6/d7)
+    group_cham_done TEXT DEFAULT '[]',        -- JSON mã chạm tái-bill theo nhóm đã gửi
+    rebooked        INTEGER DEFAULT 0,        -- đã đặt được lịch tái khám → DỪNG chuỗi bill
+    opt_out         INTEGER DEFAULT 0,
+    updated_at      INTEGER,
+    created_at      INTEGER
+  );
+`);
+
+// Nhật ký "đánh thức BN ngủ" (bước D) — chống nhắc lại 1 BN quá dày.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wakeup_log (
+    phone       TEXT PRIMARY KEY,
+    last_wake_at INTEGER,
+    wake_count   INTEGER DEFAULT 0
+  );
+`);
+
 const nowSec = () => Math.floor(Date.now() / 1000);
+
+// BN này được phép "đánh thức" lại chưa? (chưa nhắc, hoặc lần cuối cách đây > cooldownDays).
+export function canWakeup(phone, cooldownDays = 30, maxCount = 3) {
+  if (!phone) return false;
+  const row = db.prepare('SELECT * FROM wakeup_log WHERE phone = ?').get(String(phone));
+  if (!row) return true;
+  if (row.wake_count >= maxCount) return false;
+  return (nowSec() - (row.last_wake_at || 0)) > cooldownDays * 86400;
+}
+export function markWokeUp(phone) {
+  if (!phone) return;
+  db.prepare(`INSERT INTO wakeup_log (phone, last_wake_at, wake_count) VALUES (?, ?, 1)
+    ON CONFLICT(phone) DO UPDATE SET last_wake_at = excluded.last_wake_at, wake_count = wake_count + 1`)
+    .run(String(phone), nowSec());
+}
 
 // Đánh dấu 1 comment đã được bot xử. Trả về TRUE nếu đây là lần ĐẦU (chưa từng xử),
 // FALSE nếu đã xử rồi → handler bỏ qua, không rep lặp.
@@ -137,6 +205,55 @@ export function setSummary(conversationId, summary) {
   if (!summary) return;
   db.prepare('UPDATE conversations SET summary = ? WHERE conversation_id = ?')
     .run(String(summary).slice(0, 600), String(conversationId));
+}
+
+// ---------- KÊNH + ENRICH MEDi (bước 2–3) ----------
+// Ghi kênh hội thoại ('facebook' | 'zalo') + zalo_user_id (nếu Zalo).
+export function setChannel(conversationId, channel, zaloUserId = null) {
+  db.prepare('UPDATE conversations SET channel = COALESCE(?, channel), zalo_user_id = COALESCE(?, zalo_user_id) WHERE conversation_id = ?')
+    .run(channel || null, zaloUserId || null, String(conversationId));
+}
+
+// Tìm hội thoại Zalo theo zalo_user_id (lấy bản có condition rõ, mới nhất) — dùng cho webhook follow.
+export function getConversationByZaloUser(zaloUserId) {
+  if (!zaloUserId) return null;
+  const row = db.prepare(`
+    SELECT * FROM conversations WHERE zalo_user_id = ?
+    ORDER BY (condition IS NOT NULL AND condition != 'unknown') DESC, created_at DESC LIMIT 1
+  `).get(String(zaloUserId));
+  if (!row) return null;
+  return { ...row, history: JSON.parse(row.history || '[]') };
+}
+
+// Tìm hội thoại ZALO theo SĐT (BN đã follow OA + đã nhắn) — để engine đánh thức gửi qua đúng conv.
+export function getZaloConvByPhone(phone) {
+  if (!phone) return null;
+  const row = db.prepare(`
+    SELECT * FROM conversations
+    WHERE channel = 'zalo' AND phone = ? AND opt_out = 0
+    ORDER BY created_at DESC LIMIT 1
+  `).get(String(phone));
+  return row || null;
+}
+
+// Lưu kết quả tra MEDi: status 'cu'/'moi' + bản ghi (JSON) để khỏi tra lại mỗi lượt.
+export function setMedi(conversationId, status, record) {
+  db.prepare('UPDATE conversations SET medi_status = ?, medi_record = ? WHERE conversation_id = ?')
+    .run(status || null, record ? JSON.stringify(record) : null, String(conversationId));
+}
+
+// Đọc bản ghi MEDi đã cache (hoặc null). status: conv.medi_status.
+export function getMediRecord(conv) {
+  if (!conv || !conv.medi_record) return null;
+  try { return JSON.parse(conv.medi_record); } catch { return null; }
+}
+
+// Khách nhắn ngừng (opt-out) → dừng mọi chuỗi chăm.
+export function setOptOut(conversationId) {
+  db.prepare('UPDATE conversations SET opt_out = 1 WHERE conversation_id = ?').run(String(conversationId));
+}
+export function isOptedOut(conv) {
+  return Boolean(conv && conv.opt_out);
 }
 
 // Đánh dấu NGƯỜI THẬT (telesale) vừa gõ tay vào hội thoại này.
@@ -268,6 +385,117 @@ export function findRetouchTargets(minIdleHours, maxCount, holdHours = 6) {
       AND (human_taken_at IS NULL OR human_taken_at <= ?)
   `).all(cutoff, maxCount, humanCutoff);
   return rows.map((r) => ({ ...r, history: JSON.parse(r.history || '[]') }));
+}
+
+// ================= BILL_CARE: ca ra bill (bước 5) + tái bill nhóm (bước 6) =================
+function parseJsonArr(s) { try { return JSON.parse(s || '[]'); } catch { return []; } }
+
+/**
+ * UPSERT 1 ca bill_care (idempotent theo id). Cập nhật field truyền vào, giữ field cũ nếu không truyền.
+ * @param {object} rec  { id, phone, name, zalo_user_id, page_id, conversation_id, condition,
+ *                        has_medicine, has_injection, bill_date, group_no, treatment,
+ *                        sessions_done, sessions_total, next_session_at }
+ */
+export function upsertBillCare(rec) {
+  if (!rec || !rec.id) return null;
+  const id = String(rec.id);
+  const existing = db.prepare('SELECT * FROM bill_care WHERE id = ?').get(id);
+  const now = nowSec();
+  const v = (k, def = null) => (rec[k] !== undefined && rec[k] !== null ? rec[k] : (existing ? existing[k] : def));
+  const bool = (k) => (rec[k] !== undefined ? (rec[k] ? 1 : 0) : (existing ? existing[k] : 0));
+  if (existing) {
+    db.prepare(`UPDATE bill_care SET phone=?, name=?, zalo_user_id=?, page_id=?, conversation_id=?,
+      condition=?, has_medicine=?, has_injection=?, bill_date=?, group_no=?, treatment=?,
+      sessions_done=?, sessions_total=?, next_session_at=?, updated_at=? WHERE id=?`)
+      .run(v('phone'), v('name'), v('zalo_user_id'), v('page_id'), v('conversation_id'),
+        v('condition'), bool('has_medicine'), bool('has_injection'), v('bill_date'),
+        v('group_no'), v('treatment'), v('sessions_done'), v('sessions_total'),
+        v('next_session_at'), now, id);
+  } else {
+    db.prepare(`INSERT INTO bill_care (id, phone, name, zalo_user_id, page_id, conversation_id,
+      condition, has_medicine, has_injection, bill_date, group_no, treatment,
+      sessions_done, sessions_total, next_session_at, updated_at, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, v('phone'), v('name'), v('zalo_user_id'), v('page_id'), v('conversation_id'),
+        v('condition'), bool('has_medicine'), bool('has_injection'), v('bill_date'),
+        v('group_no'), v('treatment'), v('sessions_done'), v('sessions_total'),
+        v('next_session_at'), now, now);
+  }
+  return db.prepare('SELECT * FROM bill_care WHERE id = ?').get(id);
+}
+
+export function getBillCare(id) {
+  return db.prepare('SELECT * FROM bill_care WHERE id = ?').get(String(id)) || null;
+}
+
+// Đã gửi mốc chuỗi ca-ra-bill này (d0/d1/...) chưa?
+export function isBillChamDone(rec, code) {
+  return parseJsonArr(rec?.bill_cham_done).includes(code);
+}
+export function markBillChamDone(id, code) {
+  const r = getBillCare(id); if (!r) return;
+  const arr = parseJsonArr(r.bill_cham_done);
+  if (!arr.includes(code)) arr.push(code);
+  db.prepare('UPDATE bill_care SET bill_cham_done=?, updated_at=? WHERE id=?').run(JSON.stringify(arr), nowSec(), String(id));
+}
+
+// Đã gửi chạm tái-bill theo nhóm này chưa?
+export function isGroupChamDone(rec, code) {
+  return parseJsonArr(rec?.group_cham_done).includes(code);
+}
+export function markGroupChamDone(id, code) {
+  const r = getBillCare(id); if (!r) return;
+  const arr = parseJsonArr(r.group_cham_done);
+  if (!arr.includes(code)) arr.push(code);
+  db.prepare('UPDATE bill_care SET group_cham_done=?, updated_at=? WHERE id=?').run(JSON.stringify(arr), nowSec(), String(id));
+}
+
+// BN đã đặt được lịch tái khám → DỪNG chuỗi ca-ra-bill (đã đạt mục tiêu).
+export function markRebooked(id) {
+  db.prepare('UPDATE bill_care SET rebooked=1, updated_at=? WHERE id=?').run(nowSec(), String(id));
+}
+export function setBillOptOut(id) {
+  db.prepare('UPDATE bill_care SET opt_out=1, updated_at=? WHERE id=?').run(nowSec(), String(id));
+}
+
+/**
+ * Tìm các ca ra bill TỚI MỐC `dayMin..dayMax` (tính từ bill_date) mà CHƯA gửi `code`,
+ * chưa rebooked, chưa opt_out, có bill_date.
+ * @param {number} day        mốc ngày của chạm (0/1/3/6/7)
+ * @param {number} graceDays  cho phép trễ (gửi muộn tối đa) — tránh sót khi cron lỡ
+ */
+export function findBillTargets(code, day, graceDays = 2) {
+  const now = nowSec();
+  const latest = now - day * 86400;                 // đã qua mốc (bill_date <= now - day)
+  const earliest = now - (day + graceDays) * 86400; // chưa quá mốc + grace
+  const rows = db.prepare(`
+    SELECT * FROM bill_care
+    WHERE rebooked = 0 AND opt_out = 0
+      AND bill_date IS NOT NULL
+      AND bill_date <= ? AND bill_date >= ?
+  `).all(latest, earliest);
+  return rows.filter((r) => !parseJsonArr(r.bill_cham_done).includes(code));
+}
+
+/**
+ * Tìm các ca TÁI BILL theo nhóm (bước 6) cần chạm 1 mốc cụ thể.
+ * Lọc theo group_no + điều kiện thời gian do engine truyền (since/until trên trường mốc).
+ * @param {number} groupNo
+ * @param {string} timeField  trường epoch để so (vd 'bill_date' | 'next_session_at')
+ * @param {number} minSec, maxSec  khoảng [now-?..now-?] áp lên timeField
+ * @param {string} code        mã chạm để chống trùng (group_cham_done)
+ */
+export function findGroupTargets(groupNo, timeField, minSec, maxSec, code) {
+  const allow = ['bill_date', 'next_session_at']; // whitelist tên cột — chống SQL injection
+  if (!allow.includes(timeField)) return [];
+  const rows = db.prepare(`
+    SELECT * FROM bill_care
+    WHERE rebooked = 0 AND opt_out = 0
+      AND group_no = ?
+      AND ${timeField} IS NOT NULL
+      AND ${timeField} <= ? AND ${timeField} >= ?
+  `).all(groupNo, maxSec, minSec);
+  return rows.filter((r) => !parseJsonArr(r.group_cham_done).includes(code));
 }
 
 export default db;

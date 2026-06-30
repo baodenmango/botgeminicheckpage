@@ -12,6 +12,17 @@ export const SYSTEM_PROMPT = fs.readFileSync(
   'utf8'
 );
 
+// Bộ não RIÊNG cho kênh Zalo OA (chăm sóc sâu, nhận diện BN cũ/mới, đòn tâm lý tới nóc).
+// Thiếu file → fallback về prompt FB (an toàn, không crash).
+export const SYSTEM_PROMPT_ZALO = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, '..', 'system-prompt-zalo.md'), 'utf8');
+  } catch {
+    console.warn('[config] thiếu system-prompt-zalo.md → kênh Zalo dùng tạm bộ não FB');
+    return SYSTEM_PROMPT;
+  }
+})();
+
 // --- Gom các trang Pancake ---
 function loadPancakePages() {
   const pages = {}; // page_id -> { token, channel }

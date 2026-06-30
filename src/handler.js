@@ -1,10 +1,13 @@
 // Lõi xử lý hội thoại — dùng chung cho webhook (tin mới) và cron (retouch).
 import { generateReply } from './gemini.js';
-import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
+import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageChannel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
 import { buildTouchMessages } from './touches.js';
+import { isZaloPage, stripZaloPrefix } from './zalo.js';
+import { lookupMedi, buildContextTag } from './medi.js';
+import { SALE_PAGE } from './conditions.js';
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
 // Map (không Set): lưu thời điểm khóa để TỰ HẾT HẠN sau LOCK_TTL — chống kẹt vĩnh viễn
@@ -96,16 +99,7 @@ export async function handlePageMessage(ev) {
 // Ngưỡng ký tự tối thiểu để coi tin page là "telesale gõ tay thật" (lọc mẩu cụt/echo).
 const HUMAN_MIN_CHARS = parseInt(process.env.HUMAN_MIN_CHARS || '12', 10);
 
-// Map bệnh → sale page (đồng bộ với mục 6 system prompt).
-const SALE_PAGE = {
-  goi: 'https://thoaihoakhop.phongkhamhieploi.vn/',
-  vai: 'https://dauvai.phongkhamhieploi.vn/',
-  gut: 'https://benhgut.phongkhamhieploi.vn/',
-  lung: 'https://daulung.phongkhamhieploi.vn/',
-  tvdd: 'https://tvdd.phongkhamhieploi.vn/',
-  covaigay: 'https://covaigay.phongkhamhieploi.vn/',
-};
-
+// Map bệnh → sale page: dùng chung từ conditions.js (gồm cả bệnh mở rộng).
 // Đảm bảo có 1 ô chứa link sale page đúng bệnh (nếu Gemini quên chèn).
 // Trả về mảng messages đã được bổ sung link khi cần.
 function ensureSalePageLink(messages, condition, conv) {
@@ -267,8 +261,37 @@ export async function handleIncoming(ev) {
     }
     const mode = isCustomer ? 'care' : 'reply';
 
+    // ===== ENRICH (kênh ZALO) — nạp hồ sơ BN trước khi chăm (thiết kế mục C2) =====
+    // Chỉ cho kênh Zalo (OA = chăm sâu, cần biết khách là ai). FB giữ luồng săn lead như cũ.
+    // Tra MEDi theo SĐT (regex / lịch sử / phone đã lưu). Có hồ sơ → BN_CŨ; không → BN_MỚI.
+    // Fail-open: MEDi chưa cấu hình → lookupMedi trả null → coi như BN_MỚI, vẫn chăm bình thường.
+    const channel = getPageChannel(pageId);
+    let contextTag = null;
+    if (isZaloPage(channel)) {
+      // nhớ kênh + zalo_user_id (từ customerId "zl_<uid>") để engine chạm/giao file dùng sau
+      const zaloUid = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
+      store.setChannel(conversationId, 'zalo', zaloUid);
+      const freshZ = store.getConversation(conversationId);
+      // đã tra MEDi rồi (cache) → dùng lại; chưa → tra 1 lần
+      if (freshZ.medi_status) {
+        contextTag = buildContextTag(store.getMediRecord(freshZ), conv.condition || null);
+      } else {
+        const phoneForLookup = phoneByRegex || freshZ.phone ||
+          extractPhoneFromHistory(freshZ.history);
+        if (phoneForLookup) {
+          const record = await lookupMedi(phoneForLookup);
+          store.setMedi(conversationId, record ? 'cu' : 'moi', record);
+          contextTag = buildContextTag(record, conv.condition || null);
+          console.log(`[enrich] ${conversationId} SĐT ${phoneForLookup} → ${record ? 'BN_CŨ (' + (record.name || '?') + ')' : 'BN_MỚI'}`);
+        } else {
+          // chưa có số → chưa tra được, coi là BN mới tạm thời (bot Zalo sẽ khéo xin số để tra)
+          contextTag = buildContextTag(null, conv.condition || null);
+        }
+      }
+    }
+
     const history = store.getConversation(conversationId).history;
-    const reply = await generateReply(history, mode, customerName || conv.customer_name);
+    const reply = await generateReply(history, mode, customerName || conv.customer_name, null, { channel, contextTag });
 
     await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName);
   } catch (err) {
@@ -372,6 +395,12 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
 
   // Lưu summary (tóm tắt bệnh/thông tin giá trị) khi Gemini có sinh ra.
   if (reply.summary) store.setSummary(conversationId, reply.summary);
+
+  // Khách xin NGỪNG nhận tin → đánh dấu opt-out (dừng mọi chuỗi chăm tự động sau này).
+  if (reply.opt_out) {
+    store.setOptOut(conversationId);
+    console.log(`[handler] 🛑 ${conversationId} khách opt-out → dừng chuỗi chăm`);
+  }
 
   // Lấy condition + summary ĐÃ NHỚ trong DB (qua nhiều lượt) thay vì chỉ lượt cuối.
   const freshConv = store.getConversation(conversationId);

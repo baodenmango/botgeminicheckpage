@@ -10,6 +10,10 @@ import { BOT_TOUCHES } from './src/touches.js';
 import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
 import { isCommentEvent } from './src/comment.js'; // chỉ để NHẬN DIỆN comment và bỏ qua (Meta lo rep comment)
 import * as store from './src/store.js';
+import { ingestBill, runBillTouches } from './src/billengine.js';
+import { runGroupTouches } from './src/rebillengine.js';
+import { handleZaloFollow } from './src/follow.js';
+import { runWakeup } from './src/wakeup.js';
 
 checkConfig();
 
@@ -73,6 +77,32 @@ app.get('/admin/poke', async (req, res) => {
     console.error('[admin] poke lỗi:', err?.message || err);
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// --- Admin: NẠP 1 ca ra bill vào hàng đợi chăm sóc Zalo (bước 5) ---
+// POST /admin/bill-ingest?token=XXX  body JSON: { phone, name, zalo_user_id, page_id,
+//   conversation_id, condition, has_medicine, has_injection, bill_date, treatment }
+// Dùng cho nhân viên/automation đẩy ca ra bill (có thuốc/tiêm) từ POS vào engine.
+app.post('/admin/bill-ingest', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const saved = ingestBill(req.body || {});
+    if (!saved) return res.status(400).json({ ok: false, error: 'payload thiếu phone/id' });
+    res.status(200).json({ ok: true, id: saved.id });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---
+// Zalo gửi event 'follow' về URL này (cấu hình trong Zalo Developer Console).
+app.post('/zalo/webhook', (req, res) => {
+  res.status(200).json({ received: true }); // trả 200 ngay
+  const mac = req.get('X-ZEvent-Signature') || req.get('x-zevent-signature') || null;
+  try { handleZaloFollow(req.body, mac); } catch (err) { console.error('[zalo-webhook] lỗi:', err?.message || err); }
 });
 
 /**
@@ -234,6 +264,30 @@ cron.schedule('5,20,35,50 * * * *', async () => {
     }
   } catch (err) {
     console.error('[cron-cham] lỗi engine 7 chạm:', err?.message || err);
+  }
+});
+
+// --- Cron CHUỖI CHẠM CA RA BILL (bước 5) + TÁI BILL theo nhóm (bước 6) ---
+// Chạy mỗi giờ (phút 10). Engine tự lọc theo mốc + chống trùng → an toàn khi chạy lặp.
+// Giờ VN = UTC+7; tin chăm vẫn rơi giờ hợp lý vì engine lọc theo NGÀY, không gửi đêm khuya quá vì
+// cron chạy theo giờ máy (Render UTC) — nếu cần chặn khung giờ, đặt CARE_SEND_HOURS sau.
+cron.schedule('10 * * * *', async () => {
+  try {
+    const n1 = await runBillTouches();      // bước 5: ngày 0→7 ca ra bill
+    const n2 = await runGroupTouches();     // bước 6: tái bill 4 nhóm + liệu trình
+    if (n1 || n2) console.log(`[cron-care] gửi ${n1} chạm bill + ${n2} chạm tái bill`);
+  } catch (err) {
+    console.error('[cron-care] lỗi engine chăm sóc bill/tái bill:', err?.message || err);
+  }
+});
+
+// --- Cron ĐÁNH THỨC BN NGỦ (tệp MEDi cũ) — 1 lần/ngày lúc 02:15 UTC = 09:15 giờ VN ---
+cron.schedule('15 2 * * *', async () => {
+  try {
+    const { sent, listed } = await runWakeup();
+    if (sent || listed) console.log(`[cron-wakeup] ${sent} tự nhắc OA + ${listed} đẩy telesale`);
+  } catch (err) {
+    console.error('[cron-wakeup] lỗi engine đánh thức BN ngủ:', err?.message || err);
   }
 });
 

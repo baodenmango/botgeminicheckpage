@@ -9,16 +9,10 @@
 // THIẾT KẾ MỞ: nội dung tách theo `condition` (6 bệnh) để sau dễ thêm bệnh / thêm kênh
 // (Pancake → Zalo OA → Viber). Chạm 3 review hiện để PLACEHOLDER, nạp clip thật sau.
 
-// --- Link CẨM NANG PDF theo bệnh (Drive folder Tài nguyên Telesale, đã công khai) ---
-// Dùng cho Chạm 4 "cho giá trị". File id lấy từ folder 18vagh28_veQrFfoNKVAMy8uwVF-iKfrz.
-export const CAM_NANG_PDF = {
-  goi:      'https://drive.google.com/file/d/1MLGPKRIAvQZNVwNcUzBkoNAtlS17gQVQ/view',
-  vai:      'https://drive.google.com/file/d/12O-O62GLHWgh_3yG8U-aBt2vMWYNfdxC/view',
-  gut:      'https://drive.google.com/file/d/1gPV2a5vOqfhdiUB-d18htQRtX7kK1eSr/view',
-  lung:     'https://drive.google.com/file/d/1xDDc8QbgEoifGHvfNiYhH6axlwTha5Ho/view',
-  tvdd:     'https://drive.google.com/file/d/1b-huOqDvWVbOpL2hjDNKXfaSnNeyaoEH/view',
-  covaigay: 'https://drive.google.com/file/d/1o98wx_wW63ZVHTiWlkByh100Wb2hHwpp/view',
-};
+// --- Link CẨM NANG PDF theo bệnh — NGUỒN CHUẨN ở src/resources.js (BROCHURE_PDF) ---
+// Giữ tên export CAM_NANG_PDF để không gãy import cũ; trỏ về kho tài liệu trung tâm.
+import { BROCHURE_PDF, BROCHURE_NAME, CLIP_BY_CONDITION } from './resources.js';
+export const CAM_NANG_PDF = BROCHURE_PDF;
 
 // --- Link QUAN TÂM Zalo OA Phòng khám (khách bấm để follow OA) ---
 // Chạm 4 mời khách quan tâm OA: theo dõi tin Bác sĩ + nhận trọn bộ tài liệu qua Zalo.
@@ -50,15 +44,9 @@ function loiMoiZaloOA(tenCN, daCoSo, daCoPDF) {
   return `${moi}\n👉 ${ZALO_OA_LINK}`;
 }
 
-// Tên cẩm nang (để câu mời tự nhiên).
-const TEN_CAM_NANG = {
-  goi:      'Cẩm nang chăm sóc khớp gối tại nhà',
-  vai:      'Cẩm nang chăm sóc khớp vai tại nhà',
-  gut:      'Cẩm nang ăn uống & kiểm soát bệnh gút',
-  lung:     'Cẩm nang 7 ngày giảm đau lưng tại nhà',
-  tvdd:     'Cẩm nang sống khỏe với thoát vị đĩa đệm',
-  covaigay: 'Cẩm nang thư giãn cổ – vai – gáy',
-};
+// Tên cẩm nang — NGUỒN CHUẨN ở resources.js (BROCHURE_NAME). Giữ export cũ cho follow.js.
+export const TEN_CAM_NANG_PUBLIC = BROCHURE_NAME;
+const TEN_CAM_NANG = BROCHURE_NAME;
 
 // 2–3 MẸO/BÀI TẬP trích từ chính cẩm nang (để tin có giá trị thật, không rỗng).
 // Khách đọc thấy hữu ích NGAY cả khi chưa bấm link → tăng thiện cảm.
@@ -82,48 +70,15 @@ function tenBenhKey(condition) {
 // Anh CHỐT 29/06: KHÔNG gửi playlist (lùa cả mớ). Gửi ĐÚNG 3 CLIP tâm đắc nhất, đúng loại bệnh
 // khách đang quan tâm. Nhân viên sẽ gom clip theo bệnh gửi sau → điền link vào CLIP_THEO_BENH.
 //
-// CLIP_THEO_BENH[<bệnh>] = [link1, link2, link3]  (tối đa 3 clip, đúng bệnh).
-// Link clip thật từ 2 page (nhân viên gom 29/06). Khi trống (vd covaigay): bot KHÔNG gửi link,
-// chỉ nhắn 1 câu nuôi dưỡng (an toàn). Bổ sung/đổi link là chạy ngay, không cần sửa code khác.
-export const CLIP_THEO_BENH = {
-  // Thoái hóa khớp gối (Dr Nhật Trình + Pk Hiệp Lợi)
-  goi: [
-    'https://www.facebook.com/share/r/1LZWzyopfW/',
-    'https://www.facebook.com/share/r/1DFYq7aNR5/',
-  ],
-  // Khớp vai: thoái hóa vai + viêm quanh khớp vai + đau khớp vai (lấy 3 clip đại diện nhất)
-  vai: [
-    'https://www.facebook.com/share/v/1bUZLUJQaz/', // thoái hóa khớp vai
-    'https://www.facebook.com/share/r/17qGggo8BS/', // viêm quanh khớp vai
-    'https://www.facebook.com/share/r/1945KUU4AE/', // đau khớp vai (Pk Hiệp Lợi)
-  ],
-  // Bệnh gout (lấy 3 clip đại diện)
-  gut: [
-    'https://www.facebook.com/share/r/192Dk5Ct5H/',
-    'https://www.facebook.com/share/v/1J4YGvXQHo/',
-    'https://www.facebook.com/share/r/1TF4ciks2B/', // (Pk Hiệp Lợi)
-  ],
-  // Đau lưng / cột sống thắt lưng (low back pain)
-  lung: [
-    'https://www.facebook.com/share/r/19E639pQmE/',
-    'https://www.facebook.com/share/r/1B4UumKN4a/',
-  ],
-  // Thoát vị đĩa đệm + đau thần kinh tọa (tọa thường do TVDD chèn rễ thần kinh)
-  tvdd: [
-    'https://www.facebook.com/share/r/15xvpESyDix/',
-    'https://www.facebook.com/share/r/18z8xc7fZZ/', // (Pk Hiệp Lợi)
-    'https://www.facebook.com/share/r/1ERSFS6Aj8/', // đau thần kinh tọa (Pk Hiệp Lợi)
-  ],
-  // Cổ vai gáy: chưa có clip riêng → bot dùng cơ chế nuôi dưỡng an toàn (không gửi link)
-  covaigay: [],
-};
-// Clip DỰ TRỮ (nhân viên gửi nhưng vượt giới hạn 3/bệnh) — đổi vào trên nếu muốn:
-//   vai (viêm quanh khớp vai #2):  https://www.facebook.com/share/r/1D3PF7veue/
-//   vai (chẹn dưới khoang bả vai): https://www.facebook.com/share/r/1EdTRfVFGy/
-//   gut (#4):                      https://www.facebook.com/share/r/19JKjNL4dE/
-//   tvdd (#4):                     https://www.facebook.com/share/r/14jA49nJXyv/
+// CLIP_THEO_BENH[<bệnh>] = [link1..3] — NGUỒN CHUẨN ở resources.js (CLIP_BY_CONDITION).
+// Khi trống (vd covaigay / bệnh mới): bot KHÔNG gửi link rỗng, chỉ nhắn 1 câu nuôi dưỡng an toàn.
+// Thêm/đổi clip → sửa ở resources.js là cả hệ (chạm 3 + follow OA) dùng đúng ngay.
+export const CLIP_THEO_BENH = CLIP_BY_CONDITION;
+// Clip DỰ TRỮ (vượt giới hạn 3/bệnh) — đổi vào resources.js nếu muốn:
+//   vai #2: https://www.facebook.com/share/r/1D3PF7veue/ · vai bả vai: .../1EdTRfVFGy/
+//   gut #4: https://www.facebook.com/share/r/19JKjNL4dE/ · tvdd #4: .../14jA49nJXyv/
 
-// (giữ tương thích) clip review BN THẬT đã khỏi — nếu có thì cũng đưa vào CLIP_THEO_BENH luôn.
+// (giữ tương thích) clip review BN THẬT đã khỏi — nếu có thì cũng đưa vào CLIP_BY_CONDITION luôn.
 export const REVIEW_THEO_BENH = CLIP_THEO_BENH;
 
 function noiDungCham3(condition, daCoSo) {
@@ -154,7 +109,6 @@ function noiDungCham3(condition, daCoSo) {
 // ===================== CHẠM 4 — CHO GIÁ TRỊ / BÀI TẬP (T+6h) =====================
 function noiDungCham4(condition, daCoSo) {
   const key = tenBenhKey(condition);
-  const pdf = CAM_NANG_PDF[key];
   const tenCN = TEN_CAM_NANG[key] || 'Cẩm nang chăm sóc tại nhà';
   const meo = MEO_THEO_BENH[key];
   const msgs = [];
@@ -165,14 +119,11 @@ function noiDungCham4(condition, daCoSo) {
   } else {
     msgs.push('Dạ em gửi mình vài lời dặn nhỏ để chăm sóc tại nhà cho đỡ hơn nha ạ 🌿 Mình nhớ vận động nhẹ nhàng đều đặn, tránh giữ một tư thế quá lâu ạ.');
   }
-  // Tặng cẩm nang PDF đầy đủ (nếu có theo bệnh).
-  if (pdf) {
-    msgs.push(`Em tặng mình trọn bộ "${tenCN}" của phòng khám nha, mình lưu lại tập dần ạ: ${pdf}`);
-  }
-  // Mời Quan tâm Zalo OA — LUÔN gửi cho CẢ 2 nhánh (đã/chưa có số), anh Trình chốt 30/06.
-  // OA là cửa để sau này engine chạm fallback qua Zalo (không kẹt rule 24h như FB) + gửi file thẳng.
-  // Truyền !!pdf để câu mời tránh trùng phần thưởng với ô PDF vừa gửi.
-  msgs.push(loiMoiZaloOA(tenCN, daCoSo, !!pdf));
+  // ĐÒN BẨY (anh Trình chốt 30/06): KHÔNG dán link Drive cho không nữa.
+  // Cẩm nang PDF + video là LÝ DO để khách Quan tâm OA — file chỉ nhận được SAU KHI follow.
+  // Khách bấm follow → webhook follow OA → engine TỰ gửi PDF + video qua Zalo (giai đoạn webhook).
+  // Vì vậy luôn gọi loiMoiZaloOA với daCoPDF=false (OA chính là nơi nhận trọn bộ tài liệu).
+  msgs.push(loiMoiZaloOA(tenCN, daCoSo, false));
   // Đóng: đã có số → đẩy đặt lịch; chưa có số → mời để lại số nhẹ.
   if (daCoSo) {
     msgs.push('Mình tập thử mấy hôm nhé, mà để chắc ăn thì Bác sĩ khám trực tiếp xem đúng nguyên nhân vẫn tốt nhất ạ. Mình sắp xếp qua khám hôm nào tiện, em giữ suất cho mình nha 🙏');

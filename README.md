@@ -9,19 +9,56 @@ Service Node.js chạy 24/7: nhận tin khách từ **Pancake** → trả lời 
 ## Cấu trúc
 ```
 bot-gemini-checkpage/
-├── index.js            # Express: /webhook, /health + cron retouch 15 phút
-├── system-prompt.md    # Bộ não nạp vào Gemini (= file BOT GEMINI 1)
-├── .env                # Khóa thật — ĐÃ gitignore, KHÔNG đẩy GitHub
-├── .env.example        # Mẫu để người khác điền
+├── index.js              # Express: /webhook, /zalo/webhook, /admin/*, /health + cron retouch/7-chạm/chăm-bill
+├── system-prompt.md      # Bộ não FB (săn lead)
+├── system-prompt-zalo.md # Bộ não ZALO OA (chăm sâu, nhận diện BN cũ/mới, đòn tâm lý "tới nóc")
+├── .env / .env.example
 └── src/
-    ├── config.js       # Đọc env, gom danh sách trang Pancake
-    ├── gemini.js       # Gọi Gemini, ép JSON, mode retouch
-    ├── pancake.js      # Gửi tin đa trang (page_id→token), delay giữa ô
-    ├── store.js        # SQLite: lịch sử hội thoại + trạng thái
-    ├── utils.js        # Bắt SĐT Việt Nam bằng regex
-    ├── telegram.js     # Báo lead / handover về Telegram
-    └── handler.js      # Lõi xử lý 1 lượt (webhook & retouch)
+    ├── config.js         # Đọc env, gom trang Pancake, nạp 2 bộ não
+    ├── gemini.js         # Gọi Gemini, ép JSON, chọn bộ não theo channel + chèn thẻ ngữ cảnh MEDi
+    ├── pancake.js        # Gửi tin đa trang (page_id→token), nhãn cờ-tắt-bot
+    ├── zalo.js           # Zalo OpenAPI: gửi text/file, getUserInfo, follow, tự refresh token
+    ├── medi.js           # ENRICH: tra hồ sơ BN theo SĐT (Sheet MEDi) → thẻ [BN_CŨ]/[BN_MỚI] + đọc cả bảng cho wakeup
+    ├── conditions.js     # Map mã bệnh → tên VN + SALE_PAGE (12 bệnh, dùng chung)
+    ├── resources.js      # KHO TÀI LIỆU: brochure/PDF, clip, quyền lợi, dịch vụ/công nghệ (config trung tâm)
+    ├── store.js          # SQLite: hội thoại + bill_care + wakeup_log
+    ├── utils.js          # Bắt SĐT Việt Nam
+    ├── telegram.js       # Báo lead / handover / DS BN ngủ cần gọi
+    ├── handler.js        # Lõi 1 lượt (webhook & retouch) + ENRICH kênh Zalo
+    ├── touches.js        # ENGINE 7 CHẠM lead mới (FB) — chạm bot 3/4/6 (tài liệu lấy từ resources.js)
+    ├── care-send.js      # Gửi tin chăm: tự chọn kênh (Pancake-Zalo / Zalo OpenAPI)
+    ├── billtouches.js    # Nội dung chuỗi CA RA BILL (ngày 0→7)
+    ├── billengine.js     # Engine + nạp ca ra bill (/admin/bill-ingest)
+    ├── rebilltouches.js  # Nội dung chuỗi TÁI BILL 4 nhóm (gồm liệu trình PRP 3 buổi×1 tháng)
+    ├── rebillengine.js   # Engine tái bill theo nhóm + mốc trước/sau buổi hẹn
+    ├── follow.js         # Webhook follow OA → giao PDF + video đúng bệnh
+    └── wakeup.js         # Engine ĐÁNH THỨC BN NGỦ (tệp MEDi cũ) → nhắc qua OA / đẩy telesale
 ```
+
+### 17 mặt bệnh (conditions.js) — bệnh LẠ KHÔNG gửi sale page
+Cốt lõi (có sale page riêng): `goi vai gut lung tvdd covaigay`. Có trang LIÊN QUAN sát: `chopxoay`→dauvai · `csc`→covaigay.
+Bệnh LẠ (chưa có trang → `hasSalePage()=false` → **bot KHÔNG gửi link**, chỉ tư vấn + xin số + mời OA): `ngontay cochan hang chomdui loangxuong dequervain ongcotay tenniselbow gangotchan`.
+> Anh Trình chốt 30/06: bệnh lạ thì đừng gửi sale page. Tạo trang riêng cho bệnh nào → thêm 1 dòng vào `SALE_PAGE` (conditions.js) là cả hệ gửi đúng ngay.
+> Nội dung cẩm nang/quyền lợi/dịch vụ 17 bệnh: `02-Marketing-SalePage/Tai-lieu-cham-soc-Zalo/` (20 file markdown → đưa Canva → PDF → dán link vào resources.js).
+
+### Mục tiêu BOTGEMINI Facebook (system-prompt.md mục 2) = 3 ĐÍCH SONG SONG
+(1) lấy SĐT · (2) đúng sale page · (3) **kéo bằng được vào Zalo OA** (mời tự nhiên xuyên suốt, có số rồi vẫn mời để nhận tài liệu).
+
+### Đánh thức BN ngủ (wakeup.js, cron 09:15 VN/ngày)
+Quét MEDi: BN khám cách đây >45 ngày & chưa lại → đã follow OA thì bot tự nhắc qua Zalo; chưa follow thì gom DS bắn Telegram cho telesale gọi/add Zalo. Chống nhắc dày bằng `wakeup_log` (cooldown 30 ngày, tối đa 3 lần).
+
+---
+
+## 🌿 HỆ CHĂM SÓC ZALO OA (chốt 30/06 — thiết kế: THIET-KE-ZALO-OA-CHAM-SOC.md)
+Zalo OA = **chăm sóc SÂU** (khách đã follow = đã ấm), KHÁC FB (săn lead). 6 mảnh:
+1. **Bộ não Zalo riêng** (`system-prompt-zalo.md`): nhận diện BN cũ/mới qua THẺ ngữ cảnh, đòn tâm lý "tới nóc" trong ranh giới y tế, xin số → bắn telesale gọi nóng.
+2. **ENRICH** (`medi.js`): tin Zalo đến → tra SĐT trong MEDi → gắn `[BN_CŨ]`/`[BN_MỚI]` vào prompt. *(Sheet MEDi chưa bật → fail-open: coi là BN mới, vẫn chạy.)*
+3. **Chuỗi CA RA BILL** (`billengine.js`): BN ra bill có thuốc/tiêm → chăm ngày 0/1/3/6/7 (đỉnh: ngày 6 nhắc tái khám). Nạp ca: `POST /admin/bill-ingest`.
+4. **Chuỗi TÁI BILL 4 nhóm** (`rebillengine.js`): khám-1-lần / đang-liệu-trình / xong / bỏ-dở. Nhóm liệu trình PRP·biogen·TBG = 3 buổi × 1 tháng (nhắc kép trước buổi, đòn sợ-mất nếu lỡ buổi).
+5. **Webhook follow** (`follow.js`): khách bấm Quan tâm OA → tự giao PDF cẩm nang + clip đúng bệnh ("hứa rồi giao ngay").
+6. **Gửi đa kênh** (`care-send.js`): ưu tiên Zalo-qua-Pancake; bật `ZALO_OPENAPI_ENABLED=1` để gửi file/ảnh + nhận webhook follow.
+
+> **Đấu data sau:** `medi.js` (Sheet MEDi) và POS (ca ra bill). Khi chưa đấu, nạp ca tay qua `/admin/bill-ingest`. Mọi nguồn fail-open — không cấu hình thì không crash.
 
 ---
 
@@ -107,4 +144,17 @@ Mở `https://<tên-app>.onrender.com/health` thấy `{"ok":true}` là sống.
 
 **3. Bật thêm trang Dr Nhật Trình:** TẮT Meta Business Agent trên trang đó trước, rồi bỏ dấu `#` ở 3 dòng `PANCAKE_PAGE_2_*` trong `.env` (và thêm biến tương ứng trên Render).
 
-**4. Mở rộng kênh TikTok/Zalo:** thêm `PANCAKE_PAGE_3_ID/_TOKEN/_CHANNEL` (channel `tiktok`/`zalo`). Cách gửi cho TikTok/Zalo có thể khác FB — kiểm tra docs Pancake.
+**4. Bật kênh ZALO OA:** thêm `PANCAKE_PAGE_3_ID/_TOKEN/_CHANNEL=zalo` (Zalo nối Pancake) → tin thường gửi như FB, bộ não Zalo + ENRICH tự kích hoạt. Để **gửi file PDF/ảnh** và **nhận webhook follow**, thêm `ZALO_OPENAPI_ENABLED=1` + token Zalo (`ZALO_ACCESS_TOKEN`/`REFRESH_TOKEN`/`APP_ID`/`APP_SECRET`) và trỏ webhook Zalo Console về `https://<app>.onrender.com/zalo/webhook`.
+
+**5. Nạp ca ra bill (khi POS chưa đấu tự động):**
+```bash
+curl -X POST "https://<app>.onrender.com/admin/bill-ingest?token=$ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"phone":"0938xxxxxx","name":"Nguyễn Văn A","condition":"goi",
+       "has_injection":true,"has_medicine":true,
+       "conversation_id":"<convZalo>","page_id":"<pageZalo>",
+       "bill_date":"2026-06-30"}'
+```
+Nhóm tái bill (bước 6) thêm `"group_no":2,"treatment":"PRP","next_session_at":"2026-07-30"`.
+
+**6. Đấu data thật sau:** điền `MEDI_SHEET_*`/`GOOGLE_SA_JSON` (ENRICH) và `POS_SHEET_*` (tự nạp ca ra bill — phần đọc trong `billengine.ingestFromPosSheet()` còn là khung TODO).

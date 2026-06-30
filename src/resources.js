@@ -1,0 +1,172 @@
+// ============================================================
+//  KHO TÀI LIỆU / QUYỀN LỢI / DỊCH VỤ — config TRUNG TÂM (anh Trình chốt 30/06).
+//  Một chỗ duy nhất để cắm: brochure/PDF theo bệnh, video clip, "quyền lợi/giá trị" tặng khách,
+//  dịch vụ/công nghệ mới của phòng khám. Mọi engine (chạm FB, ca-ra-bill, tái bill, follow OA)
+//  tham chiếu về đây → thêm/sửa 1 nơi, cả hệ dùng đúng.
+//
+//  ⚠️ ĐÂY LÀ KHUNG — link/nội dung thật do anh Trình điền (Drive/Canva). Chỗ nào để '' hoặc []
+//  nghĩa là CHƯA có tài liệu cho bệnh đó → engine tự bỏ qua nhẹ nhàng (không gửi link rỗng).
+//  Danh mục ĐỀ XUẤT cần làm xem cuối file (RESOURCE_TODO) — checklist để anh duyệt & sản xuất.
+
+// ---------- 1) BROCHURE / CẨM NANG PDF theo bệnh ----------
+// 6 bệnh cốt lõi ĐÃ có (bê từ touches.js cũ). 6 bệnh mở rộng để TRỐNG chờ anh làm.
+export const BROCHURE_PDF = {
+  // cốt lõi (đã có) —
+  goi:      'https://drive.google.com/file/d/1MLGPKRIAvQZNVwNcUzBkoNAtlS17gQVQ/view',
+  vai:      'https://drive.google.com/file/d/12O-O62GLHWgh_3yG8U-aBt2vMWYNfdxC/view',
+  gut:      'https://drive.google.com/file/d/1gPV2a5vOqfhdiUB-d18htQRtX7kK1eSr/view',
+  lung:     'https://drive.google.com/file/d/1xDDc8QbgEoifGHvfNiYhH6axlwTha5Ho/view',
+  tvdd:     'https://drive.google.com/file/d/1b-huOqDvWVbOpL2hjDNKXfaSnNeyaoEH/view',
+  covaigay: 'https://drive.google.com/file/d/1o98wx_wW63ZVHTiWlkByh100Wb2hHwpp/view',
+  // mở rộng (CHƯA có — anh điền link Drive khi xong) —
+  chopxoay: '',
+  ngontay:  '',
+  cochan:   '',
+  hang:     '',
+  chomdui:  '',
+  csc:      '',
+  loangxuong: '',
+  dequervain: '',
+  ongcotay:   '',
+  tenniselbow:'',
+  gangotchan: '',
+};
+
+// Tên brochure (để câu mời tự nhiên).
+export const BROCHURE_NAME = {
+  goi:      'Cẩm nang chăm sóc khớp gối tại nhà',
+  vai:      'Cẩm nang chăm sóc khớp vai tại nhà',
+  gut:      'Cẩm nang ăn uống & kiểm soát bệnh gút',
+  lung:     'Cẩm nang 7 ngày giảm đau lưng tại nhà',
+  tvdd:     'Cẩm nang sống khỏe với thoát vị đĩa đệm',
+  covaigay: 'Cẩm nang thư giãn cổ – vai – gáy',
+  chopxoay: 'Cẩm nang phục hồi chóp xoay vai',
+  ngontay:  'Cẩm nang chữa ngón tay lò xo',
+  cochan:   'Cẩm nang xử lý bong gân cổ chân đúng cách',
+  hang:     'Cẩm nang sống khỏe với thoái hóa khớp háng',
+  chomdui:  'Cẩm nang bảo tồn chỏm xương đùi',
+  csc:      'Cẩm nang chăm sóc cột sống cổ',
+  loangxuong: 'Cẩm nang phòng & trị loãng xương',
+  dequervain: 'Cẩm nang giảm đau gân cổ tay De Quervain',
+  ongcotay:   'Cẩm nang chữa tê tay – hội chứng ống cổ tay',
+  tenniselbow:'Cẩm nang phục hồi khuỷu tay tennis',
+  gangotchan: 'Cẩm nang trị đau gót chân buổi sáng',
+};
+
+// ---------- 2) CLIP video Bác sĩ phân tích theo bệnh (tối đa 3/bệnh) ----------
+// Cốt lõi bê từ touches.js. Mở rộng để [] chờ nhân viên gom clip.
+export const CLIP_BY_CONDITION = {
+  goi: [
+    'https://www.facebook.com/share/r/1LZWzyopfW/',
+    'https://www.facebook.com/share/r/1DFYq7aNR5/',
+  ],
+  vai: [
+    'https://www.facebook.com/share/v/1bUZLUJQaz/',
+    'https://www.facebook.com/share/r/17qGggo8BS/',
+    'https://www.facebook.com/share/r/1945KUU4AE/',
+  ],
+  gut: [
+    'https://www.facebook.com/share/r/192Dk5Ct5H/',
+    'https://www.facebook.com/share/v/1J4YGvXQHo/',
+    'https://www.facebook.com/share/r/1TF4ciks2B/',
+  ],
+  lung: [
+    'https://www.facebook.com/share/r/19E639pQmE/',
+    'https://www.facebook.com/share/r/1B4UumKN4a/',
+  ],
+  tvdd: [
+    'https://www.facebook.com/share/r/15xvpESyDix/',
+    'https://www.facebook.com/share/r/18z8xc7fZZ/',
+    'https://www.facebook.com/share/r/1ERSFS6Aj8/',
+  ],
+  covaigay: [],
+  chopxoay: [],
+  ngontay:  [],
+  cochan:   [],
+  hang:     [],
+  chomdui:  [],
+  csc:      [],
+  loangxuong: [],
+  dequervain: [],
+  ongcotay:   [],
+  tenniselbow:[],
+  gangotchan: [],
+};
+
+// ---------- 3) QUYỀN LỢI / GIÁ TRỊ tặng khách (đòn bẩy "cho đi") ----------
+// Câu mô tả ngắn quyền lợi, cài vào chạm/tin chăm. Để khách thấy follow OA / đến khám ĐƯỢC GÌ.
+// ⚠️ Tuân thủ quảng cáo y tế: KHÔNG hứa khỏi 100%, KHÔNG bịa. Chỉ nêu quyền lợi CÓ THẬT.
+// Anh Trình điền/sửa cho khớp ưu đãi thật từng thời điểm.
+export const PERKS = {
+  // quyền lợi khi QUAN TÂM Zalo OA (nhận tài liệu + chăm sóc 1-1)
+  oa_follow: [
+    'Nhận trọn bộ cẩm nang + video bài tập tại nhà theo đúng bệnh của mình',
+    'Được nhắc lịch tái khám / lịch liệu trình khỏi quên',
+    'Hỏi đáp trực tiếp, Bác sĩ dặn dò chăm sóc thường xuyên',
+  ],
+  // quyền lợi khi ĐỂ LẠI SỐ / ĐẾN KHÁM lần đầu
+  first_visit: [
+    'Tư vấn trực tiếp với Bác sĩ chuyên khoa cơ xương khớp (miễn phí tư vấn)',
+    'Được xem kỹ phim chụp, tìm đúng nguyên nhân',
+    'Ưu tiên điều trị bảo tồn, hạn chế phẫu thuật',
+  ],
+  // quyền lợi DUY TRÌ / GIỚI THIỆU (cho BN đã điều trị)
+  loyalty: [
+    'Ưu tiên giữ suất tái khám với Bác sĩ',
+    'Người thân giới thiệu qua được ưu tiên sắp lịch',
+  ],
+};
+
+// ---------- 4) DỊCH VỤ / CÔNG NGHỆ MỚI (cài cắm để "chăm sóc" cho sang) ----------
+// Danh mục dịch vụ/công nghệ của phòng khám — bot dùng để cài vào tư vấn/chăm sóc đúng bệnh.
+// ⚠️ CHỈ nêu dịch vụ CÓ THẬT. Bệnh nào hợp dịch vụ nào → map ở SERVICE_BY_CONDITION.
+// Anh Trình bổ sung công nghệ mới (vd sóng xung kích, laser công suất cao...) vào đây.
+export const SERVICES = {
+  prp:    { ten: 'Tiêm huyết tương giàu tiểu cầu (PRP)', mota: 'kích thích phục hồi mô tổn thương từ chính máu của mình' },
+  ha:     { ten: 'Tiêm Acid Hyaluronic (chất nhờn khớp)', mota: 'bổ sung chất nhờn giúp khớp vận động êm hơn' },
+  noikhop:{ ten: 'Tiêm nội khớp / nội gân', mota: 'đưa thuốc đúng vị trí tổn thương, giảm đau tại chỗ' },
+  sieuam: { ten: 'Siêu âm cơ xương khớp', mota: 'nhìn rõ tổn thương phần mềm để chẩn đoán chính xác' },
+  vltl:   { ten: 'Điện trị liệu – Vật lý trị liệu', mota: 'phục hồi chức năng, giảm đau không dùng nhiều thuốc' },
+  // --- CÔNG NGHỆ MỚI (anh điền khi triển khai) ---
+  // songxungkich: { ten: 'Sóng xung kích Shockwave', mota: '...' },
+  // laser:        { ten: 'Laser công suất cao', mota: '...' },
+};
+
+// Map bệnh → dịch vụ phù hợp (để bot gợi đúng, không gợi bừa).
+export const SERVICE_BY_CONDITION = {
+  goi:      ['prp', 'ha', 'noikhop', 'vltl', 'sieuam'],
+  vai:      ['prp', 'noikhop', 'vltl', 'sieuam'],
+  chopxoay: ['prp', 'noikhop', 'vltl', 'sieuam'],
+  gut:      ['noikhop', 'vltl'],
+  lung:     ['vltl', 'noikhop'],
+  tvdd:     ['vltl', 'noikhop'],
+  covaigay: ['vltl', 'noikhop'],
+  csc:      ['vltl', 'noikhop'],
+  ngontay:  ['noikhop', 'prp'],
+  cochan:   ['prp', 'vltl', 'sieuam'],
+  hang:     ['prp', 'ha', 'noikhop', 'vltl'],
+  chomdui:  ['prp', 'noikhop', 'vltl'],
+  loangxuong: ['vltl', 'sieuam'],
+  dequervain: ['noikhop', 'vltl', 'sieuam'],
+  ongcotay:   ['noikhop', 'vltl', 'sieuam'],
+  tenniselbow:['prp', 'noikhop', 'vltl', 'sieuam'],
+  gangotchan: ['prp', 'noikhop', 'vltl', 'sieuam'],
+};
+
+// Helper: lấy mô tả dịch vụ gợi ý cho 1 bệnh (1-2 dịch vụ nổi bật) — câu ngắn để chèn vào tin.
+export function suggestServices(condition, max = 2) {
+  const keys = (SERVICE_BY_CONDITION[condition] || []).slice(0, max);
+  return keys.map((k) => SERVICES[k]).filter(Boolean);
+}
+
+// ---------- CHECKLIST ĐỀ XUẤT (để anh Trình duyệt & sản xuất nội dung) ----------
+// KHÔNG dùng trong code — chỉ là ghi chú điều hướng việc. Xem cũng được, xóa cũng được.
+export const RESOURCE_TODO = `
+[ ] Brochure PDF 6 bệnh MỚI: chopxoay, ngontay, cochan, hang, chomdui, csc (BROCHURE_PDF còn trống).
+[ ] Clip Bác sĩ phân tích cho: covaigay + 6 bệnh mới (CLIP_BY_CONDITION còn []).
+[ ] PDF "quyền lợi khách hàng" 1 trang: gộp PERKS thành tờ rơi đẹp (Canva) để gửi khi follow OA.
+[ ] Tờ giới thiệu DỊCH VỤ/CÔNG NGHỆ (SERVICES) — ảnh máy móc + giải thích dễ hiểu cho cô chú.
+[ ] Nếu có công nghệ MỚI (sóng xung kích, laser...) → điền vào SERVICES + map SERVICE_BY_CONDITION.
+[ ] Brochure theo GIAI ĐOẠN: (a) trước khám "vì sao nên khám", (b) sau khám "chăm tại nhà",
+    (c) đang liệu trình "vì sao theo đủ buổi", (d) duy trì "giữ kết quả + giới thiệu".
+`;

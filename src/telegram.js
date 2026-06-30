@@ -1,18 +1,7 @@
 // Telegram notifier: báo telesale khi có SĐT hoặc cần chuyển người.
 import axios from 'axios';
 import { config } from './config.js';
-
-// Map mã bệnh → tên tiếng Việt cho dễ đọc trong thông báo.
-const CONDITION_VI = {
-  goi: 'Khớp gối / thoái hóa gối',
-  vai: 'Khớp vai / đau vai',
-  gut: 'Gút / acid uric',
-  lung: 'Đau lưng / cột sống',
-  tvdd: 'Thoát vị đĩa đệm',
-  covaigay: 'Đau cổ vai gáy',
-  khac: 'Bệnh khác',
-  unknown: 'Chưa rõ',
-};
+import { CONDITION_VI } from './conditions.js';
 
 function pancakeLink(pageId, conversationId) {
   // Link mở hội thoại trong Pancake (giúp telesale bấm vào xem ngay).
@@ -104,6 +93,19 @@ export async function notifyComment({ name, commentText, pageId, conversationId,
     `📝 Nội dung: "${escapeHtml((commentText || '').slice(0, 150))}"\n` +
     `🤖 Bot đã rep mời công khai${privateOk ? ' + nhắn riêng kéo vào inbox' : ' (private reply CHƯA gửi được — xem inbox/log)'}\n`;
   if (conversationId) text += `➡️ ${pancakeLink(pageId, conversationId)}`;
+  await send(text);
+}
+
+// Báo DANH SÁCH BN ngủ CHƯA follow OA (engine đánh thức không gửi tự động được) → telesale gọi/add Zalo.
+export async function notifyWakeupList(items) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const top = items.slice(0, 30);
+  let text = `🌙 <b>BN CŨ CẦN ĐÁNH THỨC</b> (${items.length} ca, chưa follow OA → telesale gọi/add Zalo)\n`;
+  top.forEach((it, i) => {
+    const benh = CONDITION_VI[it.condition] || CONDITION_VI.unknown;
+    text += `\n${i + 1}. ${escapeHtml(it.name || '(chưa rõ)')} — <b>${escapeHtml(it.phone || '?')}</b> · ${benh}${it.daysSince ? ` · ${it.daysSince} ngày chưa lại` : ''}`;
+  });
+  if (items.length > top.length) text += `\n… và ${items.length - top.length} ca nữa.`;
   await send(text);
 }
 

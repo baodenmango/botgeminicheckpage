@@ -1,21 +1,32 @@
 // Gemini client: nạp system prompt (bộ não), ép trả JSON, hỗ trợ mode retouch.
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config, SYSTEM_PROMPT } from './config.js';
+import { config, SYSTEM_PROMPT, SYSTEM_PROMPT_ZALO } from './config.js';
 
 const genAI = new GoogleGenerativeAI(config.gemini.apiKey || 'MISSING_KEY');
 
+const GEN_CONFIG = {
+  responseMimeType: 'application/json', // ép JSON để parse chắc chắn
+  temperature: 0.8,
+  // gemini-2.5-flash là model "thinking" — phần suy luận ngốn token.
+  // Tắt thinking + nâng token để JSON câu trả lời không bị cắt giữa chừng.
+  maxOutputTokens: 2048,
+  thinkingConfig: { thinkingBudget: 0 },
+};
+
+// Hai "bộ não" — Facebook (mặc định) và Zalo OA (chăm sóc sâu). Chọn theo channel.
 const model = genAI.getGenerativeModel({
   model: config.gemini.model,
   systemInstruction: SYSTEM_PROMPT,
-  generationConfig: {
-    responseMimeType: 'application/json', // ép JSON để parse chắc chắn
-    temperature: 0.8,
-    // gemini-2.5-flash là model "thinking" — phần suy luận ngốn token.
-    // Tắt thinking + nâng token để JSON câu trả lời không bị cắt giữa chừng.
-    maxOutputTokens: 2048,
-    thinkingConfig: { thinkingBudget: 0 },
-  },
+  generationConfig: GEN_CONFIG,
 });
+const modelZalo = genAI.getGenerativeModel({
+  model: config.gemini.model,
+  systemInstruction: SYSTEM_PROMPT_ZALO,
+  generationConfig: GEN_CONFIG,
+});
+function pickModel(channel) {
+  return String(channel || '').toLowerCase() === 'zalo' ? modelZalo : model;
+}
 
 // Phản hồi an toàn khi Gemini lỗi/timeout — không crash, không im lặng.
 const FALLBACK = {
@@ -28,6 +39,7 @@ const FALLBACK = {
   summary: null,
   handover: false,
   handover_reason: null,
+  opt_out: false,
 };
 
 // Làm sạch & ràng buộc output theo đúng định dạng brief (mục 5, 8).
@@ -43,6 +55,7 @@ function sanitize(obj) {
   out.messages = msgs;
   out.phone_captured = Boolean(out.phone_captured);
   out.handover = Boolean(out.handover);
+  out.opt_out = Boolean(out.opt_out);
   return out;
 }
 
@@ -52,15 +65,22 @@ function sanitize(obj) {
  * @param {'reply'|'retouch'} mode
  * @param {string} customerName - tên Facebook của khách (để đoán xưng hô)
  * @param {string} gender - giới tính từ Pancake ('male'|'female'|null) — chính xác hơn đoán
+ * @param {object} opts - { channel:'facebook'|'zalo', contextTag:string } — chọn bộ não + thẻ ngữ cảnh MEDi
  * @returns {Promise<object>} object theo định dạng brief
  */
-export async function generateReply(history, mode = 'reply', customerName = null, gender = null) {
+export async function generateReply(history, mode = 'reply', customerName = null, gender = null, opts = {}) {
+  const { channel = 'facebook', contextTag = null } = opts || {};
   try {
     // Build contents từ history (Gemini dùng role 'user'/'model')
     const contents = history.map((h) => ({
       role: h.role === 'model' ? 'model' : 'user',
       parts: [{ text: h.text }],
     }));
+
+    // THẺ NGỮ CẢNH MEDi (kênh Zalo) — gắn ĐẦU để bộ não Zalo biết BN cũ/mới (mục 2 prompt Zalo).
+    if (contextTag) {
+      contents.unshift({ role: 'user', parts: [{ text: `[HỆ THỐNG] ${contextTag}` }] });
+    }
 
     // Chèn TÊN + GIỚI TÍNH khách làm context đầu để bộ não xưng hô chuẩn.
     if (customerName || gender) {
@@ -101,9 +121,10 @@ export async function generateReply(history, mode = 'reply', customerName = null
     // Gọi Gemini có RETRY cho lỗi tạm thời (429 quá tải / timeout / 5xx).
     // Các lỗi này thường qua sau 1–2s; retry 1 lần cứu được nhiều lượt thay vì bot trả "chờ chút".
     let result;
+    const activeModel = pickModel(channel);
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        result = await model.generateContent({ contents });
+        result = await activeModel.generateContent({ contents });
         break;
       } catch (e) {
         const code = e?.status || e?.code || (e?.message || '').match(/\b(429|500|503)\b/)?.[1];
