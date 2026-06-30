@@ -13,7 +13,11 @@ const GEN_CONFIG = {
   thinkingConfig: { thinkingBudget: 0 },
 };
 
+// Model DỰ PHÒNG khi model chính bị 503 (Google quá tải). Khác model để né điểm nghẽn.
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash';
+
 // Hai "bộ não" — Facebook (mặc định) và Zalo OA (chăm sóc sâu). Chọn theo channel.
+// Mỗi bộ não có model CHÍNH + model DỰ PHÒNG (cùng system prompt).
 const model = genAI.getGenerativeModel({
   model: config.gemini.model,
   systemInstruction: SYSTEM_PROMPT,
@@ -24,8 +28,17 @@ const modelZalo = genAI.getGenerativeModel({
   systemInstruction: SYSTEM_PROMPT_ZALO,
   generationConfig: GEN_CONFIG,
 });
+const modelFb2 = genAI.getGenerativeModel({
+  model: FALLBACK_MODEL, systemInstruction: SYSTEM_PROMPT, generationConfig: GEN_CONFIG,
+});
+const modelZalo2 = genAI.getGenerativeModel({
+  model: FALLBACK_MODEL, systemInstruction: SYSTEM_PROMPT_ZALO, generationConfig: GEN_CONFIG,
+});
 function pickModel(channel) {
   return String(channel || '').toLowerCase() === 'zalo' ? modelZalo : model;
+}
+function pickFallbackModel(channel) {
+  return String(channel || '').toLowerCase() === 'zalo' ? modelZalo2 : modelFb2;
 }
 
 // Phản hồi an toàn khi Gemini lỗi/timeout — không crash, không im lặng.
@@ -119,23 +132,27 @@ export async function generateReply(history, mode = 'reply', customerName = null
     }
 
     // Gọi Gemini có RETRY cho lỗi tạm thời (429 quá tải / timeout / 5xx).
-    // Các lỗi này thường qua sau 1–2s; retry 1 lần cứu được nhiều lượt thay vì bot trả "chờ chút".
+    // 3 lần: lần 1-2 model CHÍNH (chờ tăng dần); lần 3 đổi sang model DỰ PHÒNG (né 503 model chính).
     let result;
-    const activeModel = pickModel(channel);
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    const mainModel = pickModel(channel);
+    const fbModel = pickFallbackModel(channel);
+    const MAX = 3;
+    for (let attempt = 1; attempt <= MAX; attempt++) {
+      const useModel = attempt < MAX ? mainModel : fbModel; // lần cuối → model dự phòng
       try {
-        result = await activeModel.generateContent({ contents });
+        result = await useModel.generateContent({ contents });
+        if (attempt === MAX) console.log(`[gemini] ✅ model dự phòng (${FALLBACK_MODEL}) cứu được lượt này`);
         break;
       } catch (e) {
         const code = e?.status || e?.code || (e?.message || '').match(/\b(429|500|503)\b/)?.[1];
         const retriable = ['429', '500', '503', 429, 500, 503].includes(code) ||
           /quota|overload|rate|timeout|deadline|unavailable/i.test(e?.message || '');
-        if (attempt === 1 && retriable) {
-          console.warn(`[gemini] lỗi tạm (${code || e?.message?.slice(0,40)}) → retry sau 1.5s`);
-          await new Promise((r) => setTimeout(r, 1500));
+        if (attempt < MAX && retriable) {
+          console.warn(`[gemini] lỗi tạm (${code || e?.message?.slice(0,40)}) → thử lại lần ${attempt + 1}${attempt + 1 === MAX ? ' (model dự phòng)' : ''}`);
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
           continue;
         }
-        throw e; // lỗi không retriable, hoặc đã retry rồi → ném ra catch ngoài
+        throw e; // lỗi không retriable, hoặc đã hết lượt → ném ra catch ngoài
       }
     }
     const text = result.response.text();
