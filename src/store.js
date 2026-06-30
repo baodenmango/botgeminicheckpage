@@ -255,6 +255,21 @@ export function setChannel(conversationId, channel, zaloUserId = null) {
     .run(channel || null, zaloUserId || null, String(conversationId));
 }
 
+// Tìm hội thoại theo SĐT ở KÊNH KHÁC (vd FB) để NỐI NGỮ CẢNH FB→Zalo.
+// Khách cho số bên FB rồi qua Zalo OA → lấy condition + summary từ hội thoại FB cũ để bot Zalo hiểu đủ.
+// Bỏ qua chính conv đang xét. Ưu tiên bản có condition rõ + có summary + mới nhất.
+export function getConversationByPhone(phone, excludeConvId = null) {
+  if (!phone) return null;
+  const row = db.prepare(`
+    SELECT * FROM conversations
+    WHERE phone = ? AND conversation_id != ?
+    ORDER BY (condition IS NOT NULL AND condition != 'unknown') DESC,
+             (summary IS NOT NULL) DESC, last_customer_msg_at DESC LIMIT 1
+  `).get(String(phone), String(excludeConvId || ''));
+  if (!row) return null;
+  return { ...row, history: JSON.parse(row.history || '[]') };
+}
+
 // Tìm hội thoại Zalo theo zalo_user_id (lấy bản có condition rõ, mới nhất) — dùng cho webhook follow.
 export function getConversationByZaloUser(zaloUserId) {
   if (!zaloUserId) return null;

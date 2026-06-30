@@ -8,6 +8,13 @@ import { buildTouchMessages } from './touches.js';
 import { isZaloPage, stripZaloPrefix } from './zalo.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { SALE_PAGE } from './conditions.js';
+import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
+
+// Khách XIN tài liệu/cẩm nang/bài tập → gửi PDF ngay (không đợi chạm 4).
+const ASK_DOC_RE = /\b(gửi|cho|xin|share|sen)\b.*(tài liệu|tai lieu|cẩm nang|cam nang|bài tập|bai tap|file|pdf|hướng dẫn|huong dan|video)|(tài liệu|cẩm nang|bài tập|file|pdf).*(đâu|chưa|gửi|gui)/i;
+function wantsDocument(text) {
+  return ASK_DOC_RE.test(String(text || ''));
+}
 
 // Khóa theo conversation_id để KHÔNG xử lý 2 lượt chồng nhau cùng lúc.
 // Map (không Set): lưu thời điểm khóa để TỰ HẾT HẠN sau LOCK_TTL — chống kẹt vĩnh viễn
@@ -225,6 +232,31 @@ export async function handleIncoming(ev) {
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
 
+    // KHÁCH XIN TÀI LIỆU/CẨM NANG/BÀI TẬP → gửi PDF đúng bệnh NGAY (không đợi chạm 4).
+    // Chỉ gửi khi ĐÃ biết bệnh (condition khác unknown) + có PDF. Chưa rõ bệnh → để Gemini hỏi bệnh.
+    if (wantsDocument(messageText)) {
+      const cond = conv.condition && conv.condition !== 'unknown' ? conv.condition : null;
+      const pdf = cond ? BROCHURE_PDF[cond] : null;
+      if (pdf) {
+        const ten = BROCHURE_NAME[cond] || 'cẩm nang chăm sóc tại nhà';
+        const msgs = [
+          `Dạ em gửi mình "${ten}" nha ạ 🌿`,
+          `Mình xem và áp dụng dần nha: ${pdf}`,
+        ];
+        if (!store.isCaptured(conv)) {
+          msgs.push('Mình muốn Bác sĩ xem kỹ tình trạng và tư vấn hướng phù hợp thì để lại số điện thoại giúp em nha, Bác sĩ gọi tư vấn miễn phí cho mình ạ 🙏');
+        }
+        msgs.forEach((m) => noteBotSent(conversationId, m));
+        noteBotJustSent(conversationId);
+        await sendMessages(pageId, conversationId, msgs);
+        store.appendHistory(conversationId, 'model', msgs.join('\n'));
+        console.log(`[doc] 📄 ${conversationId} xin tài liệu → đã gửi PDF bệnh ${cond}`);
+        return;
+      }
+      // chưa rõ bệnh → KHÔNG return, để Gemini hỏi "mình đau vùng nào" rồi lần sau gửi.
+      console.log(`[doc] ${conversationId} xin tài liệu nhưng chưa rõ bệnh → để Gemini hỏi bệnh`);
+    }
+
     // Chốt SĐT bằng regex (CHỈ nhận số VN hợp lệ đúng 10 số).
     let phoneByRegex = extractPhone(messageText);
 
@@ -306,6 +338,25 @@ export async function handleIncoming(ev) {
         } else {
           // chưa có số → chưa tra được, coi là BN mới tạm thời (bot Zalo sẽ khéo xin số để tra)
           contextTag = buildContextTag(null, conv.condition || null);
+        }
+      }
+
+      // NỐI NGỮ CẢNH FB→ZALO (anh Trình chốt): khách từng nhắn bên FB rồi qua Zalo OA → tra SĐT ra
+      // hội thoại FB cũ, lấy BỆNH + TÓM TẮT để bot Zalo HIỂU ĐỦ (mới chạm 4 đúng được).
+      const phoneForLink = phoneByRegex || freshZ.phone || extractPhoneFromHistory(freshZ.history);
+      if (phoneForLink) {
+        const fbConv = store.getConversationByPhone(phoneForLink, conversationId);
+        if (fbConv && (fbConv.condition || fbConv.summary)) {
+          // mang condition + summary sang conv Zalo để engine chạm/gửi file đúng bệnh
+          if (fbConv.condition && fbConv.condition !== 'unknown' &&
+              (!freshZ.condition || freshZ.condition === 'unknown')) {
+            store.setCondition(conversationId, fbConv.condition);
+          }
+          if (fbConv.summary && !freshZ.summary) store.setSummary(conversationId, fbConv.summary);
+          const tomtat = fbConv.summary ? ` Tóm tắt FB: ${fbConv.summary}` : '';
+          contextTag = (contextTag || '') +
+            `\n[NGỮ CẢNH TỪ FACEBOOK] Khách này TỪNG nhắn bên Facebook (bệnh=${fbConv.condition || 'chưa rõ'}).${tomtat} → ĐỪNG hỏi lại từ đầu, chăm tiếp dựa trên cái họ đã trao đổi.`;
+          console.log(`[link-fb] ${conversationId} nối ngữ cảnh FB qua SĐT ${phoneForLink}: bệnh=${fbConv.condition}, có summary=${!!fbConv.summary}`);
         }
       }
     }
