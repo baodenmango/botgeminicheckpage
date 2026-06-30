@@ -154,6 +154,31 @@ function stripHtml(s) {
  *  - data.message.from.id / .name                          → người gửi (khách hay page)
  * Trả về null nếu tin do PAGE/bot gửi (from.id === page_id) → tránh loop.
  */
+// Quét ĐỆ QUY mọi field trong payload (card liên hệ/attachment) tìm SĐT VN hợp lệ (đúng 10 số, đầu 03/05/07/08/09).
+// Dùng cho card liên hệ Zalo chứa số. Trả về số chuẩn hoá hoặc null.
+function findPhoneInPayload(obj, depth = 0) {
+  if (obj == null || depth > 6) return null;
+  if (typeof obj === 'string' || typeof obj === 'number') {
+    const digits = String(obj).replace(/[^\d]/g, '');
+    // thử các cụm 10-11 số trong chuỗi
+    const m = String(obj).match(/(?:\+?84|0)[\d .\-()]{8,13}\d/g) || [];
+    for (const cand of [...m, digits]) {
+      let s = String(cand).replace(/[^\d]/g, '');
+      if (s.startsWith('84') && s.length >= 11) s = '0' + s.slice(2);
+      if (/^0(3|5|7|8|9)\d{8}$/.test(s)) return s;
+    }
+    return null;
+  }
+  if (Array.isArray(obj)) {
+    for (const x of obj) { const r = findPhoneInPayload(x, depth + 1); if (r) return r; }
+    return null;
+  }
+  if (typeof obj === 'object') {
+    for (const k of Object.keys(obj)) { const r = findPhoneInPayload(obj[k], depth + 1); if (r) return r; }
+  }
+  return null;
+}
+
 function parsePancakeWebhook(body) {
   if (!body || typeof body !== 'object') return null;
 
@@ -176,14 +201,26 @@ function parsePancakeWebhook(body) {
     msg.text || conv.snippet || null;
   let messageText = stripHtml(rawText);
 
-  // Khách KHÔNG gõ chữ mà gửi ẢNH/STICKER/FILE/VOICE (rất hay gặp ở người lớn tuổi:
-  // gửi ảnh phim X-quang, ảnh đơn thuốc, ảnh chỗ đau). Đừng bỏ qua → bot phải phản hồi.
-  // Đặt placeholder để bot biết khách vừa gửi gì (handler/Gemini xử như tin có nội dung).
+  // Khách KHÔNG gõ chữ mà gửi ẢNH/STICKER/FILE/VOICE/CARD LIÊN HỆ.
+  // ⚠️ KÊNH ZALO: khách hay gửi "danh thiếp/card liên hệ" chứa SĐT thay vì gõ — phải BẮT số đó,
+  // nếu không bot xin số lại hoài (lỗi đã thấy: card "097 845 1211" bot không nhận). Quét SĐT trong
+  // toàn bộ payload attachment; thấy số VN hợp lệ → đưa thành text để extractPhone chốt lead.
   if (!messageText) {
     const att = msg.attachments || msg.attachment || conv.attachments || data.attachments;
     const hasAttachment = Array.isArray(att) ? att.length > 0 : Boolean(att);
     if (hasAttachment) {
-      messageText = '[khách vừa gửi một hình ảnh/tệp]';
+      const phoneInAtt = findPhoneInPayload(att);
+      messageText = phoneInAtt
+        ? `Số điện thoại của tôi là ${phoneInAtt}`   // card liên hệ → đưa số vào để bot chốt
+        : '[khách vừa gửi một hình ảnh/tệp]';
+    }
+  }
+  // CARD liên hệ đôi khi VẪN có messageText (tên) + số nằm trong attachment → vẫn cố vớt số.
+  else {
+    const att = msg.attachments || msg.attachment || conv.attachments || data.attachments;
+    if (att && !/\d{9,}/.test(messageText)) {
+      const phoneInAtt = findPhoneInPayload(att);
+      if (phoneInAtt) messageText = `${messageText} (số: ${phoneInAtt})`;
     }
   }
 
