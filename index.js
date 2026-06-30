@@ -17,7 +17,12 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 // --- Health check (Render kiểm tra sống) ---
-app.get('/health', (_req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
+// Kèm commit SHA + thời điểm process khởi động → verify deploy chỉ bằng 1 lệnh curl
+// (Render cấp sẵn RENDER_GIT_COMMIT cho mọi service; bootedAt cho biết lần restart gần nhất).
+const BOOTED_AT = new Date().toISOString();
+const GIT_COMMIT = (process.env.RENDER_GIT_COMMIT || 'dev').slice(0, 7);
+app.get('/health', (_req, res) =>
+  res.status(200).json({ ok: true, ts: Date.now(), commit: GIT_COMMIT, bootedAt: BOOTED_AT }));
 app.get('/', (_req, res) => res.status(200).send('Bot Gemini Hiệp Lợi đang chạy ✅'));
 
 // --- Admin: gỡ cờ "người giữ" bị kẹt (do bug nhận nhầm echo là telesale) ---
