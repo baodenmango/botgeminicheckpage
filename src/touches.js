@@ -20,6 +20,36 @@ export const CAM_NANG_PDF = {
   covaigay: 'https://drive.google.com/file/d/1o98wx_wW63ZVHTiWlkByh100Wb2hHwpp/view',
 };
 
+// --- Link QUAN TÂM Zalo OA Phòng khám (khách bấm để follow OA) ---
+// Chạm 4 mời khách quan tâm OA: theo dõi tin Bác sĩ + nhận trọn bộ tài liệu qua Zalo.
+// Khi khách đã follow OA (có Zalo user_id), engine gửi thẳng file PDF qua MCP zalo (zalo_send_file).
+// Token/OA của OA "Phòng khám Cơ xương khớp Hiệp Lợi" cấu hình ở .mcp.json (zalo-hieploi).
+export const ZALO_OA_LINK = 'https://zalo.me/3136814239074246132';
+
+// Câu MỜI QUAN TÂM Zalo OA — đứng riêng 1 ô để FB bung preview nút "Quan tâm" đẹp.
+// NGUYÊN TẮC (anh Trình chốt 30/06): KHÔNG ra lệnh "bấm Quan tâm", mà cho LÝ DO/PHẦN THƯỞNG.
+// Tệp 45-65 chỉ bấm khi thấy mình NHẬN được gì cụ thể (video bài tập, Bác sĩ dặn dò qua Zalo).
+// daCoSo=true  → đã có số, telesale sẽ gọi: OA là nơi nhận tài liệu + nhắc lịch cho khỏi quên.
+// daCoSo=false → chưa có số: OA là cách nhẹ nhàng để khách giữ kết nối mà chưa cần cho số ngay.
+// daCoPDF: nếu ô trước ĐÃ tặng PDF rồi thì câu mời OA KHÔNG nhắc lại "nhận cẩm nang" (trùng phần
+//   thưởng → loãng mồi). Thay bằng phần thưởng OA-only: VIDEO bài tập + Bác sĩ dặn dò riêng qua Zalo.
+function loiMoiZaloOA(tenCN, daCoSo, daCoPDF) {
+  let moi;
+  if (daCoPDF) {
+    // Đã có PDF → mồi OA là thứ Drive KHÔNG có: video minh hoạ + chăm sóc 1-1.
+    moi = daCoSo
+      ? `Mình quan tâm thêm Zalo phòng khám nha ạ 🌿 Bên Zalo em gửi mình video bài tập minh hoạ cho dễ làm theo, nhắc lịch hẹn với Bác sĩ khỏi quên, có thắc mắc gì nhắn em trả lời liền cho mình ạ`
+      : `Mình quan tâm thêm Zalo phòng khám nha ạ 🌿 Bên Zalo em gửi mình video bài tập minh hoạ cho dễ làm theo, lại được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì cứ nhắn em hỗ trợ liền ạ`;
+  } else {
+    // Chưa có PDF (bệnh chưa có cẩm nang) → OA chính là nơi nhận trọn bộ tài liệu.
+    moi = daCoSo
+      ? `Mình quan tâm Zalo phòng khám để em gửi trọn bộ "${tenCN}" + video bài tập theo dõi tại nhà nha ạ 🌿 Bên Zalo em cũng nhắc lịch hẹn với Bác sĩ cho mình khỏi quên, có gì thắc mắc nhắn em trả lời liền ạ`
+      : `Mình quan tâm Zalo phòng khám để nhận trọn bộ "${tenCN}" + video bài tập tại nhà nha ạ 🌿 Bên Zalo mình được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì cứ nhắn em hỗ trợ liền cho mình ạ`;
+  }
+  // Link đứng CUỐI ô để FB bung thẻ preview "Quan tâm OA".
+  return `${moi}\n👉 ${ZALO_OA_LINK}`;
+}
+
 // Tên cẩm nang (để câu mời tự nhiên).
 const TEN_CAM_NANG = {
   goi:      'Cẩm nang chăm sóc khớp gối tại nhà',
@@ -139,6 +169,10 @@ function noiDungCham4(condition, daCoSo) {
   if (pdf) {
     msgs.push(`Em tặng mình trọn bộ "${tenCN}" của phòng khám nha, mình lưu lại tập dần ạ: ${pdf}`);
   }
+  // Mời Quan tâm Zalo OA — LUÔN gửi cho CẢ 2 nhánh (đã/chưa có số), anh Trình chốt 30/06.
+  // OA là cửa để sau này engine chạm fallback qua Zalo (không kẹt rule 24h như FB) + gửi file thẳng.
+  // Truyền !!pdf để câu mời tránh trùng phần thưởng với ô PDF vừa gửi.
+  msgs.push(loiMoiZaloOA(tenCN, daCoSo, !!pdf));
   // Đóng: đã có số → đẩy đặt lịch; chưa có số → mời để lại số nhẹ.
   if (daCoSo) {
     msgs.push('Mình tập thử mấy hôm nhé, mà để chắc ăn thì Bác sĩ khám trực tiếp xem đúng nguyên nhân vẫn tốt nhất ạ. Mình sắp xếp qua khám hôm nào tiện, em giữ suất cho mình nha 🙏');
