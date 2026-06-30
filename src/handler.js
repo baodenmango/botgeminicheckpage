@@ -52,6 +52,19 @@ function normalizeMsg(s) {
   return String(s || '').replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().toLowerCase().slice(0, 120);
 }
 
+// --- Nhận diện TIN TỰ ĐỘNG OA (welcome/auto-reply cố định) để KHÔNG nhầm là telesale gõ tay ---
+// Mỗi marker là 1 cụm CỐ ĐỊNH trong tin auto-reply (khớp KHÔNG dấu, không hoa thường).
+// Chỉnh/bổ sung qua env AUTO_REPLY_MARKERS (phân tách bằng |). Khớp 1 marker là coi như auto-reply.
+const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
+  'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec'
+).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
+function isAutoReplyMessage(text) {
+  const n = String(text || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
+    .toLowerCase();
+  return AUTO_REPLY_MARKERS.some((m) => n.includes(m));
+}
+
 // Số giờ telesale "giữ" hội thoại sau khi gõ tay (quá thì bot tiếp quản lại).
 const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
 
@@ -73,6 +86,13 @@ export async function handlePageMessage(ev) {
   if (!conversationId || !pageId) return;
   if (!isPageEnabled(pageId)) return;
   if (aiGenerated) return; // tin AI/hệ thống (Meta transfer...) — bỏ qua
+  // LỚP 0 (kênh Zalo): TIN TỰ ĐỘNG OA (welcome/auto-reply cố định) gửi từ page mỗi khi khách nhắn
+  // → webhook dội về, ĐỪNG tưởng telesale gõ. Nhận diện qua mẫu cố định (chỉnh qua AUTO_REPLY_MARKERS).
+  // Đây là thủ phạm làm bot LUI khi đấu Zalo OA (tin "Bộ phận tư vấn sẽ phản hồi...").
+  if (isAutoReplyMessage(messageText)) {
+    console.log(`[handler] ${conversationId}: tin page khớp mẫu AUTO-REPLY OA → bỏ qua, KHÔNG đánh telesale`);
+    return;
+  }
   // LỚP 1: khớp nội dung với tin bot vừa gửi → đúng thì bỏ qua.
   if (wasSentByBot(conversationId, messageText)) return;
   // LỚP 2 (chống race condition): nếu bot VỪA gửi tin trong ECHO_GRACE_MS giây qua mà

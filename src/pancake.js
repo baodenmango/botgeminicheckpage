@@ -8,8 +8,17 @@
 // và chỉnh PANCAKE_API_BASE / hàm sendMessage cho khớp.
 import axios from 'axios';
 import { config } from './config.js';
+import { isOpenApiEnabled, sendText as zaloSendText } from './zalo.js';
 
 const API_BASE = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_api/v1';
+
+// Trích zalo user_id từ conversation_id Pancake-Zalo dạng "zl_<pageId>_<psid>" → psid = user_id.
+// Page token Pancake Zalo hay bị xoay vòng (error 105) → kênh Zalo ưu tiên gửi qua Zalo OpenAPI
+// (token tự refresh). Trả null nếu không tách được.
+function zaloUserIdFromConv(conversationId) {
+  const m = String(conversationId || '').match(/^zl_\d+_(\d+)$/);
+  return m ? m[1] : null;
+}
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -227,6 +236,16 @@ function extractLabelNames(conv) {
  * Tham số có thể cần điều chỉnh theo docs (xem cảnh báo đầu file).
  */
 async function sendOne(pageId, conversationId, text) {
+  // KÊNH ZALO: ưu tiên gửi qua Zalo OpenAPI (token tự refresh) thay vì page token Pancake
+  // (page token Pancake Zalo bị xoay vòng → error 105 "access_token renewed"). Cần OpenAPI bật + tách được user_id.
+  if (getPageChannel(pageId) === 'zalo' && isOpenApiEnabled()) {
+    const uid = zaloUserIdFromConv(conversationId);
+    if (uid) {
+      const ok = await zaloSendText(uid, text);
+      if (ok) return true;
+      console.warn(`[pancake→zalo] gửi OpenAPI hụt (uid ${uid}) → thử lại qua Pancake`);
+    }
+  }
   const token = getPageToken(pageId);
   if (!token) {
     console.warn(`[pancake] không có token cho page ${pageId} → bỏ gửi`);
