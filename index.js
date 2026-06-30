@@ -193,6 +193,12 @@ function parsePancakeWebhook(body) {
   // Không bỏ qua nữa — trả về kèm cờ để handler phân biệt (phục vụ "người vào, bot lui").
   const fromPage = !!(senderId && pageId && String(senderId) === String(pageId));
 
+  // DEBUG tạm (kênh Zalo): in from.id vs page_id để biết Pancake gắn vai khách Zalo thế nào.
+  // (admin OA nhắn → Pancake có thể set from=page → fromPage=true → bot bỏ luồng tư vấn). Gỡ sau khi rõ.
+  if (String(pageId).startsWith('zl_') || String(conversationId).startsWith('zl_')) {
+    console.log(`[zalo-debug] from.id=${senderId} | page_id=${pageId} | fromPage=${fromPage} | name=${customerName} | text="${String(messageText).slice(0,30)}"`);
+  }
+
   return {
     pageId: String(pageId),
     conversationId: String(conversationId),
