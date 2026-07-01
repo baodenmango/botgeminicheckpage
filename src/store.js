@@ -34,6 +34,7 @@ db.exec(`
     bill_cham_done       TEXT DEFAULT '[]',           -- JSON mảng mốc chuỗi "ca ra bill" đã gửi (ngày 0/1/3/6/7)
     chuoi_done           TEXT DEFAULT '[]',           -- JSON mảng mã chạm tái bill 4 nhóm đã gửi
     opt_out              INTEGER DEFAULT 0,             -- khách nhắn ngừng → dừng mọi chuỗi chăm
+    booking_notified     INTEGER DEFAULT 0,             -- đã báo Telegram ca "muốn đặt lịch chưa số" chưa (chống trùng)
     created_at           INTEGER
   );
 `);
@@ -52,6 +53,9 @@ try {
   }
   if (!cols.includes('touch_done')) {
     db.exec("ALTER TABLE conversations ADD COLUMN touch_done TEXT DEFAULT '[]'");
+  }
+  if (!cols.includes('booking_notified')) {
+    db.exec('ALTER TABLE conversations ADD COLUMN booking_notified INTEGER DEFAULT 0');
   }
   // Cột cho hệ chăm sóc Zalo OA (bước 2–7).
   if (!cols.includes('channel'))        db.exec('ALTER TABLE conversations ADD COLUMN channel TEXT');
@@ -239,6 +243,15 @@ export function setCondition(conversationId, condition) {
 
 export function markSaleLinkSent(conversationId) {
   db.prepare('UPDATE conversations SET sale_link_sent = 1 WHERE conversation_id = ?')
+    .run(String(conversationId));
+}
+
+// Đã báo Telegram ca "muốn đặt lịch nhưng chưa số" chưa (chống báo trùng mỗi lượt).
+export function isBookingNotified(conv) {
+  return Boolean(conv && conv.booking_notified);
+}
+export function markBookingNotified(conversationId) {
+  db.prepare('UPDATE conversations SET booking_notified = 1 WHERE conversation_id = ?')
     .run(String(conversationId));
 }
 

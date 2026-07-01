@@ -72,6 +72,41 @@ export async function notifyLead({ name, phone, condition, summary, customerType
   await send(text, nutDaGoi(phone));   // giữ NGUYÊN nội dung, chỉ thêm nút telesale bấm
 }
 
+// Báo ca MUỐN CHỐT LỊCH nhưng CHƯA để số → telesale vào chốt nóng (khách nóng, dễ mất).
+// Chỉ báo 1 lần/ca (handler dùng flag booking_notified chống trùng).
+export async function notifyBooking({ name, condition, summary, pageId, conversationId }) {
+  const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
+  let text =
+    `📅 <b>KHÁCH MUỐN ĐẶT LỊCH (chưa có SĐT)</b>\n` +
+    `👤 Tên: ${escapeHtml(name) || '(chưa rõ)'}\n` +
+    `🩺 Bệnh: ${benh}\n` +
+    `⚡️ Khách đang hỏi đặt lịch/hẹn khám — vào chốt nóng kẻo nguội!\n`;
+  if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
+  await send(text);
+}
+
+// Báo CHẠM TELESALE (2/5/7) cho ca ĐÃ có SĐT → telesale gọi. Kèm nút "Đã chạm".
+// callback_data c7:<convId>:done khớp listener nút bấm cloud (bot-nut-bam).
+function nutChamLead(convId) {
+  const cid = String(convId || '').slice(0, 50);
+  return { inline_keyboard: [[
+    { text: '✅ Đã chạm', callback_data: `c7:${cid}:done` },
+    { text: '❌ Không nghe', callback_data: `c7:${cid}:khongNghe` },
+  ]] };
+}
+export async function notifyCallTouch({ touchNo, name, phone, condition, summary, muctieu, pageId, conversationId }) {
+  const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
+  let text =
+    `📞 <b>CHẠM ${touchNo} — TELESALE GỌI</b>\n` +
+    `👤 ${escapeHtml(name) || '(chưa rõ)'} · <b>${escapeHtml(phone) || '(?)'}</b>\n` +
+    `🩺 Bệnh: ${benh}\n`;
+  if (muctieu) text += `🎯 ${escapeHtml(muctieu)}\n`;
+  if (summary) text += `📋 ${escapeHtml(summary)}\n`;
+  text += `💬 ${pancakeLink(pageId, conversationId)}`;
+  await send(text, nutChamLead(conversationId));
+}
+
 // Báo cần CHUYỂN NGƯỜI (khiếu nại / hỏi sâu chuyên môn).
 export async function notifyHandover({ name, reason, condition, summary, pageId, conversationId }) {
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;

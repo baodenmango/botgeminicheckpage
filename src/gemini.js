@@ -14,7 +14,9 @@ const GEN_CONFIG = {
 };
 
 // Model DỰ PHÒNG khi model chính bị 503 (Google quá tải). Khác model để né điểm nghẽn.
-const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash';
+// ⚠️ 01/07: gemini-2.0-flash bị Google KHAI TỬ (404 "no longer available") → fallback chết theo,
+// bot câm mỗi khi model chính 503. Đổi sang 2.5-flash-lite (còn sống, nhẹ, khác nhánh 2.5-flash).
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite';
 
 // Hai "bộ não" — Facebook (mặc định) và Zalo OA (chăm sóc sâu). Chọn theo channel.
 // Mỗi bộ não có model CHÍNH + model DỰ PHÒNG (cùng system prompt).
@@ -50,6 +52,7 @@ const FALLBACK = {
   condition: 'unknown',
   customer_type: 'chua_ro',
   summary: null,
+  booking_intent: false,
   handover: false,
   handover_reason: null,
   opt_out: false,
@@ -67,9 +70,33 @@ function sanitize(obj) {
   if (msgs.length === 0) msgs = FALLBACK.messages;
   out.messages = msgs;
   out.phone_captured = Boolean(out.phone_captured);
+  out.booking_intent = Boolean(out.booking_intent);
   out.handover = Boolean(out.handover);
   out.opt_out = Boolean(out.opt_out);
   return out;
+}
+
+// Dựng thẻ ngày giờ THẬT theo giờ VN (UTC+7) cho bot: hôm nay là thứ mấy, ngày nào; mai/mốt là thứ mấy.
+// Bot dùng để chốt lịch hẹn ĐÚNG (không được tự suy "mai là Thứ Bảy" sai). Không cấp giờ khám cụ thể
+// (bot không giữ lịch trống thật) → hướng bot XÁC NHẬN ngày + gợi buổi, rồi ĐỂ TELESALE chốt giờ chính xác.
+const THU_VN = { Sunday: 'Chủ Nhật', Monday: 'Thứ Hai', Tuesday: 'Thứ Ba', Wednesday: 'Thứ Tư', Thursday: 'Thứ Năm', Friday: 'Thứ Sáu', Saturday: 'Thứ Bảy' };
+// Format 1 mốc theo GIỜ VN chuẩn qua Intl (đúng cả khi server chạy UTC như Render). Tự cộng offset dễ sai.
+function fmtVN(d) {
+  const p = {};
+  for (const x of new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' }).formatToParts(d)) p[x.type] = x.value;
+  return `${THU_VN[p.weekday]}, ngày ${p.day}/${p.month}/${p.year}`;
+}
+function gioVN(d) {
+  const p = {};
+  for (const x of new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d)) p[x.type] = x.value;
+  return `${p.hour}:${p.minute}`;
+}
+function buildDateContext() {
+  const now = new Date();
+  const mai = new Date(now.getTime() + 86400000);
+  const mot = new Date(now.getTime() + 2 * 86400000);
+  return `NGÀY GIỜ THẬT (giờ VN, tin cậy tuyệt đối — KHÔNG được tự bịa thứ/ngày khác): HÔM NAY là ${fmtVN(now)}, hiện ${gioVN(now)}. Ngày mai là ${fmtVN(mai)}. Ngày mốt là ${fmtVN(mot)}. Khi khách nói "mai"/"mốt"/"thứ X" hãy quy đổi theo đúng mốc này. ` +
+    `CHỐT LỊCH: bot chỉ XÁC NHẬN NGÀY + hỏi buổi (sáng/chiều) khách muốn, KHÔNG tự khẳng định giờ trống cụ thể (bot không giữ lịch thật). Nói rõ "em xin số để trợ lý Bác sĩ gọi xác nhận giờ chính xác + giữ suất cho mình nha" — việc chốt giờ do telesale.`;
 }
 
 /**
@@ -89,6 +116,10 @@ export async function generateReply(history, mode = 'reply', customerName = null
       role: h.role === 'model' ? 'model' : 'user',
       parts: [{ text: h.text }],
     }));
+
+    // ⚠️ NGÀY GIỜ THẬT (giờ VN) — nếu KHÔNG cấp, bot BỊA thứ/ngày sai (đã thấy: nói "mai là Thứ Bảy"
+    // trong khi mai là Thứ Tư → chốt lịch hẹn SAI, hỏng booking). Chèn ĐẦU mọi lượt để bot tính đúng.
+    contents.unshift({ role: 'user', parts: [{ text: `[HỆ THỐNG] ${buildDateContext()}` }] });
 
     // THẺ NGỮ CẢNH MEDi (kênh Zalo) — gắn ĐẦU để bộ não Zalo biết BN cũ/mới (mục 2 prompt Zalo).
     if (contextTag) {

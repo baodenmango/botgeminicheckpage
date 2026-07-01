@@ -5,8 +5,7 @@ import express from 'express';
 import cron from 'node-cron';
 
 import { config, checkConfig } from './src/config.js';
-import { handleIncoming, handleRetouch, handlePageMessage, handleBotTouch } from './src/handler.js';
-import { BOT_TOUCHES } from './src/touches.js';
+import { handleIncoming, handleRetouch, handlePageMessage } from './src/handler.js';
 import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
 import { isCommentEvent } from './src/comment.js'; // chỉ để NHẬN DIỆN comment và bỏ qua (Meta lo rep comment)
 import * as store from './src/store.js';
@@ -14,6 +13,7 @@ import { ingestBill, runBillTouches } from './src/billengine.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow } from './src/follow.js';
 import { runWakeup } from './src/wakeup.js';
+import { runSevenTouch } from './src/sevenTouch.js';
 
 checkConfig();
 
@@ -306,30 +306,13 @@ cron.schedule('*/15 * * * *', async () => {
   }
 });
 
-// --- Cron ENGINE 7 CHẠM (chạm bot 3/4/6) mỗi 15 phút, lệch 5' với retouch ---
-// Mỗi lead tới mốc T+ của chạm nào (3=2h, 4=6h, 6=30h) mà chưa gửi → bot tự gửi tin giá trị.
-// Chạm 2/5/7 do telesale gọi (engine nhac-7cham bắn nhắc Telegram, KHÔNG ở đây).
-const HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
-const TOUCH_GRACE_HOURS = parseFloat(process.env.TOUCH_GRACE_HOURS || '6'); // trễ tối đa sau mốc
-const TOUCH_WINDOW_HOURS = parseFloat(process.env.TOUCH_WINDOW_HOURS || '48');
+// --- Cron ENGINE 7 CHẠM (gom từ nhac-7cham local) mỗi 15 phút, lệch 5' với retouch ---
+// QUÉT Pancake các page → tính mốc chạm theo inserted_at (48h) → rẽ nhánh:
+//   • Chạm 3/4/6 (giá trị): bot tự gửi.  • Chạm 2/5/7: có SĐT → báo telesale gọi; chưa SĐT → bot tự nhắn xin số.
+// Báo Telegram LỌC KỸ (chỉ ca có số / muốn đặt lịch chưa số / đặc biệt). Chống trùng qua touch_done.
 cron.schedule('5,20,35,50 * * * *', async () => {
   try {
-    // Gom theo LEAD: mỗi lead 1 lượt CHỈ gửi 1 chạm — chạm có mốc CAO NHẤT đã tới hạn & chưa gửi.
-    // (Tránh dồn chạm 3+4 liền nhau khi bot ngủ qua đêm rồi sáng lead đã quá nhiều mốc → lộ bot.)
-    const chonChamCho = new Map(); // conversation_id -> { conv, touchNo, hours }
-    for (const t of BOT_TOUCHES) {
-      const targets = store.findTouchTargets(t.no, t.hours, HOLD_HOURS, TOUCH_GRACE_HOURS, TOUCH_WINDOW_HOURS);
-      for (const conv of targets) {
-        const cur = chonChamCho.get(conv.conversation_id);
-        if (!cur || t.hours > cur.hours) chonChamCho.set(conv.conversation_id, { conv, touchNo: t.no, hours: t.hours });
-      }
-    }
-    if (chonChamCho.size === 0) return;
-    console.log(`[cron-cham] ${chonChamCho.size} lead tới mốc chạm bot`);
-    for (const { conv, touchNo } of chonChamCho.values()) {
-      if (!isPageEnabled(conv.page_id)) continue;
-      await handleBotTouch(conv, touchNo);
-    }
+    await runSevenTouch();
   } catch (err) {
     console.error('[cron-cham] lỗi engine 7 chạm:', err?.message || err);
   }

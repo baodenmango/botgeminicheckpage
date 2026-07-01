@@ -148,11 +148,44 @@ function noiDungCham6(condition, daCoSo) {
   ];
 }
 
-// --- Bảng định nghĩa 3 chạm bot. `hours` khớp nhac-7cham/config.js. ---
+// ===================== CHẠM 2/5/7 — LEO THANG CẤP BÁCH (khi CHƯA có số) =====================
+// Vốn là 3 chạm TELESALE GỌI. Nay: có số → telesale gọi (báo Telegram, KHÔNG dùng builder này);
+// CHƯA số → bot tự nhắn xin số, mức khan hiếm/cấp bách TĂNG DẦN qua 3 mốc (15p → 24h → 47h).
+// Tuân thủ y tế: KHÔNG cam kết khỏi 100%, không bịa kết quả, không dọa. Chỉ khan hiếm suất + bằng chứng nhẹ.
+
+// Chạm 2 (~15 phút sau khi vào, chưa số): cuộc gọi vàng hụt → nhắc suất + hỏi vùng đau để "giữ chỗ".
+function noiDungCham2(condition, daCoSo) {
+  return [
+    'Dạ em thấy mình quan tâm mà chưa kịp để lại số ạ 🌸 Bên em đang giữ riêng cho mình 1 suất tư vấn trực tiếp với Bác sĩ Trình trong hôm nay đó ạ.',
+    'Mình đang đau vùng nào để em xếp đúng suất giúp mình nha? Mình để lại số điện thoại, Bác sĩ gọi tư vấn miễn phí cho mình luôn ạ 🙏',
+  ];
+}
+// Chạm 5 (~24h, chưa số): tạo cấp bách nhẹ + bằng chứng xã hội → nhắc để lại số.
+function noiDungCham5(condition, daCoSo) {
+  return [
+    'Dạ tình trạng của mình mấy hôm nay sao rồi ạ, còn khó chịu nhiều không? 🌸',
+    'Nhiều cô chú lớn tuổi bên em cũng tình trạng giống mình, sau khi được Bác sĩ Trình xem kỹ và hướng dẫn đúng thì cải thiện tốt lắm ạ.',
+    'Suất tư vấn ưu tiên của mình em vẫn đang giữ, nhưng tuần này khá đông ạ. Mình để lại số điện thoại để em nhờ Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  ];
+}
+// Chạm 7 (~47h, chưa số): LỜI CUỐI trước khi đóng suất — nhẹ nhàng, không nài ép, để cửa mở.
+function noiDungCham7(condition, daCoSo) {
+  return [
+    'Dạ em nhắn mình lần cuối trong hôm nay ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em giữ cho mình cũng sắp hết hạn rồi.',
+    'Em không muốn mình lỡ mất cơ hội được Bác sĩ xem kỹ tình trạng đâu ạ. Nếu mình còn cần, chỉ cần để lại số điện thoại, Bác sĩ gọi tư vấn cho mình hoàn toàn miễn phí nha 🙏',
+  ];
+}
+
+// --- Bảng định nghĩa các chạm bot TỰ GỬI. `hours` khớp nhac-7cham/config.js. ---
+// 3/4/6 = chạm giá trị (clip/cẩm nang/bám đuổi). 2/5/7 = leo thang xin số KHI CHƯA CÓ SỐ
+// (engine 7 chạm rẽ nhánh: có số → telesale gọi; chưa số → dùng các builder này).
 export const BOT_TOUCHES = [
-  { no: 3, hours: 2,  build: noiDungCham3, muctieu: 'Gửi bằng chứng / review đúng bệnh' },
-  { no: 4, hours: 6,  build: noiDungCham4, muctieu: 'Cho giá trị: cẩm nang + bài tập/mẹo tại nhà' },
-  { no: 6, hours: 30, build: noiDungCham6, muctieu: 'Bám đuổi nhẹ (inbox)' },
+  { no: 2, hours: 0.25, build: noiDungCham2, muctieu: 'Cuộc gọi vàng hụt → nhắc suất, xin số' },
+  { no: 3, hours: 2,    build: noiDungCham3, muctieu: 'Gửi bằng chứng / review đúng bệnh' },
+  { no: 4, hours: 6,    build: noiDungCham4, muctieu: 'Cho giá trị: cẩm nang + bài tập/mẹo tại nhà' },
+  { no: 5, hours: 24,   build: noiDungCham5, muctieu: 'Cấp bách + bằng chứng xã hội → xin số' },
+  { no: 6, hours: 30,   build: noiDungCham6, muctieu: 'Bám đuổi nhẹ (inbox)' },
+  { no: 7, hours: 47,   build: noiDungCham7, muctieu: 'Lời cuối trước khi đóng suất' },
 ];
 
 /**

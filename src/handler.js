@@ -3,7 +3,7 @@ import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageChannel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
-import { notifyLead, notifyHandover, notifyHandoverNudge, isUrgent } from './telegram.js';
+import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgent } from './telegram.js';
 import { buildTouchMessages } from './touches.js';
 import { isZaloPage, stripZaloPrefix } from './zalo.js';
 import { lookupMedi, buildContextTag } from './medi.js';
@@ -445,7 +445,7 @@ export async function handleBotTouch(conv, touchNo) {
     store.markTouchDone(conversationId, touchNo);
     // Bỏ qua các chạm THẤP hơn còn sót (lead vào đêm, sáng đã quá nhiều mốc → ta gửi mốc cao nhất,
     // các mốc cũ coi như lỡ, đánh dấu xong để KHÔNG gửi ngược chạm 3 sau khi đã gửi chạm 4).
-    for (const lower of [3, 4, 6]) {
+    for (const lower of [2, 3, 4, 5, 6, 7]) {
       if (lower < touchNo) store.markTouchDone(conversationId, lower);
     }
     console.log(`[cham${touchNo}] ✅ đã gửi chạm bot cho ${conversationId} (bệnh ${condition}, ${daCoSo ? 'đã có số' : 'chưa số'})`);
@@ -528,5 +528,20 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       conversationId,
     });
     console.log(`[handover] ⚠️ ${conversationId} → đã báo Telegram (${reply.handover_reason || 'n/a'})`);
+    return;
+  }
+
+  // MUỐN ĐẶT LỊCH nhưng CHƯA có số → ca nóng, telesale vào chốt (báo 1 lần/ca).
+  // (Ca đã có số đã báo notifyLead ở trên → không rơi xuống đây.)
+  if (reply.booking_intent && !captured && !store.isBookingNotified(freshConv)) {
+    store.markBookingNotified(conversationId);
+    await notifyBooking({
+      name: reply.name || customerName,
+      condition: knownCondition,
+      summary: knownSummary,
+      pageId,
+      conversationId,
+    });
+    console.log(`[booking] 📅 ${conversationId} muốn đặt lịch (chưa số) → đã báo Telegram`);
   }
 }
