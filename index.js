@@ -14,6 +14,7 @@ import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow } from './src/follow.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
+import { runRescueLead } from './src/rescueLead.js';
 
 checkConfig();
 
@@ -315,6 +316,17 @@ cron.schedule('5,20,35,50 * * * *', async () => {
     await runSevenTouch();
   } catch (err) {
     console.error('[cron-cham] lỗi engine 7 chạm:', err?.message || err);
+  }
+});
+
+// --- Cron VỚT LEAD BỎ RƠI mỗi 5 phút — vá lỗ webhook rớt (bot chết tạm lúc deploy / Pancake không gửi lại) ---
+// Quét Pancake: ca KHÁCH nhắn cuối + chưa rep + quá 3 phút → đẩy vào handleIncoming như webhook thật.
+// Chạy DÀY (5') để cứu lead sớm, đặc biệt lead ĐÃ CHO SỐ mà tin rớt lúc deploy.
+cron.schedule('*/5 * * * *', async () => {
+  try {
+    await runRescueLead();
+  } catch (err) {
+    console.error('[cron-rescue] lỗi engine vớt lead:', err?.message || err);
   }
 });
 
