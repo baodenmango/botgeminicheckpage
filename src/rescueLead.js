@@ -98,6 +98,8 @@ export async function runRescueLead() {
         messageText: last.messageText,
       });
       done++;
+      // giãn nhịp giữa các ca → tránh Pancake rate-limit (429) khi vớt loạt nhiều lead cùng lúc.
+      await new Promise((r) => setTimeout(r, 1500));
     }
   }
   if (done) console.log(`[rescue] xong 1 lượt — vớt ${done} lead bị bỏ rơi`);
