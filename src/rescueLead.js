@@ -20,6 +20,10 @@ const API_BASE = process.env.PANCAKE_API_BASE_V1 || 'https://pages.fm/api/v1';
 const MIN_IDLE_MIN = parseFloat(process.env.RESCUE_MIN_IDLE_MIN || '3');   // khách nhắn cuối phải cũ hơn (phút)
 const WINDOW_HOURS = parseFloat(process.env.RESCUE_WINDOW_HOURS || '72');  // chỉ vớt lead trong 72h
 const MAX_PER_RUN = parseInt(process.env.RESCUE_MAX_PER_RUN || '10', 10);  // cap mỗi lượt (an toàn)
+// Quá ngưỡng này mà KHÔNG AI rep (kể cả telesale) → coi cờ human là KẸT OAN, gỡ cờ + vớt luôn.
+// (SLA telesale ≤5'; 20' im lặng = không ai xử thật. Ca Sen Vàng 02/07: tin auto Meta đánh cờ
+// human oan → bot câm + rescue né suốt 30'. Nhãn "đã đặt lịch/telesale xử" vẫn chặn ở handleIncoming.)
+const HUMAN_OVERRIDE_MIN = parseFloat(process.env.RESCUE_HUMAN_OVERRIDE_MIN || '20');
 
 // phút kể từ mốc thời gian (chuỗi Pancake UTC không hậu tố Z → ép UTC).
 function minutesSince(ts) {
@@ -80,7 +84,12 @@ export async function runRescueLead() {
       if (conv) {
         if (store.isOptedOut(conv)) continue;
         if (store.isHandover(conv)) continue;
-        if (store.isHumanActive(conv, parseFloat(process.env.HUMAN_HOLD_HOURS || '6'))) continue;
+        if (store.isHumanActive(conv, parseFloat(process.env.HUMAN_HOLD_HOURS || '6'))) {
+          // cờ human nhưng khách chờ QUÁ LÂU không ai rep → cờ kẹt oan (tin auto Meta/echo) → gỡ + vớt
+          if (idle < HUMAN_OVERRIDE_MIN) continue;
+          store.clearHumanTaken(convId);
+          console.log(`[rescue] ⚠️ ${convId} cờ human nhưng khách chờ ${Math.round(idle)}p không ai rep → gỡ cờ kẹt, vớt luôn`);
+        }
       }
 
       // đọc ĐÚNG tin cuối của khách rồi đẩy vào handleIncoming như webhook thật

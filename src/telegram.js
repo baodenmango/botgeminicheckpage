@@ -51,6 +51,7 @@ const CUSTOMER_TYPE_VI = {
   tinh_toan: 'Tính toán/quan tâm giá (nhấn giá trị + ưu đãi)',
   phan_van: 'Phân vân (hạ rào cản, chốt nhẹ)',
   nguoi_nha: 'Người nhà hỏi giúp (khơi tình thương)',
+  khach_da_kham: '🧡 KHÁCH ĐÃ KHÁM (SĐT trùng đơn POS/hồ sơ EMR — chăm sóc/tái khám, ĐỪNG chốt như lead mới)',
   chua_ro: '',
 };
 

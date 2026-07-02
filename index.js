@@ -206,6 +206,7 @@ function parsePancakeWebhook(body) {
   // ⚠️ KÊNH ZALO: khách hay gửi "danh thiếp/card liên hệ" chứa SĐT thay vì gõ — phải BẮT số đó,
   // nếu không bot xin số lại hoài (lỗi đã thấy: card "097 845 1211" bot không nhận). Quét SĐT trong
   // toàn bộ payload attachment; thấy số VN hợp lệ → đưa thành text để extractPhone chốt lead.
+  let attachmentOnly = false; // tin CHỈ có ảnh/tệp, không chữ (để handlePageMessage khỏi nhầm là telesale)
   if (!messageText) {
     const att = msg.attachments || msg.attachment || conv.attachments || data.attachments;
     const hasAttachment = Array.isArray(att) ? att.length > 0 : Boolean(att);
@@ -214,6 +215,7 @@ function parsePancakeWebhook(body) {
       messageText = phoneInAtt
         ? `Số điện thoại của tôi là ${phoneInAtt}`   // card liên hệ → đưa số vào để bot chốt
         : '[khách vừa gửi một hình ảnh/tệp]';
+      attachmentOnly = !phoneInAtt;
     }
   }
   // CARD liên hệ đôi khi VẪN có messageText (tên) + số nằm trong attachment → vẫn cố vớt số.
@@ -244,6 +246,7 @@ function parsePancakeWebhook(body) {
     customerName,
     messageText,
     fromPage,
+    attachmentOnly,
     aiGenerated: fromObj.ai_generated === true,
   };
 }

@@ -7,6 +7,7 @@ import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgen
 import { buildTouchMessages } from './touches.js';
 import { isZaloPage, stripZaloPrefix } from './zalo.js';
 import { lookupMedi, buildContextTag } from './medi.js';
+import { lookupDaKham, buildDaKhamTag } from './daKham.js';
 import { SALE_PAGE } from './conditions.js';
 import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
 
@@ -29,6 +30,24 @@ function lockHeld(id) {
 }
 function lockAcquire(id) { locks.set(String(id), Date.now()); }
 function lockRelease(id) { locks.delete(String(id)); }
+
+// HÀNG ĐỢI TIN DỒN: khách gõ 2-3 tin liền tay (tin sau về khi tin trước còn đang xử lý/lock)
+// → trước đây tin sau bị VỨT ("bỏ qua tin chồng") → bot trả lời thiếu ý / im luôn (ca Sen Vàng 02/07:
+// khách reply quảng cáo rồi gõ tiếp "1 ông gia bn bac si" ngay sau đó). Giờ: xếp hàng, xử xong
+// lượt trước thì GOM các tin chờ thành 1 lượt mới. Tối đa 5 tin chờ/hội thoại (chống spam).
+const pendingQueue = new Map(); // conversationId -> [ev]
+function queuePending(ev) {
+  const q = pendingQueue.get(ev.conversationId) || [];
+  if (q.length < 5) q.push(ev);
+  pendingQueue.set(ev.conversationId, q);
+}
+function drainPending(conversationId) {
+  const q = pendingQueue.get(conversationId);
+  if (!q || q.length === 0) return null;
+  pendingQueue.delete(conversationId);
+  // gom các tin chờ thành 1 lượt (giữ metadata tin mới nhất, nối text theo thứ tự gửi)
+  return { ...q[q.length - 1], messageText: q.map((e) => e.messageText).join('\n') };
+}
 
 // Lưu nội dung tin BOT vừa gửi (để phân biệt với tin telesale gõ tay khi webhook dội về).
 // Map: conversationId -> [{text, at}]. Tự dọn entry cũ.
@@ -59,11 +78,14 @@ function normalizeMsg(s) {
   return String(s || '').replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().toLowerCase().slice(0, 120);
 }
 
-// --- Nhận diện TIN TỰ ĐỘNG OA (welcome/auto-reply cố định) để KHÔNG nhầm là telesale gõ tay ---
+// --- Nhận diện TIN TỰ ĐỘNG (welcome/auto-reply cố định) để KHÔNG nhầm là telesale gõ tay ---
 // Mỗi marker là 1 cụm CỐ ĐỊNH trong tin auto-reply (khớp KHÔNG dấu, không hoa thường).
 // Chỉnh/bổ sung qua env AUTO_REPLY_MARKERS (phân tách bằng |). Khớp 1 marker là coi như auto-reply.
+// Gồm cả: auto-reply Zalo OA + CÂU CHÀO TỰ ĐỘNG META khi khách nhắn từ quảng cáo/bình luận
+// (ca Sen Vàng 02/07: Meta chào "...mô tả càng chi tiết càng tốt..." → bot tưởng telesale gõ → câm 6h).
 const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
-  'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec'
+  'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec' +
+  '|mo ta cang chi tiet cang tot|de lai sdt giup bac trinh|da de lai binh luan|[botcake]'
 ).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
 function isAutoReplyMessage(text) {
   const n = String(text || '')
@@ -93,6 +115,13 @@ export async function handlePageMessage(ev) {
   if (!conversationId || !pageId) return;
   if (!isPageEnabled(pageId)) return;
   if (aiGenerated) return; // tin AI/hệ thống (Meta transfer...) — bỏ qua
+  // Tin page CHỈ CÓ ẢNH/TỆP (không chữ): là card ảnh của Meta automation/Botcake gửi kèm câu chào.
+  // ĐỪNG đánh cờ human — placeholder '[khách vừa gửi một hình ảnh/tệp]' dài 29 ký tự từng vượt
+  // ngưỡng HUMAN_MIN_CHARS → bot câm 6h + rescue né luôn (ca Sen Vàng 02/07). Telesale thật tư vấn bằng CHỮ.
+  if (ev.attachmentOnly) {
+    console.log(`[handler] ${conversationId}: tin page chỉ có ảnh/tệp → bỏ qua, KHÔNG đánh telesale`);
+    return;
+  }
   // LỚP 0 (kênh Zalo): TIN TỰ ĐỘNG OA (welcome/auto-reply cố định) gửi từ page mỗi khi khách nhắn
   // → webhook dội về, ĐỪNG tưởng telesale gõ. Nhận diện qua mẫu cố định (chỉnh qua AUTO_REPLY_MARKERS).
   // Đây là thủ phạm làm bot LUI khi đấu Zalo OA (tin "Bộ phận tư vấn sẽ phản hồi...").
@@ -155,7 +184,8 @@ export async function handleIncoming(ev) {
   if (!messageText || !messageText.trim()) return;
 
   if (lockHeld(conversationId)) {
-    console.log(`[handler] ${conversationId} đang xử lý, bỏ qua tin chồng`);
+    console.log(`[handler] ${conversationId} đang xử lý → XẾP HÀNG tin mới (không vứt)`);
+    queuePending(ev);
     return;
   }
   lockAcquire(conversationId);
@@ -202,13 +232,16 @@ export async function handleIncoming(ev) {
         (!store.isCaptured(conv) ? extractPhoneFromHistory(store.getConversation(conversationId).history) : null);
       if (leadPhone && !store.isCaptured(conv)) {
         store.setPhoneCaptured(conversationId, leadPhone, customerName || conv.customer_name);
+        // Số này đã từng lên đơn/khám chưa? → báo telesale ĐÚNG vai (chăm sóc vs chốt mới). Fail-open.
+        let daKhamEarly = null;
+        try { daKhamEarly = await lookupDaKham(leadPhone); } catch { /* fail-open */ }
         try {
           await notifyLead({
             name: customerName || conv.customer_name,
             phone: leadPhone,
             condition: conv.condition || 'unknown',
             summary: conv.summary || null,
-            customerType: 'chua_ro',
+            customerType: daKhamEarly ? 'khach_da_kham' : 'chua_ro',
             pageId,
             conversationId,
           });
@@ -311,14 +344,36 @@ export async function handleIncoming(ev) {
       try { isCustomer = await hasCustomerLabel(pageId, conversationId); } catch { /* fail-open */ }
       if (isCustomer) store.setPhoneCaptured(conversationId, conv.phone || null, customerName || conv.customer_name); // nhớ trạng thái để lần sau khỏi gọi API
     }
+
+    const channel = getPageChannel(pageId);
+    let contextTag = null;
+
+    // ===== KHÁCH ĐÃ KHÁM theo SĐT — kênh FB (anh Trình chốt 02/07) =====
+    // Nhiều ca ĐÃ ĐẾN KHÁM (đơn bắn trên Facebook / có hồ sơ EMR) nhưng hội thoại KHÔNG có nhãn
+    // → trước đây bot vẫn đối xử như lead lạ. Giờ: biết SĐT (khách gõ / lịch sử / đã lưu)
+    // → tra MEDi + POS; trúng → GIAI ĐOẠN CHĂM SÓC (mode care + thẻ ngữ cảnh đổi vai bot).
+    // Có cache trong pos.js/medi.js nên không gọi API mỗi tin. Fail-open toàn phần.
+    if (!isZaloPage(channel)) {
+      const phoneKnown = phoneByRegex || conv.phone ||
+        extractPhoneFromHistory(store.getConversation(conversationId).history);
+      if (phoneKnown) {
+        try {
+          const daKham = await lookupDaKham(phoneKnown);
+          if (daKham) {
+            isCustomer = true;
+            contextTag = buildDaKhamTag(daKham);
+            console.log(`[da-kham] 🧡 ${conversationId} SĐT ${phoneKnown} trùng ${daKham.source.toUpperCase()} (${daKham.name || '?'}) → chuyển CHĂM SÓC SAU KHÁM`);
+          }
+        } catch { /* fail-open */ }
+      }
+    }
+
     const mode = isCustomer ? 'care' : 'reply';
 
     // ===== ENRICH (kênh ZALO) — nạp hồ sơ BN trước khi chăm (thiết kế mục C2) =====
-    // Chỉ cho kênh Zalo (OA = chăm sâu, cần biết khách là ai). FB giữ luồng săn lead như cũ.
+    // Chỉ cho kênh Zalo (OA = chăm sâu, cần biết khách là ai). FB dùng lớp "đã khám" ở trên.
     // Tra MEDi theo SĐT (regex / lịch sử / phone đã lưu). Có hồ sơ → BN_CŨ; không → BN_MỚI.
     // Fail-open: MEDi chưa cấu hình → lookupMedi trả null → coi như BN_MỚI, vẫn chăm bình thường.
-    const channel = getPageChannel(pageId);
-    let contextTag = null;
     if (isZaloPage(channel)) {
       // nhớ kênh + zalo_user_id (từ customerId "zl_<uid>") để engine chạm/giao file dùng sau
       const zaloUid = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
@@ -369,6 +424,12 @@ export async function handleIncoming(ev) {
     console.error('[handler] lỗi handleIncoming:', err?.message || err);
   } finally {
     lockRelease(conversationId);
+    // Có tin khách dồn trong lúc xử lý → gom lại thành 1 lượt, xử tiếp (giãn 1s cho tin kịp gom).
+    const merged = drainPending(conversationId);
+    if (merged) {
+      console.log(`[handler] ${conversationId} xử tiếp ${merged.messageText.split('\n').length} tin dồn trong hàng đợi`);
+      setTimeout(() => handleIncoming(merged), 1000);
+    }
   }
 }
 
