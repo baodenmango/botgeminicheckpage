@@ -27,7 +27,7 @@ export const ZALO_OA_LINK = 'https://zalo.me/3136814239074246132';
 // daCoSo=false → chưa có số: OA là cách nhẹ nhàng để khách giữ kết nối mà chưa cần cho số ngay.
 // daCoPDF: nếu ô trước ĐÃ tặng PDF rồi thì câu mời OA KHÔNG nhắc lại "nhận cẩm nang" (trùng phần
 //   thưởng → loãng mồi). Thay bằng phần thưởng OA-only: VIDEO bài tập + Bác sĩ dặn dò riêng qua Zalo.
-function loiMoiZaloOA(tenCN, daCoSo, daCoPDF) {
+export function loiMoiZaloOA(tenCN, daCoSo, daCoPDF) {
   let moi;
   if (daCoPDF) {
     // Đã có PDF → mồi OA là thứ Drive KHÔNG có: video minh hoạ + chăm sóc 1-1.
@@ -81,70 +81,56 @@ export const CLIP_THEO_BENH = CLIP_BY_CONDITION;
 // (giữ tương thích) clip review BN THẬT đã khỏi — nếu có thì cũng đưa vào CLIP_BY_CONDITION luôn.
 export const REVIEW_THEO_BENH = CLIP_THEO_BENH;
 
+// NÉN 04/07 (anh chốt "hết cảnh dội bom"): mỗi chạm TỐI ĐA 2 ô, chỉ 1 clip đắt nhất.
 function noiDungCham3(condition, daCoSo) {
   const key = tenBenhKey(condition);
-  const clips = (CLIP_THEO_BENH[key] || []).filter(Boolean).slice(0, 3); // tối đa 3 clip đúng bệnh
-  const msgs = [];
+  const clip = ((CLIP_THEO_BENH[key] || []).filter(Boolean))[0] || null;
 
-  // Lời mở: giới thiệu video Bác sĩ Trình phân tích đúng tình trạng của khách (niềm tin chuyên gia).
-  msgs.push(daCoSo
-    ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ đúng tình trạng của mình, để mình hiểu rõ hơn nha ạ 🥰'
-    : 'Dạ em gửi mình xem mấy video Bác sĩ Trình phân tích kỹ về đúng tình trạng của mình nha ạ, mình xem cho yên tâm hơn 🥰');
-
-  if (clips.length === 0) {
-    // Chưa có clip cho bệnh này → KHÔNG gửi link rỗng. Chỉ nuôi dưỡng nhẹ + nhắc giá trị khám.
-    msgs.push(daCoSo
-      ? 'Mình cứ yên tâm nha, Bác sĩ sẽ xem kỹ tình trạng và tư vấn hướng phù hợp cho mình ạ 🙏'
-      : 'Tình trạng của mình nên được Bác sĩ xem kỹ phim chụp để tư vấn đúng hướng ạ, mình để lại số để Bác sĩ gọi tư vấn miễn phí nha 🙏');
-    return msgs;
+  if (!clip) {
+    // Chưa có clip cho bệnh này → 1 ô nuôi dưỡng nhẹ, không gửi link rỗng.
+    return [daCoSo
+      ? 'Dạ mình cứ yên tâm nha, Bác sĩ sẽ xem kỹ tình trạng và tư vấn hướng phù hợp cho mình ạ 🙏'
+      : 'Dạ tình trạng của mình nên được Bác sĩ xem kỹ để tư vấn đúng hướng ạ, mình để lại số để Bác sĩ gọi tư vấn miễn phí nha 🙏'];
   }
-
-  // Gửi từng clip thành 1 ô riêng (link đứng riêng để FB bung preview đẹp) — tối đa 3.
-  clips.forEach((link, i) => {
-    msgs.push(i === 0 ? `Mình xem nha ạ: ${link}` : link);
-  });
-  return msgs.slice(0, 4); // 1 lời mở + tối đa 3 clip
+  // 2 ô: lời mở + 1 clip (link đứng riêng để FB bung preview đẹp).
+  return [
+    daCoSo
+      ? 'Dạ trong lúc chờ Bác sĩ gọi, em gửi mình video Bác sĩ Trình phân tích đúng tình trạng của mình nha ạ 🥰'
+      : 'Dạ em gửi mình video Bác sĩ Trình phân tích đúng tình trạng của mình, mình xem cho yên tâm nha ạ 🥰',
+    clip,
+  ];
 }
 
 // ===================== CHẠM 4 — CHO GIÁ TRỊ / BÀI TẬP (T+6h) =====================
+// NÉN 04/07: 2 ô — [mẹo + 1 câu dẫn ngắn] + [mời OA]. Bỏ ô đóng thứ 3 (dội bom).
 function noiDungCham4(condition, daCoSo) {
   const key = tenBenhKey(condition);
   const tenCN = TEN_CAM_NANG[key] || 'Cẩm nang chăm sóc tại nhà';
   const meo = MEO_THEO_BENH[key];
-  const msgs = [];
 
-  // Mở đầu ấm áp + cho mẹo NGAY (giá trị thật, không bắt bấm link mới có).
-  if (meo) {
-    msgs.push(`Dạ em gửi mình vài mẹo nhỏ tự làm tại nhà cho đỡ hơn nha ạ 🌿\n${meo}`);
-  } else {
-    msgs.push('Dạ em gửi mình vài lời dặn nhỏ để chăm sóc tại nhà cho đỡ hơn nha ạ 🌿 Mình nhớ vận động nhẹ nhàng đều đặn, tránh giữ một tư thế quá lâu ạ.');
-  }
-  // ĐÒN BẨY (anh Trình chốt 30/06): KHÔNG dán link Drive cho không nữa.
-  // Cẩm nang PDF + video là LÝ DO để khách Quan tâm OA — file chỉ nhận được SAU KHI follow.
-  // Khách bấm follow → webhook follow OA → engine TỰ gửi PDF + video qua Zalo (giai đoạn webhook).
-  // Vì vậy luôn gọi loiMoiZaloOA với daCoPDF=false (OA chính là nơi nhận trọn bộ tài liệu).
-  msgs.push(loiMoiZaloOA(tenCN, daCoSo, false));
-  // Đóng: đã có số → đẩy đặt lịch; chưa có số → mời để lại số nhẹ.
-  if (daCoSo) {
-    msgs.push('Mình tập thử mấy hôm nhé, mà để chắc ăn thì Bác sĩ khám trực tiếp xem đúng nguyên nhân vẫn tốt nhất ạ. Mình sắp xếp qua khám hôm nào tiện, em giữ suất cho mình nha 🙏');
-  } else {
-    msgs.push('Mình cứ tập thử nha ạ. Nếu muốn Bác sĩ xem kỹ phim chụp và tư vấn hướng xử lý phù hợp (miễn phí), mình để lại số điện thoại giúp em, Bác sĩ gọi cho mình ạ 🙏');
-  }
-  return msgs;
+  const than = meo
+    ? `Dạ em gửi mình vài mẹo nhỏ tự làm tại nhà cho đỡ hơn nha ạ 🌿\n${meo}`
+    : 'Dạ em gửi mình vài lời dặn nhỏ để chăm sóc tại nhà cho đỡ hơn nha ạ 🌿 Mình nhớ vận động nhẹ nhàng đều đặn, tránh giữ một tư thế quá lâu ạ.';
+  const dan = daCoSo
+    ? '\nMình sắp xếp qua khám hôm nào tiện, em giữ suất cho mình nha 🙏'
+    : '\nMuốn Bác sĩ xem kỹ và tư vấn hướng phù hợp (miễn phí) thì mình để lại số giúp em nha 🙏';
+
+  // ĐÒN BẨY (anh chốt 30/06): KHÔNG dán link Drive cho không — cẩm nang PDF + video là LÝ DO
+  // Quan tâm OA, file giao SAU khi follow (webhook follow OA tự gửi). daCoPDF luôn = false.
+  return [than + dan, loiMoiZaloOA(tenCN, daCoSo, false)];
 }
 
 // ===================== CHẠM 6 — BÁM ĐUỔI NHẸ (T+30h) =====================
 // Anh chốt 29/06: thay "retarget ad" bằng bot nhắn inbox bám đuổi nhẹ.
+// NÉN 04/07: 1 ô duy nhất.
 function noiDungCham6(condition, daCoSo) {
   if (daCoSo) {
     return [
-      'Dạ em hỏi thăm mình chút xíu ạ 🌸 Mấy mẹo hôm trước mình áp dụng có thấy đỡ hơn không ạ?',
-      'Bác sĩ vẫn đang giữ suất tư vấn cho mình nha. Mình sắp xếp được hôm nào qua khám thì nhắn em, em book giúp cho khỏi phải chờ lâu ạ 🙏',
+      'Dạ em hỏi thăm mình chút xíu ạ 🌸 Mấy mẹo hôm trước mình áp dụng có đỡ hơn không ạ? Bác sĩ vẫn giữ suất tư vấn cho mình — hôm nào tiện qua khám mình nhắn em book giúp cho khỏi chờ nha 🙏',
     ];
   }
   return [
-    'Dạ em nhắn hỏi thăm mình chút xíu ạ 🌸 Tình trạng của mình mấy hôm nay có đỡ hơn không ạ?',
-    'Bên em vẫn đang giữ suất tư vấn miễn phí với Bác sĩ Trình cho mình. Nếu cần, mình để lại số điện thoại (hoặc Zalo) giúp em để Bác sĩ gọi xem kỹ giúp mình nha ạ 🙏',
+    'Dạ em hỏi thăm mình chút xíu ạ 🌸 Tình trạng mấy hôm nay có đỡ hơn không ạ? Suất tư vấn miễn phí với Bác sĩ Trình em vẫn giữ — mình để lại số giúp em để Bác sĩ gọi xem kỹ cho mình nha 🙏',
   ];
 }
 
@@ -153,26 +139,22 @@ function noiDungCham6(condition, daCoSo) {
 // CHƯA số → bot tự nhắn xin số, mức khan hiếm/cấp bách TĂNG DẦN qua 3 mốc (15p → 24h → 47h).
 // Tuân thủ y tế: KHÔNG cam kết khỏi 100%, không bịa kết quả, không dọa. Chỉ khan hiếm suất + bằng chứng nhẹ.
 
-// Chạm 2 (~15 phút sau khi vào, chưa số): cuộc gọi vàng hụt → nhắc suất + hỏi vùng đau để "giữ chỗ".
+// Chạm 2 (~15 phút, chưa số) — NÉN 04/07: 1 ô.
 function noiDungCham2(condition, daCoSo) {
   return [
-    'Dạ em thấy mình quan tâm mà chưa kịp để lại số ạ 🌸 Bên em đang giữ riêng cho mình 1 suất tư vấn trực tiếp với Bác sĩ Trình trong hôm nay đó ạ.',
-    'Mình đang đau vùng nào để em xếp đúng suất giúp mình nha? Mình để lại số điện thoại, Bác sĩ gọi tư vấn miễn phí cho mình luôn ạ 🙏',
+    'Dạ em thấy mình quan tâm mà chưa kịp để lại số ạ 🌸 Bên em đang giữ riêng cho mình 1 suất tư vấn với Bác sĩ Trình hôm nay — mình để lại số điện thoại, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
   ];
 }
-// Chạm 5 (~24h, chưa số): tạo cấp bách nhẹ + bằng chứng xã hội → nhắc để lại số.
+// Chạm 5 (~24h, chưa số) — NÉN 04/07: 1 ô.
 function noiDungCham5(condition, daCoSo) {
   return [
-    'Dạ tình trạng của mình mấy hôm nay sao rồi ạ, còn khó chịu nhiều không? 🌸',
-    'Nhiều cô chú lớn tuổi bên em cũng tình trạng giống mình, sau khi được Bác sĩ Trình xem kỹ và hướng dẫn đúng thì cải thiện tốt lắm ạ.',
-    'Suất tư vấn ưu tiên của mình em vẫn đang giữ, nhưng tuần này khá đông ạ. Mình để lại số điện thoại để em nhờ Bác sĩ gọi xem giúp mình sớm nha 🙏',
+    'Dạ mấy hôm nay tình trạng của mình sao rồi ạ, còn khó chịu nhiều không? 🌸 Nhiều cô chú giống tình trạng mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng là cải thiện tốt lắm ạ — mình để lại số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
   ];
 }
-// Chạm 7 (~47h, chưa số): LỜI CUỐI trước khi đóng suất — nhẹ nhàng, không nài ép, để cửa mở.
+// Chạm 7 (~47h, chưa số) — NÉN 04/07: 1 ô, lời cuối nhẹ nhàng để cửa mở.
 function noiDungCham7(condition, daCoSo) {
   return [
-    'Dạ em nhắn mình lần cuối trong hôm nay ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em giữ cho mình cũng sắp hết hạn rồi.',
-    'Em không muốn mình lỡ mất cơ hội được Bác sĩ xem kỹ tình trạng đâu ạ. Nếu mình còn cần, chỉ cần để lại số điện thoại, Bác sĩ gọi tư vấn cho mình hoàn toàn miễn phí nha 🙏',
+    'Dạ em nhắn mình lần cuối nha ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em giữ cho mình sắp hết hạn — nếu mình còn cần, để lại số điện thoại là Bác sĩ gọi cho mình liền, hoàn toàn miễn phí ạ 🙏',
   ];
 }
 
@@ -199,5 +181,6 @@ export function buildTouchMessages(touchNo, condition, daCoSo) {
   const t = BOT_TOUCHES.find((x) => x.no === Number(touchNo));
   if (!t) return null;
   const msgs = t.build(condition, daCoSo);
-  return Array.isArray(msgs) && msgs.length ? msgs.slice(0, 4) : null;
+  // Trần cứng 2 ô/chạm (anh chốt 04/07 — hết cảnh dội bom).
+  return Array.isArray(msgs) && msgs.length ? msgs.slice(0, 2) : null;
 }

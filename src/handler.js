@@ -4,12 +4,25 @@ import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageCha
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgent } from './telegram.js';
-import { buildTouchMessages } from './touches.js';
+import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
 import { isZaloPage, stripZaloPrefix } from './zalo.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
 import { SALE_PAGE } from './conditions.js';
 import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
+
+// 2 page FB = 2 tệp khách (anh chốt 04/07) — thẻ chèn vào contextTag, prompt mục 1B đọc để đổi nhịp.
+// Page Bs Trình (clip viral): tò mò là chính, cho giá trị trước, đừng vồ vập xin số.
+// Page Phòng khám: khách chủ đích, vào việc nhanh.
+const PAGE_AUDIENCE = {
+  '957014354156110': '[TỆP PAGE: CLIP VIRAL — page Bs Trình] Khách đến từ clip viral, đa phần tò mò chưa có ý định khám. Cho giá trị trước, đừng vồ vập xin số (làm theo mục 1B).',
+  '386613267864665': '[TỆP PAGE: CHỦ ĐÍCH — page Phòng khám] Khách chủ đích tìm phòng khám. Vào việc nhanh, trả lời thẳng, chốt lịch + xin số sớm (làm theo mục 1B).',
+};
+
+// Chuẩn hóa câu để so trùng nguyên văn (chống bot lặp lại chính mình — lộ máy).
+function chuanHoaCau(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 // Khách XIN tài liệu/cẩm nang/bài tập → gửi PDF ngay (không đợi chạm 4).
 const ASK_DOC_RE = /\b(gửi|cho|xin|share|sen)\b.*(tài liệu|tai lieu|cẩm nang|cam nang|bài tập|bai tap|file|pdf|hướng dẫn|huong dan|video)|(tài liệu|cẩm nang|bài tập|file|pdf).*(đâu|chưa|gửi|gui)/i;
@@ -416,6 +429,11 @@ export async function handleIncoming(ev) {
       }
     }
 
+    // THẺ TỆP PAGE (anh chốt 04/07): 2 page = 2 tệp khách, prompt mục 1B đọc thẻ này đổi nhịp tư vấn.
+    if (channel !== 'zalo' && PAGE_AUDIENCE[pageId]) {
+      contextTag = contextTag ? `${contextTag}\n${PAGE_AUDIENCE[pageId]}` : PAGE_AUDIENCE[pageId];
+    }
+
     const history = store.getConversation(conversationId).history;
     const reply = await generateReply(history, mode, customerName || conv.customer_name, null, { channel, contextTag });
 
@@ -491,12 +509,60 @@ export async function handleBotTouch(conv, touchNo) {
 
     const daCoSo = store.isCaptured(fresh);
     const condition = fresh.condition || 'unknown';
-    const messages = buildTouchMessages(touchNo, condition, daCoSo);
+
+    // ===== LUẬT CHỐNG DỘI BOM (anh chốt 04/07) =====
+    // Khách đã IM qua 2 chạm liên tiếp (2 lượt bot gửi sau tin khách cuối mà không có hồi âm)
+    // → DỪNG chuỗi chạm. Nếu trong các tin đó CHƯA có lời mời Zalo OA thì gửi đúng 1 ô mời OA
+    // làm câu chốt (cửa nhẹ nhàng để khách giữ kết nối), rồi im hẳn.
+    {
+      const hist = fresh.history || [];
+      let lastUser = -1;
+      hist.forEach((h, i) => { if (h.role === 'user') lastUser = i; });
+      const sauKhach = hist.slice(lastUser + 1).map((h) => String(h.text || ''));
+      const chamImLang = sauKhach.filter((t) => t.startsWith('[CHẠM')).length;
+      if (chamImLang >= 2) {
+        const daMoiOA = sauKhach.some((t) => t.includes('zalo.me/'));
+        if (!daMoiOA) {
+          const tenCN = BROCHURE_NAME[condition] || 'Cẩm nang chăm sóc tại nhà';
+          const chot = [loiMoiZaloOA(tenCN, daCoSo, false)];
+          chot.forEach((m) => noteBotSent(conversationId, m));
+          noteBotJustSent(conversationId);
+          await sendMessages(pageId, conversationId, chot);
+          store.appendHistory(conversationId, 'model', '[CHẠM-CHỐT-OA] ' + chot.join('\n'));
+          console.log(`[cham${touchNo}] ${conversationId} khách im 2 chạm → gửi 1 ô chốt mời OA rồi DỪNG chuỗi`);
+        } else {
+          console.log(`[cham${touchNo}] ${conversationId} khách im 2 chạm (đã từng mời OA) → DỪNG chuỗi, không nhắn thêm`);
+        }
+        for (const n of [2, 3, 4, 5, 6, 7]) store.markTouchDone(conversationId, n);
+        return;
+      }
+    }
+
+    let messages = buildTouchMessages(touchNo, condition, daCoSo);
     if (!messages) {
       // Chạm 3 chưa có review clip → coi như đã làm (khỏi kẹt cron), bỏ qua nhẹ nhàng.
       console.log(`[cham${touchNo}] ${conversationId} không có nội dung (vd review chưa nạp) → đánh dấu xong, bỏ qua`);
       store.markTouchDone(conversationId, touchNo);
       return;
+    }
+
+    // ===== CHỐNG LẶP NGUYÊN VĂN (anh chốt 04/07: "lặp nguyên văn là lộ rõ BOT") =====
+    // Ô nào đã từng gửi (nằm trong lịch sử tin bot) thì BỎ, không gửi lại lần 2.
+    {
+      const daGui = (fresh.history || [])
+        .filter((h) => h.role === 'model')
+        .map((h) => chuanHoaCau(h.text))
+        .join('\n');
+      messages = messages.filter((m) => {
+        const trung = chuanHoaCau(m).length > 25 && daGui.includes(chuanHoaCau(m));
+        if (trung) console.log(`[cham${touchNo}] ${conversationId} bỏ 1 ô trùng nguyên văn với tin đã gửi`);
+        return !trung;
+      });
+      if (!messages.length) {
+        console.log(`[cham${touchNo}] ${conversationId} mọi ô đều đã gửi trước đó → đánh dấu xong, không nhắn`);
+        store.markTouchDone(conversationId, touchNo);
+        return;
+      }
     }
 
     messages.forEach((m) => noteBotSent(conversationId, m));
@@ -544,15 +610,33 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   const linkWasAdded = outMessages.length !== reply.messages.length ||
     outMessages.some((m, i) => m !== reply.messages[i]);
 
-  // Gửi các ô thoại về khách qua Pancake
-  outMessages.forEach((m) => noteBotSent(conversationId, m)); // đánh dấu bot gửi (để khỏi nhầm là người gõ)
-  noteBotJustSent(conversationId); // chống race: đánh dấu thời điểm bot gửi (echo sắp dội về)
-  await sendMessages(pageId, conversationId, outMessages);
-  // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
-  store.appendHistory(conversationId, 'model', outMessages.join('\n'));
-  // Đánh dấu đã gửi link để không lặp lại mỗi lượt
-  if (linkWasAdded && SALE_PAGE[knownCondition]) {
-    store.markSaleLinkSent(conversationId);
+  // CHỐNG LẶP NGUYÊN VĂN (anh chốt 04/07): bot lặp y câu đã nói là lộ máy → bỏ ô trùng.
+  // Chỉ soi ô dài (>25 ký tự) để không chặn oan câu ngắn đời thường ("Dạ vâng ạ"…).
+  {
+    const daGui = (freshConv?.history || [])
+      .filter((h) => h.role === 'model')
+      .map((h) => chuanHoaCau(h.text))
+      .join('\n');
+    const truoc = outMessages.length;
+    outMessages = outMessages.filter((m) => !(chuanHoaCau(m).length > 25 && daGui.includes(chuanHoaCau(m))));
+    if (outMessages.length < truoc) {
+      console.log(`[dispatch] ${conversationId} bỏ ${truoc - outMessages.length} ô trùng nguyên văn tin bot đã gửi`);
+    }
+  }
+
+  if (outMessages.length) {
+    // Gửi các ô thoại về khách qua Pancake
+    outMessages.forEach((m) => noteBotSent(conversationId, m)); // đánh dấu bot gửi (để khỏi nhầm là người gõ)
+    noteBotJustSent(conversationId); // chống race: đánh dấu thời điểm bot gửi (echo sắp dội về)
+    await sendMessages(pageId, conversationId, outMessages);
+    // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
+    store.appendHistory(conversationId, 'model', outMessages.join('\n'));
+    // Đánh dấu đã gửi link để không lặp lại mỗi lượt
+    if (linkWasAdded && SALE_PAGE[knownCondition]) {
+      store.markSaleLinkSent(conversationId);
+    }
+  } else {
+    console.log(`[dispatch] ${conversationId} mọi ô đều trùng tin cũ → không gửi gì (tránh lộ bot)`);
   }
 
   // ƯU TIÊN SĐT: regex hoặc Gemini báo phone_captured
