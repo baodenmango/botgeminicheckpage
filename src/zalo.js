@@ -151,12 +151,43 @@ export async function sendTexts(userId, messages, delayMs = 1200) {
  * @param {string} userId  zalo user_id (không kèm "zl_")
  * @param {string} fileUrl  URL file công khai (Drive direct download) — Zalo tải về để gửi
  */
-export async function sendFileByUrl(userId, fileUrl) {
+export async function sendFileByUrl(userId, fileUrl, fileName = 'Cam-nang-cham-soc.pdf') {
   if (!isOpenApiEnabled()) return false;
-  // Zalo OpenAPI gửi file qua attachment "file" cần token upload. Một số gói cho gửi link trực tiếp
-  // qua tin text kèm preview; để chắc ăn cross-gói, ta gửi link trong text (khách bấm tải).
-  // Khi gói hỗ trợ upload file thật → thay bằng luồng upload/file + attachment ở đây.
-  return sendText(userId, `📄 Tài liệu của mình đây ạ, mình bấm vào tải về nha:\n${fileUrl}`);
+  // Luồng gửi FILE THẬT (port từ MCP zalo local, test PASS 30/06): tải file về →
+  // upload v2.0 /oa/upload/file lấy token → gửi v3.0 message/cs attachment type file.
+  // Gói Tăng trưởng đã có OpenAPI nên upload chạy được; lỗi bất kỳ → lùi về gửi link (phao cũ).
+  try {
+    // Link Google Drive dạng /file/d/<id>/ → link tải trực tiếp
+    let url = String(fileUrl);
+    const m = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+    if (m) url = `https://drive.google.com/uc?export=download&id=${m[1]}`;
+    const resp = await axios.get(url, { responseType: 'arraybuffer', maxRedirects: 5, timeout: 30000 });
+
+    // upload v2 (multipart) — tự refresh + thử lại 1 lần nếu token hết hạn
+    const upload = async () => {
+      const form = new FormData();
+      form.append('file', new Blob([resp.data], { type: 'application/pdf' }), fileName);
+      return axios.post('https://openapi.zalo.me/v2.0/oa/upload/file', form, {
+        headers: { access_token: accessToken }, timeout: 30000,
+      });
+    };
+    let up = await upload();
+    if ([-216, -124].includes(up.data?.error)) {
+      await refreshAccessToken();
+      up = await upload();
+    }
+    const token = up.data?.data?.token;
+    if (!token) throw new Error(`upload không có token: ${JSON.stringify(up.data).slice(0, 150)}`);
+
+    const body = await oaCall('post', 'message/cs', {
+      data: { recipient: { user_id: String(userId) }, message: { attachment: { type: 'file', payload: { token } } } },
+    });
+    if (body?.error === 0) return true;
+    throw new Error(`gửi attachment lỗi: ${JSON.stringify(body).slice(0, 150)}`);
+  } catch (err) {
+    console.warn('[zalo] gửi file thật thất bại → lùi về gửi link:', err?.message);
+    return sendText(userId, `📄 Tài liệu của mình đây ạ, mình bấm vào tải về nha:\n${fileUrl}`);
+  }
 }
 
 /**
