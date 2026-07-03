@@ -9,52 +9,53 @@
 //  Danh mục ĐỀ XUẤT cần làm xem cuối file (RESOURCE_TODO) — checklist để anh duyệt & sản xuất.
 
 // ---------- 1) BROCHURE / CẨM NANG PDF theo bệnh ----------
-// 6 bệnh cốt lõi ĐÃ có (bê từ touches.js cũ). 6 bệnh mở rộng để TRỐNG chờ anh làm.
+// BỘ DECK MỚI "Chương trình tập luyện tại nhà" — 17 bệnh, mỗi bệnh 1 deck slide chỉn chu
+// (giải phẫu + cơ chế + red flags + bài tập từng slide + giải pháp phòng khám). Render PDF +
+// up Drive 03-04/07 (folder Tài nguyên Telesale 18vagh28...). Đã thay TOÀN BỘ link cẩm nang cũ.
+// Link cũ (bản markdown-render) còn lưu ở git history nếu cần lùi.
 export const BROCHURE_PDF = {
-  // cốt lõi (đã có) —
-  goi:      'https://drive.google.com/file/d/1MLGPKRIAvQZNVwNcUzBkoNAtlS17gQVQ/view',
-  vai:      'https://drive.google.com/file/d/12O-O62GLHWgh_3yG8U-aBt2vMWYNfdxC/view',
-  gut:      'https://drive.google.com/file/d/1gPV2a5vOqfhdiUB-d18htQRtX7kK1eSr/view',
-  lung:     'https://drive.google.com/file/d/1xDDc8QbgEoifGHvfNiYhH6axlwTha5Ho/view',
-  tvdd:     'https://drive.google.com/file/d/1b-huOqDvWVbOpL2hjDNKXfaSnNeyaoEH/view',
-  covaigay: 'https://drive.google.com/file/d/1o98wx_wW63ZVHTiWlkByh100Wb2hHwpp/view',
-  // mở rộng (đã render PDF + up Drive 30/06 — folder Tài nguyên Telesale 18vagh28...) —
-  chopxoay:   'https://drive.google.com/file/d/1Sk6ml_iLoA7Hagwd4m1nppK9NgrqXovd/view',
-  csc:        'https://drive.google.com/file/d/1H8bqZLQlkN1AYfkCiIuuglys4SEc58qd/view',
-  ngontay:    'https://drive.google.com/file/d/14BPYR5UeCejeDXIXnyXs8iCVWoJkM2-h/view',
-  cochan:     'https://drive.google.com/file/d/1l-9Gh6CcIahgVraz2vUyMwkVUSEsFsgJ/view',
-  hang:       'https://drive.google.com/file/d/18hXgJ_FyKiwv-H1v-T91s6HiWe-QDj5S/view',
-  chomdui:    'https://drive.google.com/file/d/1cl7bu9gX8AP_1bZtdq2J0GkTZmrijpO4/view',
-  loangxuong: 'https://drive.google.com/file/d/1aDA0tzj4zil8PbW6ipcYEEO6l3JEw2Gm/view',
-  dequervain: 'https://drive.google.com/file/d/1GYUxcwTcCOoYmyT8p4BLpJT6DIvO45O_/view',
-  ongcotay:   'https://drive.google.com/file/d/1U0a6Pu_sWK7He2ArMkEcZys3ZiWWEb3s/view',
-  tenniselbow:'https://drive.google.com/file/d/1GccnKxqUlYMnDYzs5_kkVlFnH_NXp9_C/view',
-  gangotchan: 'https://drive.google.com/file/d/1AWsoCeBidT2U5E9PVHw0BRVu9URQsfY7/view',
+  goi:        'https://drive.google.com/file/d/1xjCazryM_Kzcl1TSVsk7EhDxpqzM7CCy/view',
+  vai:        'https://drive.google.com/file/d/1ttFBFQTlRfR6_DLSulYcJSPr21lSvrVC/view',
+  gut:        'https://drive.google.com/file/d/1ToNAxue8m8uwaNMeEtfilEdOiGHy180I/view',
+  lung:       'https://drive.google.com/file/d/1_9hsHn0ExVmqbHh8U06EZbH-ok-N2COu/view',
+  tvdd:       'https://drive.google.com/file/d/1ORMH9kltA5E2DuQ4iUV8rTNC4AfIOGFt/view',
+  covaigay:   'https://drive.google.com/file/d/1cufJb4nUfpzjIIvABKkHnEPK8BChQATN/view',
+  chopxoay:   'https://drive.google.com/file/d/1HMvqt-Sn4zq7yBY8x41bAHWkvU2Zaep3/view',
+  csc:        'https://drive.google.com/file/d/1BB9mFsHSH-V75ZT8cEodEIn4p7KA609H/view',
+  ngontay:    'https://drive.google.com/file/d/1hB5V1Vj05SyLHJww2oXIfq_mLQYNwIgX/view',
+  cochan:     'https://drive.google.com/file/d/1IFcFwhPwfBy6ON4cCUQds6SGJWVL5q_6/view',
+  hang:       'https://drive.google.com/file/d/1qdDLfdp-t1eRXPfjfpQ7vmzQH_UzaVlY/view',
+  chomdui:    'https://drive.google.com/file/d/1NuCebWxX_izJmoYOgxpeBCdiMbb9OOnd/view',
+  loangxuong: 'https://drive.google.com/file/d/1TVLIXAxUAcwJIMPvbMFw9s8m6ZoeiW9t/view',
+  dequervain: 'https://drive.google.com/file/d/19Y5y8h6JtAoH6BZMcvh9HZR5_KeHorvP/view',
+  ongcotay:   'https://drive.google.com/file/d/10NQfT2xviYV8Z7CihZTwF1eUb_OZbsFa/view',
+  tenniselbow:'https://drive.google.com/file/d/19d8USpi-Lck1USCOnZ5XNjX_z6aHl45s/view',
+  gangotchan: 'https://drive.google.com/file/d/18cStZW7pTD_SKjsOjTp0pxZHhg6GYJ1p/view',
 };
 
 // Link 2 TỜ CHUNG (gửi khi follow OA / chăm sóc) — cùng folder Drive, đã set public-link.
 export const PERK_PDF_URL    = 'https://drive.google.com/file/d/1bzYOw1CczJcUgOhH5MvyAUbWFPVHq1LX/view'; // tờ quyền lợi
 export const SERVICE_PDF_URL = 'https://drive.google.com/file/d/1HeyCpy3GpklJXznV12LxNeQuLZ6Uork6/view'; // tờ dịch vụ
 
-// Tên brochure (để câu mời tự nhiên).
+// Tên brochure (để câu mời tự nhiên). Bộ MỚI = "Chương trình tập luyện tại nhà" theo từng bệnh.
 export const BROCHURE_NAME = {
-  goi:      'Cẩm nang chăm sóc khớp gối tại nhà',
-  vai:      'Cẩm nang chăm sóc khớp vai tại nhà',
-  gut:      'Cẩm nang ăn uống & kiểm soát bệnh gút',
-  lung:     'Cẩm nang 7 ngày giảm đau lưng tại nhà',
-  tvdd:     'Cẩm nang sống khỏe với thoát vị đĩa đệm',
-  covaigay: 'Cẩm nang thư giãn cổ – vai – gáy',
-  chopxoay: 'Cẩm nang phục hồi chóp xoay vai',
-  ngontay:  'Cẩm nang chữa ngón tay lò xo',
-  cochan:   'Cẩm nang xử lý bong gân cổ chân đúng cách',
-  hang:     'Cẩm nang sống khỏe với thoái hóa khớp háng',
-  chomdui:  'Cẩm nang bảo tồn chỏm xương đùi',
-  csc:      'Cẩm nang chăm sóc cột sống cổ',
-  loangxuong: 'Cẩm nang phòng & trị loãng xương',
-  dequervain: 'Cẩm nang giảm đau gân cổ tay De Quervain',
-  ongcotay:   'Cẩm nang chữa tê tay – hội chứng ống cổ tay',
-  tenniselbow:'Cẩm nang phục hồi khuỷu tay tennis',
-  gangotchan: 'Cẩm nang trị đau gót chân buổi sáng',
+  goi:      'Chương trình tập luyện thoái hóa khớp gối tại nhà',
+  vai:      'Chương trình tập luyện viêm quanh khớp vai tại nhà',
+  gut:      'Chương trình sống khỏe với bệnh gút tại nhà',
+  lung:     'Chương trình tập luyện giảm đau cột sống thắt lưng tại nhà',
+  tvdd:     'Chương trình tập luyện cho thoát vị đĩa đệm tại nhà',
+  covaigay: 'Chương trình tập luyện đau cổ – vai – gáy tại nhà',
+  chopxoay: 'Chương trình phục hồi gân chóp xoay vai tại nhà',
+  ngontay:  'Chương trình tập luyện ngón tay lò xo tại nhà',
+  cochan:   'Chương trình phục hồi bong gân cổ chân tại nhà',
+  hang:     'Chương trình tập luyện thoái hóa khớp háng tại nhà',
+  chomdui:  'Chương trình giảm tải & chăm sóc chỏm xương đùi tại nhà',
+  csc:      'Chương trình tập luyện thoái hóa cột sống cổ tại nhà',
+  loangxuong: 'Chương trình tập luyện cho người loãng xương tại nhà',
+  dequervain: 'Chương trình tập luyện gân cổ tay De Quervain tại nhà',
+  ongcotay:   'Chương trình tập luyện hội chứng ống cổ tay tại nhà',
+  tenniselbow:'Chương trình phục hồi khuỷu tay tennis tại nhà',
+  gangotchan: 'Chương trình tập luyện viêm cân gan chân tại nhà',
 };
 
 // ---------- 2) CLIP video Bác sĩ phân tích theo bệnh (tối đa 3/bệnh) ----------
@@ -166,8 +167,9 @@ export function suggestServices(condition, max = 2) {
 // ---------- CHECKLIST ĐỀ XUẤT (để anh Trình duyệt & sản xuất nội dung) ----------
 // KHÔNG dùng trong code — chỉ là ghi chú điều hướng việc. Xem cũng được, xóa cũng được.
 export const RESOURCE_TODO = `
-[x] Brochure PDF 17 bệnh — ĐÃ render + up Drive 30/06 (BROCHURE_PDF đủ link). Nội dung gốc:
-    02-Marketing-SalePage/Tai-lieu-cham-soc-Zalo/ (markdown) → đã ra PDF folder PDF-da-render.
+[x] BỘ DECK MỚI "Chương trình tập luyện tại nhà" 17 bệnh — ĐÃ render PDF + up Drive 03-04/07,
+    BROCHURE_PDF đã trỏ hết sang deck mới. Nguồn: 02-Marketing-SalePage/Decks-VLTL-17-benh/
+    (engine _engine/deck_engine.py + config.py mỗi bệnh + ảnh Gemini). Link cẩm nang cũ ở git history.
 [x] Tờ quyền lợi (PERK_PDF_URL) + tờ dịch vụ (SERVICE_PDF_URL) — ĐÃ up Drive.
 [ ] Nâng cấp PDF từ bản Chrome-render lên bản Canva ĐẸP hơn (tùy chọn) → chỉ đổi link Drive.
 [ ] Clip Bác sĩ phân tích cho: covaigay + các bệnh mới (CLIP_BY_CONDITION còn []) — gom clip 2 fanpage.
