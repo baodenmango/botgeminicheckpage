@@ -29,7 +29,16 @@ const BOOTED_AT = new Date().toISOString();
 const GIT_COMMIT = (process.env.RENDER_GIT_COMMIT || 'dev').slice(0, 7);
 app.get('/health', (_req, res) =>
   res.status(200).json({ ok: true, ts: Date.now(), commit: GIT_COMMIT, bootedAt: BOOTED_AT }));
-app.get('/', (_req, res) => res.status(200).send('Bot Gemini Hiệp Lợi đang chạy ✅'));
+app.get('/', (_req, res) => {
+  // meta tag xác thực domain Zalo (env ZALO_SITE_VERIFICATION) — không có thì trang chủ như cũ
+  const zaloMeta = process.env.ZALO_SITE_VERIFICATION
+    ? `<meta name="zalo-platform-site-verification" content="${process.env.ZALO_SITE_VERIFICATION}" />`
+    : '';
+  res.status(200).type('html').send(
+    `<!doctype html><html><head><meta charset="utf-8">${zaloMeta}<title>Bot Gemini Hiệp Lợi</title></head>` +
+    `<body>Bot Gemini Hiệp Lợi đang chạy ✅</body></html>`
+  );
+});
 
 // --- Admin: gỡ cờ "người giữ" bị kẹt (do bug nhận nhầm echo là telesale) ---
 // GET /admin/reset-human?token=XXX            → gỡ cờ TẤT CẢ hội thoại
@@ -135,10 +144,22 @@ app.post('/admin/medi-upsert', (req, res) => {
 
 // --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---
 // Zalo gửi event 'follow' về URL này (cấu hình trong Zalo Developer Console).
+// Nút "Kiểm tra" của Console gửi GET → phải trả 200, không thì báo "đường dẫn không hợp lệ".
+app.get('/zalo/webhook', (_req, res) => res.status(200).json({ ok: true }));
 app.post('/zalo/webhook', (req, res) => {
   res.status(200).json({ received: true }); // trả 200 ngay
   const mac = req.get('X-ZEvent-Signature') || req.get('x-zevent-signature') || null;
   try { handleZaloFollow(req.body, mac); } catch (err) { console.error('[zalo-webhook] lỗi:', err?.message || err); }
+});
+
+// --- Xác thực domain với Zalo (nếu Console đòi) ---
+// Cách 1 (file): Zalo phát file zalo_verifierXXX.html → dán NỘI DUNG file vào env
+//   ZALO_VERIFIER_CONTENT là route này phục vụ đúng file đó.
+// Cách 2 (meta tag): dán mã vào env ZALO_SITE_VERIFICATION → nhúng vào trang chủ bên dưới.
+app.get(/^\/zalo_verifier.*\.html$/, (_req, res) => {
+  const content = process.env.ZALO_VERIFIER_CONTENT;
+  if (!content) return res.status(404).send('chưa cấu hình ZALO_VERIFIER_CONTENT');
+  res.status(200).type('html').send(content);
 });
 
 /**

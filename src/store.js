@@ -129,9 +129,26 @@ db.exec(`
     last_wake_at INTEGER,
     wake_count   INTEGER DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS kv (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    updated_at INTEGER
+  );
 `);
 
 const nowSec = () => Math.floor(Date.now() / 1000);
+
+// KV nhỏ cho state cần sống qua restart (vd token Zalo sau refresh — env trên Render sẽ cũ đi).
+export function getKV(key) {
+  const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(String(key));
+  return row ? row.value : null;
+}
+export function setKV(key, value) {
+  db.prepare(`INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+    .run(String(key), value === null || value === undefined ? null : String(value), nowSec());
+}
 
 // BN này được phép "đánh thức" lại chưa? (chưa nhắc, hoặc lần cuối cách đây > cooldownDays).
 export function canWakeup(phone, cooldownDays = 30, maxCount = 3) {

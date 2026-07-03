@@ -14,6 +14,7 @@
 //  Token nằm trong env (đồng bộ .mcp.json zalo-hieploi):
 //   ZALO_ACCESS_TOKEN, ZALO_REFRESH_TOKEN, ZALO_APP_ID, ZALO_APP_SECRET, ZALO_OA_ID
 import axios from 'axios';
+import * as store from './store.js';
 
 const OA_API = 'https://openapi.zalo.me/v3.0/oa';
 const OAUTH_API = 'https://oauth.zaloapp.com/v4/oa/access_token';
@@ -28,11 +29,12 @@ export function isZaloPage(channel) {
   return String(channel || '').toLowerCase() === 'zalo';
 }
 
-// --- Quản lý access token trong RAM, tự refresh khi 401/hết hạn ---
-// Lưu trong RAM thôi (Render restart sẽ nạp lại từ env). Khi refresh, Zalo trả token MỚI cả 2;
-// ta cập nhật RAM để các lần sau dùng. (Persist ra disk là việc nâng cấp sau, không bắt buộc.)
-let accessToken = process.env.ZALO_ACCESS_TOKEN || null;
-let refreshToken = process.env.ZALO_REFRESH_TOKEN || null;
+// --- Quản lý access token: RAM + PERSIST vào DB (bảng kv) ---
+// Zalo XOAY VÒNG refresh token mỗi lần dùng → nếu chỉ giữ trong RAM, restart là nạp lại
+// env đã CŨ và chết cả chuỗi (sự cố 03/07). Giờ: refresh xong ghi DB; boot ưu tiên DB;
+// DB chết (vd anh vừa dán cặp MỚI lên env) thì tự lùi về env thử lại 1 lần.
+let accessToken = store.getKV('zalo_access_token') || process.env.ZALO_ACCESS_TOKEN || null;
+let refreshToken = store.getKV('zalo_refresh_token') || process.env.ZALO_REFRESH_TOKEN || null;
 let lastRefreshAt = 0;
 
 async function refreshAccessToken() {
@@ -44,21 +46,32 @@ async function refreshAccessToken() {
     console.warn('[zalo] thiếu ZALO_APP_ID/SECRET/REFRESH_TOKEN → không refresh được token');
     return accessToken;
   }
+  const goiRefresh = async (rt) => axios.post(
+    OAUTH_API,
+    new URLSearchParams({
+      refresh_token: rt,
+      app_id: appId,
+      grant_type: 'refresh_token',
+    }).toString(),
+    { headers: { secret_key: appSecret, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
+  );
   try {
-    const res = await axios.post(
-      OAUTH_API,
-      new URLSearchParams({
-        refresh_token: refreshToken,
-        app_id: appId,
-        grant_type: 'refresh_token',
-      }).toString(),
-      { headers: { secret_key: appSecret, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
-    );
+    let res = await goiRefresh(refreshToken);
+    // cặp trong DB chết (đã dùng/thu hồi) mà env có cặp KHÁC (anh vừa dán mới) → thử env
+    const envRt = process.env.ZALO_REFRESH_TOKEN;
+    if (!res.data?.access_token && envRt && envRt !== refreshToken) {
+      console.warn('[zalo] refresh bằng token DB thất bại → thử lại bằng token env (cặp mới dán)');
+      res = await goiRefresh(envRt);
+    }
     if (res.data?.access_token) {
       accessToken = res.data.access_token;
       if (res.data.refresh_token) refreshToken = res.data.refresh_token; // Zalo xoay vòng refresh token
       lastRefreshAt = Date.now();
-      console.log('[zalo] ✅ refresh access token thành công');
+      try {
+        store.setKV('zalo_access_token', accessToken);
+        store.setKV('zalo_refresh_token', refreshToken);
+      } catch (e) { console.warn('[zalo] không ghi được token vào DB:', e?.message); }
+      console.log('[zalo] ✅ refresh access token thành công (đã persist DB)');
     } else {
       console.error('[zalo] refresh token: phản hồi không có access_token:', JSON.stringify(res.data).slice(0, 200));
     }
