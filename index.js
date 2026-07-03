@@ -12,6 +12,7 @@ import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow } from './src/follow.js';
+import { lookupMedi, mapDiagnosis } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
 import { runRescueLead } from './src/rescueLead.js';
@@ -84,15 +85,30 @@ app.get('/admin/poke', async (req, res) => {
 // POST /admin/bill-ingest?token=XXX  body JSON: { phone, name, zalo_user_id, page_id,
 //   conversation_id, condition, has_medicine, has_injection, bill_date, treatment }
 // Dùng cho nhân viên/automation đẩy ca ra bill (có thuốc/tiêm) từ POS vào engine.
-app.post('/admin/bill-ingest', (req, res) => {
+// POS không có chẩn đoán → nếu payload thiếu condition, tự tra hồ sơ MEDi theo SĐT
+// (cache /admin/medi-upsert) để điền bệnh + liệu trình + cờ tiêm, tin gửi khách mới đúng ca.
+app.post('/admin/bill-ingest', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken || req.query.token !== adminToken) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
   try {
-    const saved = ingestBill(req.body || {});
+    const body = { ...(req.body || {}) };
+    if ((!body.condition || body.condition === 'unknown') && body.phone) {
+      const medi = await lookupMedi(body.phone);
+      if (medi) {
+        const c = mapDiagnosis(medi.diagnosis);
+        if (c !== 'unknown') body.condition = c;
+        if (!body.treatment && medi.treatment) body.treatment = medi.treatment;
+        if (body.has_injection === undefined && /prp_khop|sinh_hoc/.test(medi.treatment || '')) {
+          body.has_injection = true;
+        }
+        if (!body.name && medi.name) body.name = medi.name;
+      }
+    }
+    const saved = ingestBill(body);
     if (!saved) return res.status(400).json({ ok: false, error: 'payload thiếu phone/id' });
-    res.status(200).json({ ok: true, id: saved.id });
+    res.status(200).json({ ok: true, id: saved.id, condition: saved.condition, treatment: saved.treatment || null });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
