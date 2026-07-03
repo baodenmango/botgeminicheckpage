@@ -156,7 +156,7 @@ app.post('/zalo/webhook', (req, res) => {
 // Cách 1 (file): Zalo phát file zalo_verifierXXX.html → dán NỘI DUNG file vào env
 //   ZALO_VERIFIER_CONTENT là route này phục vụ đúng file đó.
 // Cách 2 (meta tag): dán mã vào env ZALO_SITE_VERIFICATION → nhúng vào trang chủ bên dưới.
-app.get(/^\/zalo_verifier.*\.html$/, (_req, res) => {
+app.get(/^\/zalo[\w.-]*\.html$/i, (_req, res) => {
   const content = process.env.ZALO_VERIFIER_CONTENT;
   if (!content) return res.status(404).send('chưa cấu hình ZALO_VERIFIER_CONTENT');
   res.status(200).type('html').send(content);
