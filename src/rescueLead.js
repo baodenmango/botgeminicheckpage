@@ -28,6 +28,12 @@ const MAX_PER_RUN = parseInt(process.env.RESCUE_MAX_PER_RUN || '10', 10);  // ca
 // human oan → bot câm + rescue né suốt 30'. Nhãn "đã đặt lịch/telesale xử" vẫn chặn ở handleIncoming.)
 const HUMAN_OVERRIDE_MIN = parseFloat(process.env.RESCUE_HUMAN_OVERRIDE_MIN || '20');
 
+// CHỐNG VỚT LẶP VÔ HẠN: khách chặn page / khoá nick / hết cửa sổ 24h Meta → gửi HỤT (#551),
+// Pancake vẫn thấy "khách nhắn cuối" → không có guard là cron 5' thử lại mãi (đốt Gemini + spam log).
+// Mỗi (conv + mốc tin khách) chỉ thử 1 lần; lỗi tạm thời thì được thử lại sau RETRY_HOURS.
+const RETRY_HOURS = parseFloat(process.env.RESCUE_RETRY_HOURS || '6');
+const attempted = new Map(); // convId -> { mark: mốc tin khách đã thử, at: lúc thử }
+
 // phút kể từ mốc thời gian (chuỗi Pancake UTC không hậu tố Z → ép UTC).
 function minutesSince(ts) {
   if (!ts) return null;
@@ -99,6 +105,12 @@ export async function runRescueLead() {
       if (idle == null || idle < MIN_IDLE_MIN) continue;   // vừa nhắn → để webhook lo, tránh trùng
       if (idle > WINDOW_HOURS * 60) continue;              // quá cũ → thôi
 
+      // đã thử vớt ĐÚNG tin này rồi (khách chặn page/hết cửa sổ 24h → gửi hụt hoài) → chờ khách
+      // nhắn mới hoặc quá RETRY_HOURS mới thử lại, không xay Gemini mỗi 5 phút.
+      const mark = String(c.last_customer_interactive_at || c.updated_at || '');
+      const prev = attempted.get(convId);
+      if (prev && prev.mark === mark && Date.now() - prev.at < RETRY_HOURS * 3600 * 1000) continue;
+
       // trạng thái: bỏ ca đang có người giữ / handover / opt-out / nhãn stop
       const conv = store.getConversation(convId);
       if (conv) {
@@ -118,6 +130,11 @@ export async function runRescueLead() {
       catch { last = null; }
       if (!last || !last.messageText) continue;             // tin cuối thực ra là của page → bỏ
 
+      attempted.set(convId, { mark, at: Date.now() });
+      if (attempted.size > 500) { // giữ map gọn — xoá mục cũ nhất
+        const oldest = [...attempted.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (oldest) attempted.delete(oldest[0]);
+      }
       console.log(`[rescue] 🛟 vớt lead ${convId} (khách nhắn cuối ${Math.round(idle)}p chưa rep): "${last.messageText.slice(0, 40)}"`);
       // KHÔNG await để 1 ca treo không chặn cả vòng; handleIncoming tự có lock chống trùng.
       handleIncoming({
