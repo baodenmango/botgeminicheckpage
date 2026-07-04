@@ -11,12 +11,15 @@
 // ============================================================
 import axios from 'axios';
 import { config } from './config.js';
-import { isPageEnabled, getLastCustomerMessage } from './pancake.js';
+import { isPageEnabled, getLastCustomerMessage, getPageToken, stripChannelPrefix } from './pancake.js';
 import { handleIncoming } from './handler.js';
 import * as store from './store.js';
 
 const PANCAKE_TOKEN = process.env.PANCAKE_API_TOKEN || null;
 const API_BASE = process.env.PANCAKE_API_BASE_V1 || 'https://pages.fm/api/v1';
+// Đường CHÍNH: quét list bằng token TỪNG PAGE (public_api, luôn có sẵn vì bot cần nó để nhận/gửi).
+// PANCAKE_API_TOKEN (user token) chỉ còn là DỰ PHÒNG — trước đây bắt buộc, thiếu là engine câm lặng.
+const API_BASE_PUBLIC = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_api/v1';
 const MIN_IDLE_MIN = parseFloat(process.env.RESCUE_MIN_IDLE_MIN || '3');   // khách nhắn cuối phải cũ hơn (phút)
 const WINDOW_HOURS = parseFloat(process.env.RESCUE_WINDOW_HOURS || '72');  // chỉ vớt lead trong 72h
 const MAX_PER_RUN = parseInt(process.env.RESCUE_MAX_PER_RUN || '10', 10);  // cap mỗi lượt (an toàn)
@@ -36,12 +39,28 @@ function minutesSince(ts) {
 }
 
 async function getConvs(pageId) {
+  const pageToken = getPageToken(pageId);
+  const until = Math.floor(Date.now() / 1000);
+  const since = until - Math.floor(WINDOW_HOURS * 3600); // list endpoint CẦN since/until, thiếu là trả rỗng
   try {
-    const { data } = await axios.get(`${API_BASE}/pages/${pageId}/conversations`, {
-      params: { access_token: PANCAKE_TOKEN, page_number: 1 },
-      timeout: 20000,
-    });
-    return Array.isArray(data?.conversations) ? data.conversations : [];
+    if (pageToken) {
+      const { data } = await axios.get(`${API_BASE_PUBLIC}/pages/${pageId}/conversations`, {
+        params: { page_access_token: pageToken, since, until, page_number: 1 },
+        timeout: 20000,
+      });
+      const list = data?.conversations || data?.data;
+      if (Array.isArray(list)) return list;
+      console.warn(`[rescue] page ${pageId} list qua page-token không trả mảng → thử user token`);
+    }
+    if (PANCAKE_TOKEN) {
+      const { data } = await axios.get(`${API_BASE}/pages/${pageId}/conversations`, {
+        params: { access_token: PANCAKE_TOKEN, page_number: 1 },
+        timeout: 20000,
+      });
+      return Array.isArray(data?.conversations) ? data.conversations : [];
+    }
+    console.warn(`[rescue] page ${pageId} không có token nào đọc được list → bỏ page này`);
+    return [];
   } catch (err) {
     console.error(`[rescue] đọc Pancake page ${pageId} lỗi:`, err?.response?.status || err.message);
     return [];
@@ -49,10 +68,12 @@ async function getConvs(pageId) {
 }
 
 // Người gửi CUỐI có phải KHÁCH không (không phải page/bot). true = khách nhắn cuối → cần vớt.
+// So theo phần lõi (bỏ tiền tố zl_/ttm_...): Zalo lúc "zl_3136..." lúc "3136..." tùy endpoint —
+// so khít sẽ coi tin của chính OA là tin khách → bot tự trả lời chính mình lặp vô hạn.
 function khachNhanCuoi(c, pageId) {
   const lsb = c.last_sent_by;
   if (!lsb) return false;
-  return String(lsb.id) !== String(pageId);
+  return stripChannelPrefix(lsb.id) !== stripChannelPrefix(pageId);
 }
 
 /**
@@ -60,10 +81,6 @@ function khachNhanCuoi(c, pageId) {
  * @returns {Promise<number>} số ca đã đẩy vào xử lý.
  */
 export async function runRescueLead() {
-  if (!PANCAKE_TOKEN) {
-    console.warn('[rescue] thiếu PANCAKE_API_TOKEN → bỏ (engine vớt lead cần token quét Pancake)');
-    return 0;
-  }
   let done = 0;
   for (const pageId of Object.keys(config.pancakePages)) {
     if (!isPageEnabled(pageId)) continue;
@@ -72,6 +89,9 @@ export async function runRescueLead() {
       if (done >= MAX_PER_RUN) break;
       const convId = c.id;
       if (!convId) continue;
+      // CHỈ vớt INBOX (FB messenger + Zalo + TikTok đều INBOX). COMMENT là việc của Meta auto-rep,
+      // đẩy comment vào handleIncoming là bot rep nhầm kênh.
+      if (String(c.type || '').toUpperCase() !== 'INBOX') continue;
       if (!khachNhanCuoi(c, pageId)) continue;            // page/bot nhắn cuối → khách chưa hỏi mới
 
       // đủ lâu chưa? (webhook về ngay trong vài giây; quá ngưỡng = webhook rớt)

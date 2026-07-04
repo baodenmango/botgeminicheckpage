@@ -90,6 +90,22 @@ app.get('/admin/poke', async (req, res) => {
   }
 });
 
+// --- Admin: KÍCH 1 lượt vớt lead NGAY (không chờ cron 5') — kiểm tra sau deploy / cứu loạt ca sót ---
+// GET /admin/rescue-now?token=XXX → { ok, rescued: <số ca đã đẩy vào xử lý> }
+app.get('/admin/rescue-now', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const rescued = await runRescueLead();
+    res.status(200).json({ ok: true, rescued });
+  } catch (err) {
+    console.error('[admin] rescue-now lỗi:', err?.message || err);
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 // --- Admin: NẠP 1 ca ra bill vào hàng đợi chăm sóc Zalo (bước 5) ---
 // POST /admin/bill-ingest?token=XXX  body JSON: { phone, name, zalo_user_id, page_id,
 //   conversation_id, condition, has_medicine, has_injection, bill_date, treatment }

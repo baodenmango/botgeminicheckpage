@@ -56,7 +56,7 @@ function humanDelay(text, index) {
 // Lý do: Pancake gửi webhook page Zalo có thể là "3136..." (không tiền tố) HOẶC "zl_3136..."
 // tùy endpoint/sự kiện. Token generate lại theo dạng "zl_...". Ta khớp cả 2 để không rớt tin.
 // Chuẩn hoá: bỏ tiền tố kênh (zl_/pzl_/ttm_/fb_) rồi so phần lõi.
-function stripChannelPrefix(id) {
+export function stripChannelPrefix(id) {
   return String(id || '').replace(/^(zl_|pzl_|ttm_|fb_|tt_)/i, '');
 }
 function findPageConfig(pageId) {
@@ -384,11 +384,13 @@ export async function getLastCustomerMessage(pageId, conversationId) {
   const res = await axios.get(url, { params: { page_access_token: token }, timeout: 20000, validateStatus: () => true });
   const msgs = res?.data?.messages;
   if (!Array.isArray(msgs) || msgs.length === 0) return null;
-  // messages xếp CŨ→MỚI; tìm tin gần nhất KHÔNG phải do page gửi (from.id !== pageId).
+  // messages xếp CŨ→MỚI; tìm tin gần nhất KHÔNG phải do page gửi.
+  // So theo phần lõi (bỏ tiền tố zl_/ttm_...): Zalo lúc trả "zl_3136..." lúc "3136..." tùy endpoint —
+  // so khít sẽ tưởng tin của chính OA là tin khách → bot tự trả lời chính mình.
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
     const from = m.from || {};
-    const isPage = String(from.id) === String(pageId);
+    const isPage = stripChannelPrefix(from.id) === stripChannelPrefix(pageId);
     if (isPage) continue;
     const text = stripHtmlBasic(m.message || m.original_message || '');
     if (!text) continue;
