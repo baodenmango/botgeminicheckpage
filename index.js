@@ -305,6 +305,11 @@ function parsePancakeWebhook(body) {
 }
 
 // --- Webhook nhận tin từ Pancake ---
+// GET cho nút "Kích hoạt"/verify của Pancake: nó gọi kiểm tra endpoint trước khi bật webhook,
+// dính 404 là từ chối bật (webhook page 1 từng bị tắt vì "tỉ lệ lỗi >80%" mà không bật lại được).
+// Cùng bài với GET /zalo/webhook cho validator Zalo Console.
+app.get('/webhook', (_req, res) => res.status(200).json({ ok: true }));
+
 app.post('/webhook', (req, res) => {
   // Trả 200 NGAY để Pancake không retry; xử lý bất đồng bộ sau.
   res.status(200).json({ received: true });
