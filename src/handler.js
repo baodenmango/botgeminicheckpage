@@ -100,11 +100,20 @@ const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
   'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec' +
   '|mo ta cang chi tiet cang tot|de lai sdt giup bac trinh|da de lai binh luan|[botcake]'
 ).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
+// DANH THIẾP OA: Zalo tự bắn tin CHỈ GỒM TÊN OA (+ emoji) mỗi khi khách mở chat — vd
+// "Phòng khám Cơ Xương Khớp Hiệp Lợi 🦴" (ca Minh Trang 06/07: bot tưởng telesale → câm 6h).
+// Khớp CHÍNH XÁC cả câu sau khi bỏ emoji/dấu — KHÔNG dùng includes vì telesale thật cũng
+// hay nhắc tên phòng khám giữa câu tư vấn. Chỉnh qua env AUTO_REPLY_EXACT (phân tách |).
+const AUTO_REPLY_EXACT = (process.env.AUTO_REPLY_EXACT ||
+  'phong kham co xuong khop hiep loi|phong kham hiep loi'
+).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
 function isAutoReplyMessage(text) {
   const n = String(text || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
     .toLowerCase();
-  return AUTO_REPLY_MARKERS.some((m) => n.includes(m));
+  if (AUTO_REPLY_MARKERS.some((m) => n.includes(m))) return true;
+  const bare = n.replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  return AUTO_REPLY_EXACT.includes(bare);
 }
 
 // Số giờ telesale "giữ" hội thoại sau khi gõ tay (quá thì bot tiếp quản lại).

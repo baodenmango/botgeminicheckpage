@@ -11,11 +11,9 @@
 // ============================================================
 import axios from 'axios';
 import { config } from './config.js';
-import { isPageEnabled, getLastCustomerMessage, getPageToken, stripChannelPrefix } from './pancake.js';
+import { isPageEnabled, getLastCustomerMessage, getPageToken, getUserToken, stripChannelPrefix } from './pancake.js';
 import { handleIncoming } from './handler.js';
 import * as store from './store.js';
-
-const PANCAKE_TOKEN = process.env.PANCAKE_API_TOKEN || null;
 const API_BASE = process.env.PANCAKE_API_BASE_V1 || 'https://pages.fm/api/v1';
 // Đường CHÍNH: quét list bằng token TỪNG PAGE (public_api, luôn có sẵn vì bot cần nó để nhận/gửi).
 // PANCAKE_API_TOKEN (user token) chỉ còn là DỰ PHÒNG — trước đây bắt buộc, thiếu là engine câm lặng.
@@ -58,9 +56,10 @@ async function getConvs(pageId) {
       if (Array.isArray(list)) return list;
       console.warn(`[rescue] page ${pageId} list qua page-token không trả mảng → thử user token`);
     }
-    if (PANCAKE_TOKEN) {
+    const userToken = getUserToken(); // env HOẶC kv (nạp qua /admin/set-token) — đọc lúc chạy
+    if (userToken) {
       const { data } = await axios.get(`${API_BASE}/pages/${pageId}/conversations`, {
-        params: { access_token: PANCAKE_TOKEN, page_number: 1 },
+        params: { access_token: userToken, page_number: 1 },
         timeout: 20000,
       });
       return Array.isArray(data?.conversations) ? data.conversations : [];
@@ -125,8 +124,9 @@ export async function runRescueLead() {
       }
 
       // đọc ĐÚNG tin cuối của khách rồi đẩy vào handleIncoming như webhook thật
+      // (kèm customer_id từ list — API v1 fallback bắt buộc có khi token trang chết)
       let last;
-      try { last = await getLastCustomerMessage(pageId, convId); }
+      try { last = await getLastCustomerMessage(pageId, convId, c.customers?.[0]?.id || c.customer_id || null); }
       catch { last = null; }
       if (!last || !last.messageText) continue;             // tin cuối thực ra là của page → bỏ
 

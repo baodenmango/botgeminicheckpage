@@ -196,7 +196,8 @@ export async function sendFileByUrl(userId, fileUrl, fileName = 'Cam-nang-cham-s
  */
 export async function getUserInfo(userId) {
   if (!isOpenApiEnabled()) return null;
-  const body = await oaCall('get', 'getprofile', {
+  // v3.0 KHÔNG có /oa/getprofile (404 "invalid API") → endpoint đúng là /oa/user/detail
+  const body = await oaCall('get', 'user/detail', {
     params: { data: JSON.stringify({ user_id: String(userId) }) },
   });
   const d = body?.data;

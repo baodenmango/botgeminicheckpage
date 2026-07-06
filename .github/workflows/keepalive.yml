@@ -1,0 +1,22 @@
+# Giữ 2 bot Render luôn thức TỪ CLOUD — không phụ thuộc MacBook mở hay đóng.
+# (Trước 06/07: keepalive là launchd trên máy anh Trình → Mac ngủ/mất mạng là hết ping,
+#  Render free ngủ → webhook Pancake rớt → Pancake tự tắt webhook vì lỗi >80%.)
+# GitHub Actions cron chạy ~5 phút/lần (có thể trễ vài phút lúc GitHub đông — vẫn dưới
+# ngưỡng ngủ 15 phút của Render free).
+name: keepalive
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping cả 2 bot
+        run: |
+          G=$(curl -s -o /dev/null -w '%{http_code}' -m 60 https://botgeminicheckpage.onrender.com/health || echo 000)
+          N=$(curl -s -o /dev/null -w '%{http_code}' -m 60 https://bot-nut-bam.onrender.com/health || echo 000)
+          echo "gemini=$G nutbam=$N"
+          # Bot chính chết → fail workflow cho dễ thấy badge đỏ (không retry, cron 5' sau tự ping lại)
+          [ "$G" = "200" ]

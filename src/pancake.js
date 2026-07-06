@@ -9,8 +9,10 @@
 import axios from 'axios';
 import { config } from './config.js';
 import { isOpenApiEnabled, sendText as zaloSendText } from './zalo.js';
+import * as store from './store.js';
 
 const API_BASE = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_api/v1';
+const API_BASE_V1 = process.env.PANCAKE_API_BASE_V1 || 'https://pages.fm/api/v1';
 
 // Trích zalo user_id từ conversation_id Pancake-Zalo dạng "zl_<pageId>_<psid>" → psid = user_id.
 // Page token Pancake Zalo hay bị xoay vòng (error 105) → kênh Zalo ưu tiên gửi qua Zalo OpenAPI
@@ -71,8 +73,19 @@ function findPageConfig(pageId) {
 }
 
 // Lấy token của 1 trang theo page_id; null nếu trang không được cấu hình.
+// Token trang Zalo bị Pancake XOAY VÒNG (error 105) → env trên Render cũ đi mà không ai hay
+// (chính ca Minh Trang 06/07: bot mù kênh Zalo cả buổi). Cho phép nạp token MỚI lúc chạy qua
+// /admin/set-token → lưu kv 'pancake_token:<pageId>' (sống qua restart), ưu tiên hơn env.
 export function getPageToken(pageId) {
+  const fromKv = store.getKV(`pancake_token:${canonicalPageId(pageId)}`);
+  if (fromKv) return fromKv;
   return findPageConfig(pageId)?.token || null;
+}
+
+// USER token Pancake (API v1) — fallback đọc list/messages khi token trang chết.
+// Không bị xoay vòng như token trang Zalo. Nạp qua env PANCAKE_API_TOKEN hoặc /admin/set-token.
+export function getUserToken() {
+  return store.getKV('pancake_user_token') || process.env.PANCAKE_API_TOKEN || null;
 }
 
 export function getPageChannel(pageId) {
@@ -377,16 +390,50 @@ export async function sendPrivateReply(pageId, conversationId, commentId, messag
  * Dùng cho endpoint /admin/poke — ép bot trả lời ca đã bị bỏ lửng mà khách chưa nhắn mới.
  * Trả về { messageText, customerName } hoặc null nếu không đọc được / tin cuối là của page.
  */
-export async function getLastCustomerMessage(pageId, conversationId) {
+export async function getLastCustomerMessage(pageId, conversationId, customerId = null) {
+  // Đường 1: public_api + token TRANG (như cũ).
   const token = getPageToken(pageId);
-  if (!token) return null;
-  const url = `${API_BASE}/pages/${pageId}/conversations/${conversationId}/messages`;
-  const res = await axios.get(url, { params: { page_access_token: token }, timeout: 20000, validateStatus: () => true });
+  if (token) {
+    try {
+      const url = `${API_BASE}/pages/${canonicalPageId(pageId)}/conversations/${conversationId}/messages`;
+      const res = await axios.get(url, { params: { page_access_token: token }, timeout: 20000, validateStatus: () => true });
+      const msgs = res?.data?.messages;
+      if (Array.isArray(msgs) && msgs.length > 0) return pickLastCustomerMsg(msgs, pageId);
+      console.warn(`[pancake] đọc messages bằng token trang RỖNG (page ${pageId}, http ${res?.status}) → thử user token v1 (token trang Zalo hay bị xoay vòng)`);
+    } catch (err) {
+      console.warn(`[pancake] đọc messages bằng token trang LỖI (page ${pageId}): ${err?.message} → thử user token v1`);
+    }
+  }
+  // Đường 2 (fallback): API v1 + USER token — cứu kênh Zalo khi token trang chết.
+  // v1 messages BẮT BUỘC customer_id; rescue/list có sẵn (customers[0].id), thiếu thì tra list v1.
+  const userToken = getUserToken();
+  if (!userToken) return null;
+  const pid = canonicalPageId(pageId);
+  let cid = customerId;
+  if (!cid) {
+    for (let page = 1; page <= 2 && !cid; page++) {
+      const res = await axios.get(`${API_BASE_V1}/pages/${pid}/conversations`, {
+        params: { access_token: userToken, page_number: page }, timeout: 20000, validateStatus: () => true,
+      });
+      const list = res?.data?.conversations;
+      if (!Array.isArray(list) || list.length === 0) break;
+      const hit = list.find((c) => String(c.id) === String(conversationId));
+      if (hit) cid = hit.customers?.[0]?.id || hit.customer_id || null;
+    }
+    if (!cid) return null;
+  }
+  const res = await axios.get(`${API_BASE_V1}/pages/${pid}/conversations/${conversationId}/messages`, {
+    params: { access_token: userToken, customer_id: cid }, timeout: 20000, validateStatus: () => true,
+  });
   const msgs = res?.data?.messages;
   if (!Array.isArray(msgs) || msgs.length === 0) return null;
-  // messages xếp CŨ→MỚI; tìm tin gần nhất KHÔNG phải do page gửi.
-  // So theo phần lõi (bỏ tiền tố zl_/ttm_...): Zalo lúc trả "zl_3136..." lúc "3136..." tùy endpoint —
-  // so khít sẽ tưởng tin của chính OA là tin khách → bot tự trả lời chính mình.
+  return pickLastCustomerMsg(msgs, pageId);
+}
+
+// messages xếp CŨ→MỚI; tìm tin gần nhất KHÔNG phải do page gửi.
+// So theo phần lõi (bỏ tiền tố zl_/ttm_...): Zalo lúc trả "zl_3136..." lúc "3136..." tùy endpoint —
+// so khít sẽ tưởng tin của chính OA là tin khách → bot tự trả lời chính mình.
+function pickLastCustomerMsg(msgs, pageId) {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
     const from = m.from || {};

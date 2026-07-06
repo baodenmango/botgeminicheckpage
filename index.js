@@ -106,6 +106,31 @@ app.get('/admin/rescue-now', async (req, res) => {
   }
 });
 
+// --- Admin: NẠP TOKEN PANCAKE lúc chạy (không cần sửa env Render + redeploy) ---
+// Token trang Zalo bị Pancake xoay vòng (error 105) → chết lặng lẽ, bot mù kênh Zalo (06/07).
+// POST /admin/set-token?token=XXX  body: { page_id: 'zl_31368...', value: '<token trang mới>' }
+//                                  body: { user: true, value: '<user token API v1>' }
+// Lưu vào kv (sống qua restart); getPageToken/getUserToken ưu tiên kv hơn env.
+app.post('/admin/set-token', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const { page_id, user, value } = req.body || {};
+  if (!value) return res.status(400).json({ ok: false, error: 'thiếu value' });
+  if (user) {
+    store.setKV('pancake_user_token', value);
+    console.log('[admin] 🔑 nạp pancake_user_token mới (API v1 fallback)');
+    return res.status(200).json({ ok: true, set: 'user' });
+  }
+  if (page_id) {
+    store.setKV(`pancake_token:${page_id}`, value);
+    console.log(`[admin] 🔑 nạp token trang mới cho ${page_id}`);
+    return res.status(200).json({ ok: true, set: String(page_id) });
+  }
+  res.status(400).json({ ok: false, error: 'thiếu page_id hoặc user' });
+});
+
 // --- Admin: NẠP 1 ca ra bill vào hàng đợi chăm sóc Zalo (bước 5) ---
 // POST /admin/bill-ingest?token=XXX  body JSON: { phone, name, zalo_user_id, page_id,
 //   conversation_id, condition, has_medicine, has_injection, bill_date, treatment }
