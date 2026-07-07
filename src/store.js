@@ -206,6 +206,16 @@ export function markCommentHandledOnce(commentId, pageId) {
 
 const stmtGet = db.prepare('SELECT * FROM conversations WHERE conversation_id = ?');
 
+// Demo/giám sát MA TRẬN CHĂM SÓC: toàn bộ ca bill_care + trạng thái chạm (đọc-chỉ).
+export function listBillCare(limit = 100) {
+  return db.prepare(`
+    SELECT id, phone, name, condition, has_medicine, has_injection, bill_date,
+           group_no, treatment, next_session_at, bill_cham_done, group_cham_done,
+           rebooked, opt_out, conversation_id, zalo_user_id
+    FROM bill_care ORDER BY bill_date DESC LIMIT ?
+  `).all(Math.min(limit, 500));
+}
+
 // B7: số liệu tuần cho báo cáo Zalo (hội thoại Zalo mới 7 ngày + tổng ca trong chuỗi chăm).
 export function thongKeTuanZalo() {
   const tuanTruoc = Math.floor(Date.now() / 1000) - 7 * 86400;

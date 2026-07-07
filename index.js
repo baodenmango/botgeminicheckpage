@@ -143,6 +143,42 @@ app.get('/admin/tag-benh-backfill', async (req, res) => {
   }
 });
 
+// --- Admin: XEM MA TRẬN CHĂM SÓC (demo + giám sát) ---
+// GET /admin/ma-tran?token=XXX → danh sách ca trong chuỗi chăm: bệnh, ngày bill,
+// mốc kế tiếp của chuỗi D-BIS, chạm đã gửi, có kênh Zalo để gửi hay không.
+app.get('/admin/ma-tran', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const MOC = [0, 1, 3, 6, 7]; // mốc ngày chuỗi ca-ra-bill
+  const now = Math.floor(Date.now() / 1000);
+  const rows = store.listBillCare(parseInt(req.query.limit || '100', 10));
+  const ds = rows.map((r) => {
+    const daGui = JSON.parse(r.bill_cham_done || '[]');
+    const tuoiNgay = Math.floor((now - r.bill_date) / 86400);
+    const mocKe = r.rebooked ? 'DỪNG (đã đặt lịch)' : r.opt_out ? 'DỪNG (opt-out)'
+      : (() => {
+          const m = MOC.find((d) => d >= tuoiNgay && !daGui.includes('d' + d));
+          return m !== undefined ? `d${m} (ngày ${m})` : 'hết mốc bill';
+        })();
+    return {
+      ten: r.name || '(chưa rõ tên)',
+      sdt: r.phone,
+      benh: r.condition || 'unknown',
+      thuoc: !!r.has_medicine, tiem: !!r.has_injection,
+      ngay_bill: new Date(r.bill_date * 1000 + 7 * 3600e3).toISOString().slice(0, 10),
+      tuoi_ngay: tuoiNgay,
+      cham_da_gui: daGui,
+      cham_tai_bill_da_gui: JSON.parse(r.group_cham_done || '[]'),
+      moc_ke_tiep: mocKe,
+      co_kenh_zalo: Boolean(r.conversation_id || r.zalo_user_id),
+      nhom_tai_bill: r.group_no || null,
+    };
+  });
+  res.status(200).json({ ok: true, tong: ds.length, co_kenh: ds.filter((x) => x.co_kenh_zalo).length, ds });
+});
+
 // --- Admin: KÍCH 1 lượt quét POS ngay (B6) — test sau deploy / nạp gấp ---
 app.get('/admin/pos-ingest-now', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
