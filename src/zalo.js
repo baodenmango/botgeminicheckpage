@@ -18,6 +18,7 @@ import * as store from './store.js';
 import { CONDITION_VI } from './conditions.js';
 
 const OA_API = 'https://openapi.zalo.me/v3.0/oa';
+const OA_API_V2 = 'https://openapi.zalo.me/v2.0/oa'; // vài API chỉ có ở v2 (tag, conversation)
 const OAUTH_API = 'https://oauth.zaloapp.com/v4/oa/access_token';
 
 // Bật/tắt đường OpenAPI (gửi file/ảnh, getUserInfo, follow). Mặc định TẮT — dùng Pancake.
@@ -88,12 +89,13 @@ export async function refreshAccessToken() {
 }
 
 // Gọi 1 endpoint OA, tự refresh + retry 1 lần nếu token hết hạn (Zalo error -216/-124).
-async function oaCall(method, pathName, { params, data } = {}) {
+// opts.v2 = true → gọi bên v2.0 (tag API nằm ở v2, gọi v3 dính 404 "invalid API" — test 07/07).
+async function oaCall(method, pathName, { params, data, v2 } = {}) {
   if (!accessToken) {
     console.warn('[zalo] chưa có ZALO_ACCESS_TOKEN → bỏ gọi OpenAPI');
     return null;
   }
-  const url = `${OA_API}/${pathName}`;
+  const url = `${v2 ? OA_API_V2 : OA_API}/${pathName}`;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const res = await axios({
@@ -229,12 +231,22 @@ export async function demFollower() {
 }
 
 // --- GẮN TAG BỆNH cho follower (B4 — broadcast theo tag bệnh) ---
-// Tag = tên bệnh ngắn đọc được (phần trước dấu '/' trong CONDITION_VI, vd "Khớp gối", "Gút").
+// ⚠️ Zalo giới hạn tag_name ≤ 15 KÝ TỰ (test 07/07: error -201 nếu dài hơn; tính theo ký tự,
+// không phải byte) → bảng tên tag NGẮN riêng, không lấy nguyên văn CONDITION_VI.
 // Nhân viên thấy tag ngay trong OA chat; broadcast tin truyền thông lọc theo tag này.
+const TAG_BENH = {
+  goi: 'Khớp gối',        vai: 'Khớp vai',        gut: 'Gút',
+  lung: 'Đau lưng',       tvdd: 'Thoát vị ĐĐ',    covaigay: 'Cổ vai gáy',
+  ngontay: 'Ngón tay lò xo', chopxoay: 'Chóp xoay vai', cochan: 'Cổ chân',
+  hang: 'Khớp háng',      chomdui: 'Chỏm xương đùi', csc: 'Cột sống cổ',
+  loangxuong: 'Loãng xương', dequervain: 'De Quervain',  ongcotay: 'Ống cổ tay',
+  tenniselbow: 'Khuỷu tennis', gangotchan: 'Gai gót chân',
+};
 export function tagTheoBenh(condition) {
+  if (TAG_BENH[condition]) return TAG_BENH[condition];
   const vi = CONDITION_VI[condition];
   if (!vi) return null;
-  return vi.split('/')[0].trim();
+  return vi.split('/')[0].trim().slice(0, 15); // fallback cho mã bệnh mới chưa vào bảng
 }
 
 /**
@@ -252,6 +264,7 @@ export async function tagFollowerBenh(userId, condition) {
     if (store.getKV(key)) return true; // đã gắn rồi
     const body = await oaCall('post', 'tag/tagfollower', {
       data: { user_id: uid, tag_name: tag },
+      v2: true, // tag API chỉ có ở v2.0 — v3.0 trả 404 (test 07/07)
     });
     if (body?.error === 0) {
       store.setKV(key, '1');

@@ -20,12 +20,14 @@ const POS_BASE = process.env.POS_API_BASE || 'https://pos.pancake.vn/api/v1';
 const ENABLED = !/^(0|false|no|off)$/i.test(process.env.POS_INGEST_ENABLED || '1');
 
 const HUY = new Set(['7', '8', '9']);  // hủy/xóa → đánh dấu seen luôn (khỏi soi lại)
-const CHO = '0';                       // chỉ để số → CHƯA seen (mai có thể thành đã khám)
 
-// Mục DỊCH VỤ khám/chẩn đoán hình ảnh — KHÔNG tính là thuốc.
-const RE_DICHVU = /kh[áa]m|x[- ]?quang|si[êe]u [âa]m|\bmri\b|đo lo[ãa]ng|ch[ụu]p|phim/i;
-// Mục TIÊM/thủ thuật nội khớp.
-const RE_TIEM = /ti[êe]m|\bprp\b|biogen|t[ếe] b[àa]o g[ốo]c|\btbg\b|huy[ếe]t t[ưu][ơo]ng|hyalgan|corticoid|n[ộo]i kh[ớo]p|ch[ọo]c h[úu]t/i;
+// ⚠️ THỰC TẾ POS PHÒNG KHÁM (soi 07/07): 29/29 đơn hoàn thành đều bill dưới ĐÚNG 1 mục
+// chung "KHÁM + DỊCH VỤ" — quầy KHÔNG tách thuốc/tiêm trong POS → lọc theo tên mục hàng
+// là mù vĩnh viễn. Luật mới: POS cho SỰ KIỆN (status 11 = đã thu tiền → "ca ra bill"),
+// MEDi cho NỘI DUNG (treatment prp_khop/sinh_hoc → cờ tiêm). Cờ thuốc mặc định BẬT cho
+// đơn đã thu tiền (phòng khám tư thu tiền điều trị hầu như luôn kèm toa) — tắt bằng
+// POS_DEFAULT_HAS_MEDICINE=0 nếu sau này quầy tách mục thuốc riêng trong POS.
+const DEFAULT_HAS_MEDICINE = !/^(0|false|no|off)$/i.test(process.env.POS_DEFAULT_HAS_MEDICINE || '1');
 
 // SĐT về 10 số (bỏ +84/84 → 0) — cùng chuẩn pos.js/medi.js.
 function normPhone(p) {
@@ -33,14 +35,6 @@ function normPhone(p) {
   if (s.startsWith('84') && s.length >= 11) s = '0' + s.slice(2);
   if (!s.startsWith('0') && s.length === 9) s = '0' + s;
   return s.length === 10 ? s : null;
-}
-
-// Gom tên các mục trong đơn (nhiều dạng field tuỳ phiên bản POS).
-function tenCacMuc(order) {
-  const items = Array.isArray(order?.items) ? order.items : [];
-  return items
-    .map((it) => it?.variation_info?.name || it?.product_name || it?.name || '')
-    .filter(Boolean);
 }
 
 /** Quét 1 lượt đơn POS → nạp ca đủ điều kiện. Trả về số ca đã nạp. */
@@ -62,26 +56,21 @@ export async function runPosIngest() {
   for (const o of orders) {
     try {
       const oid = String(o?.id ?? '');
-      if (!oid || store.getKV(`posingest_seen:${oid}`)) continue;
+      // namespace "seen2": lượt đầu (bộ lọc tên mục hàng cũ) đã đánh dấu nhầm loạt đơn
+      // thật là "khám suông" → đổi khoá để xử lại sạch từ đầu.
+      if (!oid || store.getKV(`posingest_seen2:${oid}`)) continue;
       const status = String(o?.status);
-      if (status === CHO) continue;                       // chưa khám — soi lại lượt sau
-      if (HUY.has(status)) { store.setKV(`posingest_seen:${oid}`, '1'); continue; }
-
-      const muc = tenCacMuc(o);
-      const hasInjection = muc.some((m) => RE_TIEM.test(m));
-      const hasMedicine = muc.some((m) => !RE_DICHVU.test(m) && !RE_TIEM.test(m));
-      if (!hasInjection && !hasMedicine) {                // khám suông → không vào chuỗi bill
-        store.setKV(`posingest_seen:${oid}`, '1');
-        continue;
-      }
+      if (HUY.has(status)) { store.setKV(`posingest_seen2:${oid}`, '1'); continue; }
+      if (status !== '11') continue;                      // chỉ nạp ĐƠN ĐÃ THU TIỀN (ra bill);
+                                                          // 0/6/16 chờ tiến triển, soi lại lượt sau
       const phone = normPhone(o?.bill_phone_number);
-      if (!phone) { store.setKV(`posingest_seen:${oid}`, '1'); continue; }
+      if (!phone) { store.setKV(`posingest_seen2:${oid}`, '1'); continue; }
 
       const payload = {
         phone,
         name: o?.bill_full_name || null,
-        has_medicine: hasMedicine,
-        has_injection: hasInjection,
+        has_medicine: DEFAULT_HAS_MEDICINE,
+        has_injection: false, // MEDi quyết bên dưới (treatment prp_khop/sinh_hoc)
         bill_date: Math.floor((Date.parse(o?.inserted_at || o?.updated_at || '') || Date.now()) / 1000),
         condition: null,
         treatment: null,
@@ -108,7 +97,7 @@ export async function runPosIngest() {
       }
 
       if (ingestBill(payload)) {
-        store.setKV(`posingest_seen:${oid}`, '1');
+        store.setKV(`posingest_seen2:${oid}`, '1');
         daNap++;
       }
     } catch (e) {
