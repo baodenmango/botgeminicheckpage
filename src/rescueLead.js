@@ -42,34 +42,46 @@ function minutesSince(ts) {
   return (Date.now() - t) / 60000;
 }
 
+// GỘP 2 NGUỒN, không phải fallback: list public_api (token trang) HAY THIẾU hội thoại —
+// ca anh Cầu 05–07/07: khách "Hi" nằm trong cửa sổ 72h, v1 thấy mà public_api since/until
+// không trả → token trang sống nên không bao giờ rơi xuống v1 → rescue mù ca đó 2 ngày.
+// v1 ghi đè public_api khi trùng id (v1 có last_customer_interactive_at chính xác hơn).
 async function getConvs(pageId) {
+  const out = new Map(); // id -> conv
   const pageToken = getPageToken(pageId);
-  const until = Math.floor(Date.now() / 1000);
-  const since = until - Math.floor(WINDOW_HOURS * 3600); // list endpoint CẦN since/until, thiếu là trả rỗng
-  try {
-    if (pageToken) {
+  if (pageToken) {
+    try {
+      const until = Math.floor(Date.now() / 1000);
+      const since = until - Math.floor(WINDOW_HOURS * 3600); // list public_api CẦN since/until, thiếu là trả rỗng
       const { data } = await axios.get(`${API_BASE_PUBLIC}/pages/${pageId}/conversations`, {
         params: { page_access_token: pageToken, since, until, page_number: 1 },
         timeout: 20000,
       });
       const list = data?.conversations || data?.data;
-      if (Array.isArray(list)) return list;
-      console.warn(`[rescue] page ${pageId} list qua page-token không trả mảng → thử user token`);
+      if (Array.isArray(list)) { for (const c of list) { if (c?.id) out.set(String(c.id), c); } }
+      else console.warn(`[rescue] page ${pageId} list qua page-token không trả mảng`);
+    } catch (err) {
+      console.error(`[rescue] đọc public_api page ${pageId} lỗi:`, err?.response?.status || err.message);
     }
-    const userToken = getUserToken(); // env HOẶC kv (nạp qua /admin/set-token) — đọc lúc chạy
-    if (userToken) {
+  }
+  const userToken = getUserToken(); // env HOẶC kv (nạp qua /admin/set-token) — đọc lúc chạy
+  if (userToken) {
+    try {
       const { data } = await axios.get(`${API_BASE}/pages/${pageId}/conversations`, {
         params: { access_token: userToken, page_number: 1 },
         timeout: 20000,
       });
-      return Array.isArray(data?.conversations) ? data.conversations : [];
+      if (Array.isArray(data?.conversations)) {
+        for (const c of data.conversations) { if (c?.id) out.set(String(c.id), c); }
+      }
+    } catch (err) {
+      console.error(`[rescue] đọc v1 page ${pageId} lỗi:`, err?.response?.status || err.message);
     }
-    console.warn(`[rescue] page ${pageId} không có token nào đọc được list → bỏ page này`);
-    return [];
-  } catch (err) {
-    console.error(`[rescue] đọc Pancake page ${pageId} lỗi:`, err?.response?.status || err.message);
-    return [];
   }
+  if (out.size === 0 && !pageToken && !userToken) {
+    console.warn(`[rescue] page ${pageId} không có token nào đọc được list → bỏ page này`);
+  }
+  return [...out.values()];
 }
 
 // Người gửi CUỐI có phải KHÁCH không (không phải page/bot). true = khách nhắn cuối → cần vớt.
