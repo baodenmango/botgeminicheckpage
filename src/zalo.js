@@ -38,7 +38,12 @@ let accessToken = store.getKV('zalo_access_token') || process.env.ZALO_ACCESS_TO
 let refreshToken = store.getKV('zalo_refresh_token') || process.env.ZALO_REFRESH_TOKEN || null;
 let lastRefreshAt = 0;
 
-async function refreshAccessToken() {
+// Token hiện hành cho module khác (zns.js gọi business.openapi.zalo.me cần header này).
+export function getAccessTokenNow() {
+  return accessToken;
+}
+
+export async function refreshAccessToken() {
   // chống refresh dồn dập (nhiều lượt 401 cùng lúc) — tối đa 1 lần / 60s
   if (Date.now() - lastRefreshAt < 60000) return accessToken;
   const appId = process.env.ZALO_APP_ID;
@@ -212,6 +217,15 @@ export async function getUserInfo(userId) {
 // Chuẩn hóa zalo user_id: Pancake lưu fb_id dạng "zl_<uid>" → bỏ tiền tố khi gọi OpenAPI.
 export function stripZaloPrefix(rawId) {
   return String(rawId || '').replace(/^zl_/i, '');
+}
+
+// Đếm tổng follower OA (B7 báo cáo tuần). Trả null nếu OpenAPI tắt/lỗi.
+export async function demFollower() {
+  if (!isOpenApiEnabled()) return null;
+  const body = await oaCall('get', 'user/getlist', {
+    params: { data: JSON.stringify({ offset: 0, count: 1, is_follower: true }) },
+  });
+  return body?.data?.total ?? null;
 }
 
 // --- GẮN TAG BỆNH cho follower (B4 — broadcast theo tag bệnh) ---

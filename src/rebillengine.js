@@ -6,6 +6,13 @@
 import * as store from './store.js';
 import { REBILL_TOUCHES, buildRebillMessages } from './rebilltouches.js';
 import { sendCareMessages } from './care-send.js';
+import { sendZnsNhacLich, isZnsEnabled } from './zns.js';
+
+// Epoch giây → dd/MM/yyyy theo giờ VN (tham số ngay_hen của template ZNS).
+function ngayVN(epochSec) {
+  const d = new Date(epochSec * 1000 + 7 * 3600 * 1000);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+}
 
 const DAY = 86400;
 const GRACE_DAYS = parseFloat(process.env.REBILL_GRACE_DAYS || '1.5');
@@ -53,7 +60,22 @@ export async function runGroupTouches() {
         sent++;
         console.log(`[rebill] ✅ gửi chạm ${code} (nhóm ${rec.group_no}) cho ca ${rec.id}`);
       } else {
-        console.warn(`[rebill] gửi hụt chạm ${code} ca ${rec.id} → giữ lại thử lần sau`);
+        // B5: nhắc lịch liệu trình (g2_pre*) mà khách KHÔNG có kênh OA → bắn ZNS theo SĐT
+        // (không cần follow). Chỉ khi đã cấu hình template duyệt (ZNS_ENABLED + template id).
+        let znsOk = false;
+        if (/^g2_pre/.test(code) && rec.phone && rec.next_session_at && isZnsEnabled()) {
+          znsOk = await sendZnsNhacLich(rec.phone, {
+            ten: rec.name,
+            ngay_hen: ngayVN(rec.next_session_at),
+          });
+        }
+        if (znsOk) {
+          store.markGroupChamDone(rec.id, code);
+          sent++;
+          console.log(`[rebill] ✅ ZNS nhắc lịch ${code} (không có kênh OA) cho ca ${rec.id}`);
+        } else {
+          console.warn(`[rebill] gửi hụt chạm ${code} ca ${rec.id} → giữ lại thử lần sau`);
+        }
       }
     } catch (err) {
       console.error(`[rebill] lỗi gửi chạm ${code} ca ${rec.id}:`, err?.message || err);

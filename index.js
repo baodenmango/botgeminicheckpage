@@ -14,6 +14,9 @@ import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow } from './src/follow.js';
 import { tagFollowerBenh } from './src/zalo.js';
+import { runPosIngest } from './src/posingest.js';
+import { baoCaoTuanZalo } from './src/baocao.js';
+import { sendZnsNhacLich, isZnsEnabled } from './src/zns.js';
 import { lookupMedi, mapDiagnosis } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -138,6 +141,49 @@ app.get('/admin/tag-benh-backfill', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// --- Admin: KÍCH 1 lượt quét POS ngay (B6) — test sau deploy / nạp gấp ---
+app.get('/admin/pos-ingest-now', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const n = await runPosIngest();
+    res.status(200).json({ ok: true, da_nap: n });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: BẮN BÁO CÁO TUẦN NGAY (B7) — xem thử format/kiểm số liệu ---
+app.get('/admin/bao-cao-tuan-now', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const text = await baoCaoTuanZalo();
+    res.status(200).json({ ok: true, text });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: TEST ZNS nhắc lịch (B5) — chạy SAU khi template được Zalo duyệt ---
+// POST /admin/zns-test?token=XXX  body: { phone, ten, ngay_hen }  (ngay_hen dd/MM/yyyy)
+app.post('/admin/zns-test', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  if (!isZnsEnabled()) {
+    return res.status(400).json({ ok: false, error: 'ZNS chưa bật (cần ZNS_ENABLED=1 + ZNS_TEMPLATE_NHACLICH sau khi template được duyệt)' });
+  }
+  const { phone, ten, ngay_hen } = req.body || {};
+  const ok = await sendZnsNhacLich(phone, { ten, ngay_hen });
+  res.status(ok ? 200 : 500).json({ ok });
 });
 
 // --- Admin: NẠP TOKEN PANCAKE lúc chạy (không cần sửa env Render + redeploy) ---
@@ -463,6 +509,25 @@ cron.schedule('10 * * * *', async () => {
     console.error('[cron-care] lỗi engine chăm sóc bill/tái bill:', err?.message || err);
   }
 });
+
+// --- Cron TỰ NẠP CA RA BILL TỪ POS (B6) — mỗi 30 phút, phút 25/55 (lệch các cron khác) ---
+// Quét đơn Pancake POS đã khám + có thuốc/tiêm → enrich MEDi → nạp chuỗi chạm D-BIS.
+cron.schedule('25,55 * * * *', async () => {
+  try {
+    await runPosIngest();
+  } catch (err) {
+    console.error('[cron-pos] lỗi tự nạp ca từ POS:', err?.message || err);
+  }
+});
+
+// --- Cron BÁO CÁO TUẦN ZALO (B7) — thứ 2 08:00 giờ VN về Telegram ---
+cron.schedule('0 8 * * 1', async () => {
+  try {
+    await baoCaoTuanZalo();
+  } catch (err) {
+    console.error('[cron-baocao] lỗi báo cáo tuần Zalo:', err?.message || err);
+  }
+}, { timezone: 'Asia/Ho_Chi_Minh' });
 
 // --- Cron ĐÁNH THỨC BN NGỦ (tệp MEDi cũ) — 1 lần/ngày lúc 02:15 UTC = 09:15 giờ VN ---
 cron.schedule('15 2 * * *', async () => {

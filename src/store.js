@@ -206,6 +206,16 @@ export function markCommentHandledOnce(commentId, pageId) {
 
 const stmtGet = db.prepare('SELECT * FROM conversations WHERE conversation_id = ?');
 
+// B7: số liệu tuần cho báo cáo Zalo (hội thoại Zalo mới 7 ngày + tổng ca trong chuỗi chăm).
+export function thongKeTuanZalo() {
+  const tuanTruoc = Math.floor(Date.now() / 1000) - 7 * 86400;
+  const convMoi = db.prepare(
+    "SELECT COUNT(*) AS n FROM conversations WHERE channel = 'zalo' AND created_at > ?"
+  ).get(tuanTruoc).n;
+  const caCham = db.prepare('SELECT COUNT(*) AS n FROM bill_care').get().n;
+  return { convMoi, caCham };
+}
+
 // B4: các cặp (zalo_user_id, bệnh) đã biết — để backfill gắn tag follower 1 lần sau deploy.
 export function listZaloCondUsers() {
   return db.prepare(`
