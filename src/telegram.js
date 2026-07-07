@@ -59,6 +59,11 @@ function escapeHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Gửi 1 tin văn bản tự do (module khác dùng: cảnh báo quota Zalo, báo cáo tuần...).
+export async function notifyText(text) {
+  await send(text);
+}
+
 export async function notifyLead({ name, phone, condition, summary, customerType, pageId, conversationId }) {
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
   const kieu = CUSTOMER_TYPE_VI[customerType] || '';

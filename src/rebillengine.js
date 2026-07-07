@@ -46,7 +46,8 @@ export async function runGroupTouches() {
     try {
       const messages = buildRebillMessages(code, rec);
       if (!messages) { store.markGroupChamDone(rec.id, code); continue; }
-      const ok = await sendCareMessages(rec, messages);
+      const touchDef = REBILL_TOUCHES.find((x) => x.code === code);
+      const ok = await sendCareMessages(rec, messages, { priority: touchDef?.priority, code });
       if (ok) {
         store.markGroupChamDone(rec.id, code);
         sent++;

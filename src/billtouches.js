@@ -98,12 +98,14 @@ function tenGoi(fullName) {
 }
 
 // --- Bảng định nghĩa 5 chạm. `day` = mốc ngày kể từ ngày ra bill (ngày 0). ---
+// `priority` (ngân sách quota B3): 'cao' = luôn gửi kể cả cạn quota (d6/d7 là chạm ra tiền);
+// 'thuong' = tự hoãn khi quota còn ≤ mức dự trữ.
 export const BILL_TOUCHES = [
-  { code: 'd0', day: 0, build: cham0, muctieu: 'Chăm sóc ấm sau khám/tiêm' },
-  { code: 'd1', day: 1, build: cham1, muctieu: 'Dặn an toàn — chặn hoảng bỏ thuốc' },
-  { code: 'd3', day: 3, build: cham3, muctieu: 'Hỏi tiến triển — khách tự nói đỡ' },
-  { code: 'd6', day: 6, build: cham6, muctieu: 'NHẮC TÁI KHÁM (chốt) — đòn mạnh nhất' },
-  { code: 'd7', day: 7, build: cham7, muctieu: 'Khan hiếm — giữ suất tái khám' },
+  { code: 'd0', day: 0, build: cham0, priority: 'thuong', muctieu: 'Chăm sóc ấm sau khám/tiêm' },
+  { code: 'd1', day: 1, build: cham1, priority: 'thuong', muctieu: 'Dặn an toàn — chặn hoảng bỏ thuốc' },
+  { code: 'd3', day: 3, build: cham3, priority: 'thuong', muctieu: 'Hỏi tiến triển — khách tự nói đỡ' },
+  { code: 'd6', day: 6, build: cham6, priority: 'cao', muctieu: 'NHẮC TÁI KHÁM (chốt) — đòn mạnh nhất' },
+  { code: 'd7', day: 7, build: cham7, priority: 'cao', muctieu: 'Khan hiếm — giữ suất tái khám' },
 ];
 
 /**

@@ -80,7 +80,12 @@ const G4 = [
   ] }, // đòn: nhắc nhẹ lần cuối, có trách nhiệm
 ];
 
-export const REBILL_TOUCHES = [...G1, ...G2, ...G3, ...G4];
+// priority (ngân sách quota B3): G2 (liệu trình PRP/biogen/TBG — tiền + sức khỏe) và
+// G4 (cứu ca bỏ dở) = 'cao' → luôn gửi kể cả cạn quota; G1/G3 = 'thuong' → hoãn khi cạn.
+export const REBILL_TOUCHES = [...G1, ...G2, ...G3, ...G4].map((t) => ({
+  priority: t.group === 2 || t.group === 4 ? 'cao' : 'thuong',
+  ...t,
+}));
 
 /**
  * Sinh nội dung 1 chạm tái bill.

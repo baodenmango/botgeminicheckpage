@@ -10,6 +10,7 @@ import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
 import { isCommentEvent } from './src/comment.js'; // chỉ để NHẬN DIỆN comment và bỏ qua (Meta lo rep comment)
 import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
+import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow } from './src/follow.js';
 import { lookupMedi, mapDiagnosis } from './src/medi.js';
@@ -104,6 +105,16 @@ app.get('/admin/rescue-now', async (req, res) => {
     console.error('[admin] rescue-now lỗi:', err?.message || err);
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// --- Admin: XEM ĐỒNG HỒ QUOTA tin tư vấn Zalo (B3 — ngân sách 500 tin/tháng) ---
+// GET /admin/zalo-quota?token=XXX → { thang, quota, da_tieu, con_lai, du_tru }
+app.get('/admin/zalo-quota', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  res.status(200).json({ ok: true, ...quotaThongKe() });
 });
 
 // --- Admin: NẠP TOKEN PANCAKE lúc chạy (không cần sửa env Render + redeploy) ---

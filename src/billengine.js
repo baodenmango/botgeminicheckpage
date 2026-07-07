@@ -73,7 +73,8 @@ export async function runBillTouches() {
         name: rec.name,
       });
       if (!messages) { store.markBillChamDone(rec.id, code); continue; }
-      const ok = await sendCareMessages(rec, messages);
+      const touchDef = BILL_TOUCHES.find((x) => x.code === code);
+      const ok = await sendCareMessages(rec, messages, { priority: touchDef?.priority, code });
       if (ok) {
         store.markBillChamDone(rec.id, code);
         // đánh dấu các mốc THẤP hơn còn sót là đã xong (ca nạp muộn, đã quá nhiều mốc → gửi mốc cao nhất)
