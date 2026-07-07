@@ -9,8 +9,9 @@
 //  → cần ZALO_OPENAPI_ENABLED=1 + cấu hình URL webhook + ZALO_WEBHOOK_SECRET trong Zalo Console.
 import crypto from 'node:crypto';
 import { CAM_NANG_PDF, CLIP_THEO_BENH, TEN_CAM_NANG_PUBLIC } from './touches.js';
-import { sendTexts, sendFileByUrl, getUserInfo, isOpenApiEnabled, stripZaloPrefix, tagFollowerBenh } from './zalo.js';
+import { sendTexts, sendFileByUrl, getUserInfo, isOpenApiEnabled, stripZaloPrefix, tagFollowerBenh, sendRequestInfo } from './zalo.js';
 import { lookupMedi, mapDiagnosis } from './medi.js';
+import { notifyText } from './telegram.js';
 import * as store from './store.js';
 
 // Xác thực chữ ký webhook Zalo (mac = SHA256(appId + data + timestamp + oaSecret)).
@@ -86,7 +87,9 @@ export async function handleZaloFollow(body, macHeader) {
     await sendTexts(userId, [
       'Mình đang gặp vấn đề xương khớp ở vùng nào để em gửi đúng tài liệu chăm sóc cho mình ạ? 😊',
     ]);
-    console.log(`[follow] ${userId} follow OA (chưa rõ bệnh) → đã chào + hỏi vùng đau`);
+    // card "Chia sẻ thông tin": khách bấm 1 nút là nối SĐT ↔ Zalo (không cần gõ tin)
+    sendRequestInfo(userId).catch(() => {});
+    console.log(`[follow] ${userId} follow OA (chưa rõ bệnh) → đã chào + hỏi vùng đau + card xin thông tin`);
     return;
   }
 
@@ -102,5 +105,45 @@ export async function handleZaloFollow(body, macHeader) {
   await sendTexts(userId, [
     'Mình xem rồi áp dụng dần nha ạ. Có gì thắc mắc cứ nhắn em, hoặc để lại số em nhờ Bác sĩ Trình gọi tư vấn kỹ giúp mình ạ 🙏',
   ]);
-  console.log(`[follow] ✅ ${userId} follow OA (bệnh ${condition}) → đã giao PDF + ${clips.length} clip`);
+  sendRequestInfo(userId).catch(() => {});
+  console.log(`[follow] ✅ ${userId} follow OA (bệnh ${condition}) → đã giao PDF + ${clips.length} clip + card xin thông tin`);
+}
+
+// SĐT về dạng 10 số (bỏ +84/84 → 0) — cùng chuẩn medi.js/pos.js.
+function normPhone10(p) {
+  let s = String(p || '').replace(/[^\d]/g, '');
+  if (s.startsWith('84') && s.length >= 11) s = '0' + s.slice(2);
+  if (!s.startsWith('0') && s.length === 9) s = '0' + s;
+  return s.length === 10 ? s : null;
+}
+
+/**
+ * Webhook USER_SUBMIT_INFO — khách bấm nút "Chia sẻ thông tin" trên card request_user_info.
+ * Nhận tên + SĐT chính chủ → lưu map 2 chiều (phone↔zalo uid) cho posingest/chuỗi chăm,
+ * gắn vào conv nếu đã có, và báo Telegram (lead nóng đã có số → telesale gọi được ngay).
+ */
+export async function handleZaloSubmitInfo(body) {
+  const eventName = body?.event_name || body?.event || '';
+  if (!/user_submit_info/i.test(eventName)) return false;
+  const uid = stripZaloPrefix(body.sender?.id || body.user_id_by_app || body.user_id || body.follower?.id || '');
+  const info = body.info || {};
+  const phone = normPhone10(info.phone);
+  if (!uid) return true;
+  if (!phone) { console.warn(`[submit-info] ${uid} chia sẻ info nhưng không có SĐT hợp lệ`); return true; }
+
+  // map 2 chiều để posingest (phone→uid) và các luồng khác (uid→phone) dùng
+  store.setKV(`phone_zalo:${phone}`, uid);
+  store.setKV(`zalo_phone:${uid}`, phone);
+
+  // đã có hội thoại Zalo của uid này → ghi SĐT thẳng vào conv (ENRICH các lượt sau dùng được)
+  const conv = store.getConversationByZaloUser(uid);
+  if (conv && !conv.phone) {
+    store.setPhoneCaptured(conv.conversation_id, phone, info.name || conv.customer_name || null);
+  }
+
+  console.log(`[submit-info] ✅ ${uid} bấm nút chia sẻ: ${info.name || '(không tên)'} ${phone.slice(0, 4)}***`);
+  notifyText(
+    `📱 <b>Khách Zalo bấm nút CHIA SẺ SĐT</b>\n• Tên: ${info.name || '(chưa rõ)'}\n• SĐT: ${phone}\n→ Đã nối hồ sơ tự động. Telesale gọi được ngay nếu là khách mới.`
+  ).catch(() => {});
+  return true;
 }

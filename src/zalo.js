@@ -221,6 +221,34 @@ export function stripZaloPrefix(rawId) {
   return String(rawId || '').replace(/^zl_/i, '');
 }
 
+/**
+ * Gửi card XIN CHIA SẺ THÔNG TIN (request_user_info) — khách bấm ĐÚNG 1 NÚT là OA
+ * nhận tên + SĐT chính chủ Zalo (webhook user_submit_info), không cần gõ tin nào.
+ * Đây là mắt xích nối SĐT ↔ Zalo cho khách quầy chỉ bấm Quan tâm mà không nhắn.
+ */
+export async function sendRequestInfo(userId) {
+  if (!isOpenApiEnabled()) return false;
+  const body = await oaCall('post', 'message/cs', {
+    data: {
+      recipient: { user_id: stripZaloPrefix(userId) },
+      message: {
+        attachment: {
+          type: 'template',
+          payload: {
+            template_type: 'request_user_info',
+            elements: [{
+              title: 'Phòng khám Cơ xương khớp Hiệp Lợi',
+              subtitle: 'Mình bấm "Chia sẻ thông tin" để phòng khám nối đúng hồ sơ khám và chăm sóc cho mình nha ạ 🙏',
+              image_url: process.env.ZALO_REQINFO_IMAGE || 'https://s120-ava-talk.zadn.vn/4/d/8/e/2/120/794ff6da5a2b38f62a77c70ddde9e330.jpg',
+            }],
+          },
+        },
+      },
+    },
+  });
+  return body?.error === 0;
+}
+
 // Đếm tổng follower OA (B7 báo cáo tuần). Trả null nếu OpenAPI tắt/lỗi.
 export async function demFollower() {
   if (!isOpenApiEnabled()) return null;

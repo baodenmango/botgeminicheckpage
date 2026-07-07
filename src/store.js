@@ -144,6 +144,12 @@ export function getKV(key) {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(String(key));
   return row ? row.value : null;
 }
+export function listKVByPrefix(prefix) {
+  return db.prepare("SELECT key, value FROM kv WHERE key LIKE ? || '%'").all(String(prefix));
+}
+export function delKV(key) {
+  db.prepare('DELETE FROM kv WHERE key = ?').run(String(key));
+}
 export function setKV(key, value) {
   db.prepare(`INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)

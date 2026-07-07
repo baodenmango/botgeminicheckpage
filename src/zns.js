@@ -9,11 +9,23 @@
 //   2) Env: ZNS_ENABLED=1 + ZNS_TEMPLATE_NHACLICH=<template_id đã duyệt>.
 //  Template dùng 4 tham số: ten, ngay_hen, ten_pk, sdt_pk.
 import axios from 'axios';
+import * as store from './store.js';
 import { getAccessTokenNow, refreshAccessToken } from './zalo.js';
 
 const ZNS_API = 'https://business.openapi.zalo.me/message/template';
 const HOTLINE = process.env.HOTLINE_PK || '0962349329';
 const TEN_PK = process.env.TEN_PK || 'PK Cơ Xương Khớp Hiệp Lợi';
+
+// --- RATING 5 SAO (anh Trình chốt 07/07): bắn NGAY sau khi ra bill để làm VAN XẢ —
+// khách muốn phàn nàn thì xả vào kênh kín (form rating trong Zalo, chỉ mình thấy),
+// không leo lên Google/Facebook review công khai. Mẫu 522230 ĐÃ DUYỆT từ 30/12/2025
+// → chạy được ngay, không chờ duyệt. Tắt khẩn: ZNS_RATING_ENABLED=0.
+const RATING_TEMPLATE = process.env.ZNS_RATING_TEMPLATE || '522230';
+const RATING_ENABLED = !/^(0|false|no|off)$/i.test(process.env.ZNS_RATING_ENABLED || '1');
+const RATING_COOLDOWN_S = 180 * 86400; // 1 lần/khách/6 tháng — tái khám dày không bị spam form
+
+const gioVN = () => new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
+const trongKhungGio = () => gioVN() >= 7 && gioVN() < 21;
 
 export function isZnsEnabled() {
   return /^(1|true|yes|on)$/i.test(process.env.ZNS_ENABLED || '') && !!process.env.ZNS_TEMPLATE_NHACLICH;
@@ -64,4 +76,70 @@ export async function sendZnsNhacLich(phone, { ten, ngay_hen } = {}) {
     console.warn('[zns] gọi API lỗi:', err?.message);
     return false;
   }
+}
+
+/**
+ * Gửi ZNS ĐÁNH GIÁ 5 SAO (mẫu 522230 đã duyệt — customer_name + ma_khach_hang).
+ * Chống trùng 6 tháng/khách. Trả true nếu Zalo nhận.
+ */
+export async function sendZnsRating(phone, { ten, maKH } = {}) {
+  if (!RATING_ENABLED) return false;
+  const sdt = phone84(phone);
+  if (!sdt) return false;
+  const key = `zns_rating_sent:${sdt}`;
+  const lanTruoc = parseInt(store.getKV(key) || '0', 10);
+  if (Math.floor(Date.now() / 1000) - lanTruoc < RATING_COOLDOWN_S) return false;
+
+  const goi = async () => axios.post(ZNS_API, {
+    phone: sdt,
+    template_id: RATING_TEMPLATE,
+    template_data: {
+      customer_name: (ten || 'Quý khách').slice(0, 30),
+      ma_khach_hang: String(maKH || sdt.slice(-4)).slice(0, 30),
+    },
+    tracking_id: `rating-${Date.now()}`,
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true });
+
+  try {
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error === 0) {
+      store.setKV(key, String(Math.floor(Date.now() / 1000)));
+      console.log(`[zns] ⭐ gửi form đánh giá tới ${sdt.slice(0, 5)}*** (van xả complain về kênh kín)`);
+      return true;
+    }
+    console.warn('[zns] gửi rating lỗi:', JSON.stringify(r.data).slice(0, 200));
+    return false;
+  } catch (err) {
+    console.warn('[zns] rating gọi API lỗi:', err?.message);
+    return false;
+  }
+}
+
+/**
+ * Gửi rating NGAY nếu trong khung 7h–21h VN; ngoài khung → xếp hàng chờ,
+ * cron flushRatingCho() sẽ bắn vào khung giờ cho phép (ca thanh toán tối muộn → sáng mai).
+ */
+export async function guiHoacXepRating(phone, ten, maKH) {
+  if (!RATING_ENABLED || !phone) return false;
+  if (trongKhungGio()) return sendZnsRating(phone, { ten, maKH });
+  store.setKV(`zns_rating_cho:${phone}`, JSON.stringify({ ten: ten || null, maKH: maKH || null }));
+  console.log(`[zns] ⏰ ngoài khung giờ → xếp hàng rating cho ${String(phone).slice(0, 4)}***`);
+  return true;
+}
+
+/** Xả hàng đợi rating (gọi từ cron POS mỗi 30'). */
+export async function flushRatingCho() {
+  if (!RATING_ENABLED || !trongKhungGio()) return 0;
+  let n = 0;
+  for (const row of store.listKVByPrefix('zns_rating_cho:')) {
+    const phone = row.key.slice('zns_rating_cho:'.length);
+    let d = {};
+    try { d = JSON.parse(row.value || '{}'); } catch { /* rác → vẫn xoá */ }
+    if (await sendZnsRating(phone, { ten: d.ten, maKH: d.maKH })) n++;
+    store.delKV(row.key); // gửi xong/bị dedupe đều xoá — không kẹt hàng đợi
+    await new Promise((s) => setTimeout(s, 300));
+  }
+  if (n) console.log(`[zns] ⭐ xả hàng đợi: gửi ${n} form đánh giá`);
+  return n;
 }

@@ -12,11 +12,11 @@ import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
-import { handleZaloFollow } from './src/follow.js';
+import { handleZaloFollow, handleZaloSubmitInfo } from './src/follow.js';
 import { tagFollowerBenh } from './src/zalo.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho } from './src/zns.js';
 import { lookupMedi, mapDiagnosis } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -307,6 +307,8 @@ app.post('/zalo/webhook', (req, res) => {
   res.status(200).json({ received: true }); // trả 200 ngay
   const mac = req.get('X-ZEvent-Signature') || req.get('x-zevent-signature') || null;
   try { handleZaloFollow(req.body, mac); } catch (err) { console.error('[zalo-webhook] lỗi:', err?.message || err); }
+  // khách bấm nút "Chia sẻ thông tin" → nhận SĐT chính chủ, nối hồ sơ (mỗi handler tự lọc event)
+  try { handleZaloSubmitInfo(req.body); } catch (err) { console.error('[zalo-webhook] submit-info lỗi:', err?.message || err); }
 });
 
 // --- Xác thực domain với Zalo (nếu Console đòi) ---
@@ -551,6 +553,7 @@ cron.schedule('10 * * * *', async () => {
 cron.schedule('25,55 * * * *', async () => {
   try {
     await runPosIngest();
+    await flushRatingCho(); // xả hàng đợi form đánh giá (ca thanh toán tối muộn → bắn khung 7h-21h)
   } catch (err) {
     console.error('[cron-pos] lỗi tự nạp ca từ POS:', err?.message || err);
   }

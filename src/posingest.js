@@ -12,6 +12,7 @@ import axios from 'axios';
 import * as store from './store.js';
 import { ingestBill } from './billengine.js';
 import { lookupMedi, mapDiagnosis } from './medi.js';
+import { guiHoacXepRating } from './zns.js';
 
 const POS_TOKEN = process.env.POS_API_TOKEN || process.env.PANCAKE_API_TOKEN || null;
 const POS_SHOP_ID = process.env.POS_SHOP_ID || '714976321'; // shop Phòng khám Hiệp Lợi
@@ -88,17 +89,24 @@ export async function runPosIngest() {
         }
       } catch { /* fail-open */ }
 
-      // Nối kênh Zalo theo SĐT (khách đã follow OA + từng nhắn) → chạm gửi được ngay.
+      // Nối kênh Zalo theo SĐT: (1) conv đã nhắn OA, (2) map từ nút "Chia sẻ thông tin"
+      // (webhook user_submit_info lưu kv phone_zalo:<sdt> → uid, không cần khách gõ tin).
       const zconv = store.getZaloConvByPhone(phone);
       if (zconv) {
         payload.conversation_id = zconv.conversation_id;
         payload.page_id = zconv.page_id;
         payload.zalo_user_id = zconv.zalo_user_id || null;
+      } else {
+        const uid = store.getKV(`phone_zalo:${phone}`);
+        if (uid) payload.zalo_user_id = uid;
       }
 
       if (ingestBill(payload)) {
         store.setKV(`posingest_seen2:${oid}`, '1');
         daNap++;
+        // ⭐ VAN XẢ (anh chốt 07/07): bắn form đánh giá NGAY sau khi ra bill —
+        // khách bực xả vào kênh kín, không lên Google/Facebook review.
+        guiHoacXepRating(phone, payload.name, String(o?.display_id || '')).catch(() => {});
       }
     } catch (e) {
       console.warn('[pos-ingest] lỗi 1 đơn (bỏ qua):', e?.message);
