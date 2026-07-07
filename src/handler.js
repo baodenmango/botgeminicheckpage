@@ -5,7 +5,7 @@ import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgent } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
-import { isZaloPage, stripZaloPrefix, tagFollowerBenh } from './zalo.js';
+import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo } from './zalo.js';
 import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS } from './echoguard.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
@@ -93,6 +93,24 @@ function isAutoReplyMessage(text) {
 
 // Số giờ telesale "giữ" hội thoại sau khi gõ tay (quá thì bot tiếp quản lại).
 const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+
+// --- KHÁCH TỰ BÁO "ĐÃ ĐẾN KHÁM" (ca Loan Le 07/07) ---
+// SOP quầy: nhân viên cầm máy bệnh nhân bấm Quan tâm OA + nhắn "Tôi đã đến khám".
+// Conv này CHƯA có SĐT (chưa tra được POS/MEDi) nhưng chắc chắn là BỆNH NHÂN — nếu không
+// nhận diện, bot đối xử như lead lạ: mời "suất tư vấn miễn phí", xin số... rất kỳ.
+// → gắn cờ kv da_kham_conv:<convId>: bot chuyển mode CARE, chặn retouch/chạm xin số kiểu lead.
+const boDauKham = (s) => String(s || '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
+  .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+export function laTinDaKham(text) {
+  const n = ` ${boDauKham(text)} `;
+  if (n.length > 90) return false; // câu dài là đang kể chuyện/hỏi bệnh → để Gemini xử theo prompt
+  if (/ (chua|sap|chuan bi|dinh|muon|can|de|se) (di |den |toi |ghe )?kham/.test(n)) return false; // "chưa/sắp khám" ≠ đã khám
+  return / (da|vua|moi) (di |den |toi |ghe )?kham | kham (xong|roi) /.test(n);
+}
+export function laConvDaKham(conversationId) {
+  return Boolean(store.getKV(`da_kham_conv:${conversationId}`));
+}
 
 /**
  * Xử lý tin TỪ PAGE: phân biệt BOT tự gửi (bỏ qua) vs TELESALE gõ tay (đánh dấu human → bot lui).
@@ -252,6 +270,25 @@ export async function handleIncoming(ev) {
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
 
+    // KHÁCH BÁO "ĐÃ ĐẾN KHÁM" mà conv chưa có SĐT (SOP quầy — ca Loan Le 07/07):
+    // đây là BỆNH NHÂN, không phải lead → gắn cờ da_kham + cảm ơn + mời bấm nút
+    // "Chia sẻ thông tin" để nối hồ sơ (1 nút, không bắt gõ số). KHÔNG đi kịch bản lead.
+    if (!store.isCaptured(conv) && !laConvDaKham(conversationId) && laTinDaKham(messageText)) {
+      store.setKV(`da_kham_conv:${conversationId}`, String(Date.now()));
+      const msgs = [
+        'Dạ em cảm ơn mình đã tin tưởng ghé khám tại Hiệp Lợi nha ạ 🌿',
+        'Để em nối đúng hồ sơ khám và gửi tài liệu chăm sóc đúng bệnh cho mình, mình bấm giúp em nút "Chia sẻ thông tin" ở thẻ bên dưới nha ạ 🙏',
+      ];
+      msgs.forEach((m) => noteBotSent(conversationId, m));
+      noteBotJustSent(conversationId);
+      await sendMessages(pageId, conversationId, msgs);
+      store.appendHistory(conversationId, 'model', msgs.join('\n'));
+      const zuidDK = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
+      if (isZaloPage(getPageChannel(pageId)) && zuidDK) sendRequestInfo(zuidDK).catch(() => {});
+      console.log(`[da-kham] 🏥 ${conversationId} khách tự báo ĐÃ ĐẾN KHÁM → gắn cờ da_kham + mời bấm nút chia sẻ SĐT`);
+      return;
+    }
+
     // KHÁCH XIN TÀI LIỆU/CẨM NANG/BÀI TẬP → gửi PDF đúng bệnh NGAY (không đợi chạm 4).
     // Chỉ gửi khi ĐÃ biết bệnh (condition khác unknown) + có PDF. Chưa rõ bệnh → để Gemini hỏi bệnh.
     if (wantsDocument(messageText)) {
@@ -332,6 +369,10 @@ export async function handleIncoming(ev) {
       if (isCustomer) store.setPhoneCaptured(conversationId, conv.phone || null, customerName || conv.customer_name); // nhớ trạng thái để lần sau khỏi gọi API
     }
 
+    // Cờ da_kham (khách tự báo đã đến khám, SOP quầy) → cũng là khách, mode CARE.
+    const daKhamTuBao = laConvDaKham(conversationId);
+    if (daKhamTuBao) isCustomer = true;
+
     const channel = getPageChannel(pageId);
     let contextTag = null;
 
@@ -403,6 +444,15 @@ export async function handleIncoming(ev) {
       }
     }
 
+    // Thẻ ngữ cảnh ĐÃ-KHÁM-TỰ-BÁO: đè lên mọi tag khác — cấm tuyệt đối kịch bản lead.
+    if (daKhamTuBao) {
+      contextTag = (contextTag ? contextTag + '\n' : '') +
+        '[KHÁCH ĐÃ ĐẾN KHÁM — TỰ XÁC NHẬN] Khách này ĐÃ đến khám tại phòng khám (quầy lễ tân xác nhận). ' +
+        'TUYỆT ĐỐI KHÔNG chào như người lạ, KHÔNG mời "suất tư vấn miễn phí", KHÔNG dụ để lại số kiểu chốt lead. ' +
+        'Vai của em: chăm sóc sau khám — hỏi thăm nhẹ, dặn theo hướng dẫn Bác sĩ Trình. ' +
+        'Nếu cần nối hồ sơ, mời khách bấm nút "Chia sẻ thông tin" trên thẻ OA đã gửi (KHÔNG bắt gõ số).';
+    }
+
     // THẺ TỆP PAGE (anh chốt 04/07): 2 page = 2 tệp khách, prompt mục 1B đọc thẻ này đổi nhịp tư vấn.
     if (channel !== 'zalo' && PAGE_AUDIENCE[pageId]) {
       contextTag = contextTag ? `${contextTag}\n${PAGE_AUDIENCE[pageId]}` : PAGE_AUDIENCE[pageId];
@@ -439,6 +489,13 @@ export async function handleRetouch(conv) {
     if (await hasStopLabel(pageId, conversationId)) {
       console.log(`[retouch] ${conversationId} có nhãn chốt lịch/telesale xử → bỏ chạm lại`);
       store.markHumanTaken(conversationId); // chặn các lượt cron sau, khỏi gọi API mỗi 15'
+      return;
+    }
+    // Khách ĐÃ KHÁM (cờ da_kham) → KHÔNG chạm kiểu lead ("giữ suất tư vấn miễn phí"...);
+    // chuỗi bill-care D0/1/3/6/7 lo phần chăm. Đốt lượt retouch để cron sau khỏi nhặt lại.
+    if (laConvDaKham(conversationId)) {
+      store.incRetouch(conversationId);
+      console.log(`[retouch] ${conversationId} khách ĐÃ KHÁM → bỏ chạm lead, để bill-care lo`);
       return;
     }
     const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
@@ -478,6 +535,12 @@ export async function handleBotTouch(conv, touchNo) {
     if (await hasStopLabel(pageId, conversationId)) {
       console.log(`[cham${touchNo}] ${conversationId} có nhãn chốt lịch/telesale xử → bỏ chạm`);
       store.markTouchDone(conversationId, touchNo);
+      return;
+    }
+    // Khách ĐÃ KHÁM (cờ da_kham) → thoát chuỗi chạm lead hẳn (bill-care lo phần chăm).
+    if (laConvDaKham(conversationId)) {
+      for (const n of [2, 3, 4, 5, 6, 7]) store.markTouchDone(conversationId, n);
+      console.log(`[cham${touchNo}] ${conversationId} khách ĐÃ KHÁM → thoát chuỗi chạm lead`);
       return;
     }
 

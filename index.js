@@ -121,6 +121,21 @@ app.get('/admin/zalo-quota', (req, res) => {
   res.status(200).json({ ok: true, ...quotaThongKe() });
 });
 
+// --- Admin: GẮN CỜ "ĐÃ KHÁM" tay cho 1 hội thoại (ca lọt lưới trước bản vá da_kham) ---
+// GET /admin/danh-dau-da-kham?token=XXX&conversation_id=zl_... → bot chuyển mode CARE,
+// thoát chuỗi retouch/chạm lead. Idempotent.
+app.get('/admin/danh-dau-da-kham', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const convId = String(req.query.conversation_id || '').trim();
+  if (!convId) return res.status(400).json({ ok: false, error: 'thiếu conversation_id' });
+  store.setKV(`da_kham_conv:${convId}`, String(Date.now()));
+  console.log(`[admin] 🏥 gắn cờ ĐÃ KHÁM tay cho ${convId}`);
+  res.status(200).json({ ok: true, conversation_id: convId, da_kham: true });
+});
+
 // --- Admin: BACKFILL TAG BỆNH cho follower Zalo đã biết bệnh (B4 — chạy 1 lần sau deploy) ---
 // GET /admin/tag-benh-backfill?token=XXX → gắn tag bệnh cho mọi hội thoại Zalo đã nhận diện bệnh.
 // Idempotent (kv chống gắn lặp trong tagFollowerBenh) → chạy lại nhiều lần vô hại.
@@ -408,9 +423,13 @@ function parsePancakeWebhook(body) {
     const hasAttachment = Array.isArray(att) ? att.length > 0 : Boolean(att);
     if (hasAttachment) {
       const phoneInAtt = findPhoneInPayload(att);
+      // STICKER ≠ ẢNH BỆNH (ca Minh Trang 07/07: khách gửi sticker "Yes Sir", bot tưởng
+      // ảnh X-quang → "Bác sĩ cần xem trực tiếp..." sai trọng tâm). Nhận diện qua payload
+      // (type "sticker"/emoticon/đường dẫn sticker) → placeholder riêng cho Gemini đáp nhẹ.
+      const laSticker = /sticker|emoticon/i.test(JSON.stringify(att) || '');
       messageText = phoneInAtt
         ? `Số điện thoại của tôi là ${phoneInAtt}`   // card liên hệ → đưa số vào để bot chốt
-        : '[khách vừa gửi một hình ảnh/tệp]';
+        : (laSticker ? '[khách gửi sticker cảm xúc]' : '[khách vừa gửi một hình ảnh/tệp]');
       attachmentOnly = !phoneInAtt;
     }
   }
