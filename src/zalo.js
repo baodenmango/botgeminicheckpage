@@ -16,6 +16,7 @@
 import axios from 'axios';
 import * as store from './store.js';
 import { CONDITION_VI } from './conditions.js';
+import { noteBotSent, noteBotJustSent } from './echoguard.js';
 
 const OA_API = 'https://openapi.zalo.me/v3.0/oa';
 const OA_API_V2 = 'https://openapi.zalo.me/v2.0/oa'; // vài API chỉ có ở v2 (tag, conversation)
@@ -136,7 +137,22 @@ export async function sendText(userId, text) {
   const body = await oaCall('post', 'message/cs', {
     data: { recipient: { user_id: String(userId) }, message: { text: String(text || '').slice(0, 2000) } },
   });
-  return Boolean(body && body.error === 0);
+  const ok = Boolean(body && body.error === 0);
+  // Ghi sổ chống echo: tin OpenAPI cũng dội về webhook Pancake dưới dạng tin page —
+  // không ghi thì handler tưởng telesale gõ tay → bot câm 6h (ca Loan Le 07/07:
+  // khách follow, bot chào + hỏi vùng đau, rồi tự khoá mồm vì echo chính mình).
+  if (ok) {
+    const cid = convIdPancake(userId);
+    if (cid) { noteBotSent(cid, text); noteBotJustSent(cid); }
+  }
+  return ok;
+}
+
+// conversationId phía Pancake của 1 user Zalo: "zl_<oa_id>_<uid>" (đúng format webhook dội về).
+// OA id là định danh CÔNG KHAI (nằm trong mọi conv id) → hardcode fallback được.
+function convIdPancake(userId) {
+  const oaId = process.env.ZALO_OA_ID || '3136814239074246132';
+  return `zl_${oaId}_${userId}`;
 }
 
 /**
@@ -190,7 +206,11 @@ export async function sendFileByUrl(userId, fileUrl, fileName = 'Cam-nang-cham-s
     const body = await oaCall('post', 'message/cs', {
       data: { recipient: { user_id: String(userId) }, message: { attachment: { type: 'file', payload: { token } } } },
     });
-    if (body?.error === 0) return true;
+    if (body?.error === 0) {
+      const cid = convIdPancake(userId);
+      if (cid) noteBotJustSent(cid); // echo file thường attachmentOnly, mốc thời gian là đủ
+      return true;
+    }
     throw new Error(`gửi attachment lỗi: ${JSON.stringify(body).slice(0, 150)}`);
   } catch (err) {
     console.warn('[zalo] gửi file thật thất bại → lùi về gửi link:', err?.message);
@@ -246,7 +266,16 @@ export async function sendRequestInfo(userId) {
       },
     },
   });
-  return body?.error === 0;
+  const ok = body?.error === 0;
+  if (ok) {
+    const cid = convIdPancake(stripZaloPrefix(userId));
+    if (cid) {
+      // echo card về dạng tin page có subtitle → ghi cả nội dung lẫn mốc thời gian
+      noteBotSent(cid, 'Mình bấm "Chia sẻ thông tin" để phòng khám nối đúng hồ sơ khám và chăm sóc cho mình nha ạ');
+      noteBotJustSent(cid);
+    }
+  }
+  return ok;
 }
 
 // Đếm tổng follower OA (B7 báo cáo tuần). Trả null nếu OpenAPI tắt/lỗi.
