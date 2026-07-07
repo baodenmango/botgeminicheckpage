@@ -13,6 +13,7 @@ import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow } from './src/follow.js';
+import { tagFollowerBenh } from './src/zalo.js';
 import { lookupMedi, mapDiagnosis } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -115,6 +116,28 @@ app.get('/admin/zalo-quota', (req, res) => {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
   res.status(200).json({ ok: true, ...quotaThongKe() });
+});
+
+// --- Admin: BACKFILL TAG BỆNH cho follower Zalo đã biết bệnh (B4 — chạy 1 lần sau deploy) ---
+// GET /admin/tag-benh-backfill?token=XXX → gắn tag bệnh cho mọi hội thoại Zalo đã nhận diện bệnh.
+// Idempotent (kv chống gắn lặp trong tagFollowerBenh) → chạy lại nhiều lần vô hại.
+app.get('/admin/tag-benh-backfill', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const rows = store.listZaloCondUsers();
+    let daGan = 0;
+    for (const r of rows) {
+      if (await tagFollowerBenh(r.uid, r.condition)) daGan++;
+      await new Promise((s) => setTimeout(s, 400)); // nương rate-limit Zalo
+    }
+    console.log(`[admin] 🏷️ backfill tag bệnh: ${daGan}/${rows.length} follower`);
+    res.status(200).json({ ok: true, tong: rows.length, da_gan: daGan });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
 });
 
 // --- Admin: NẠP TOKEN PANCAKE lúc chạy (không cần sửa env Render + redeploy) ---

@@ -15,6 +15,7 @@
 //   ZALO_ACCESS_TOKEN, ZALO_REFRESH_TOKEN, ZALO_APP_ID, ZALO_APP_SECRET, ZALO_OA_ID
 import axios from 'axios';
 import * as store from './store.js';
+import { CONDITION_VI } from './conditions.js';
 
 const OA_API = 'https://openapi.zalo.me/v3.0/oa';
 const OAUTH_API = 'https://oauth.zaloapp.com/v4/oa/access_token';
@@ -211,4 +212,41 @@ export async function getUserInfo(userId) {
 // Chuẩn hóa zalo user_id: Pancake lưu fb_id dạng "zl_<uid>" → bỏ tiền tố khi gọi OpenAPI.
 export function stripZaloPrefix(rawId) {
   return String(rawId || '').replace(/^zl_/i, '');
+}
+
+// --- GẮN TAG BỆNH cho follower (B4 — broadcast theo tag bệnh) ---
+// Tag = tên bệnh ngắn đọc được (phần trước dấu '/' trong CONDITION_VI, vd "Khớp gối", "Gút").
+// Nhân viên thấy tag ngay trong OA chat; broadcast tin truyền thông lọc theo tag này.
+export function tagTheoBenh(condition) {
+  const vi = CONDITION_VI[condition];
+  if (!vi) return null;
+  return vi.split('/')[0].trim();
+}
+
+/**
+ * Gắn tag bệnh cho 1 follower — idempotent (kv chống gọi lặp), fail-open (lỗi thì thôi,
+ * không được chặn luồng chính). Gọi fire-and-forget từ handler/follow/bill-ingest.
+ */
+export async function tagFollowerBenh(userId, condition) {
+  try {
+    if (!isOpenApiEnabled()) return false;
+    const uid = stripZaloPrefix(userId);
+    if (!uid || !condition || condition === 'unknown' || condition === 'khac') return false;
+    const tag = tagTheoBenh(condition);
+    if (!tag) return false;
+    const key = `zalo_tagged:${uid}:${condition}`;
+    if (store.getKV(key)) return true; // đã gắn rồi
+    const body = await oaCall('post', 'tag/tagfollower', {
+      data: { user_id: uid, tag_name: tag },
+    });
+    if (body?.error === 0) {
+      store.setKV(key, '1');
+      console.log(`[zalo] 🏷️ gắn tag "${tag}" cho follower ${uid}`);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('[zalo] tagFollowerBenh lỗi (bỏ qua):', err?.message);
+    return false;
+  }
 }

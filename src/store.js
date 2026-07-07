@@ -206,6 +206,15 @@ export function markCommentHandledOnce(commentId, pageId) {
 
 const stmtGet = db.prepare('SELECT * FROM conversations WHERE conversation_id = ?');
 
+// B4: các cặp (zalo_user_id, bệnh) đã biết — để backfill gắn tag follower 1 lần sau deploy.
+export function listZaloCondUsers() {
+  return db.prepare(`
+    SELECT DISTINCT zalo_user_id AS uid, condition FROM conversations
+    WHERE channel = 'zalo' AND zalo_user_id IS NOT NULL
+      AND condition IS NOT NULL AND condition NOT IN ('unknown', 'khac')
+  `).all();
+}
+
 export function getConversation(conversationId) {
   const row = stmtGet.get(String(conversationId));
   if (!row) return null;

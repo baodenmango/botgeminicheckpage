@@ -9,7 +9,7 @@
 //  → cần ZALO_OPENAPI_ENABLED=1 + cấu hình URL webhook + ZALO_WEBHOOK_SECRET trong Zalo Console.
 import crypto from 'node:crypto';
 import { CAM_NANG_PDF, CLIP_THEO_BENH, TEN_CAM_NANG_PUBLIC } from './touches.js';
-import { sendTexts, sendFileByUrl, getUserInfo, isOpenApiEnabled, stripZaloPrefix } from './zalo.js';
+import { sendTexts, sendFileByUrl, getUserInfo, isOpenApiEnabled, stripZaloPrefix, tagFollowerBenh } from './zalo.js';
 import { lookupMedi, mapDiagnosis } from './medi.js';
 import * as store from './store.js';
 
@@ -90,7 +90,8 @@ export async function handleZaloFollow(body, macHeader) {
     return;
   }
 
-  // ĐÃ biết bệnh → "hứa rồi giao ngay": gửi PDF cẩm nang + clip video đúng bệnh.
+  // ĐÃ biết bệnh → gắn tag bệnh cho follower (B4, fire-and-forget) rồi "hứa rồi giao ngay".
+  tagFollowerBenh(userId, condition).catch(() => {});
   const pdf = CAM_NANG_PDF[condition];
   const clips = (CLIP_THEO_BENH[condition] || []).filter(Boolean).slice(0, 2);
   const tenCN = TEN_CAM_NANG_PUBLIC?.[condition] || 'Cẩm nang chăm sóc tại nhà';

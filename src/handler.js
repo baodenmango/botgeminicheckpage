@@ -5,7 +5,7 @@ import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgent } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
-import { isZaloPage, stripZaloPrefix } from './zalo.js';
+import { isZaloPage, stripZaloPrefix, tagFollowerBenh } from './zalo.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
 import { SALE_PAGE } from './conditions.js';
@@ -613,6 +613,12 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   const freshConv = store.getConversation(conversationId);
   const knownCondition = freshConv?.condition || reply.condition || 'unknown';
   const knownSummary = freshConv?.summary || reply.summary || null;
+
+  // B4: kênh Zalo + đã biết bệnh → gắn tag bệnh cho follower (fire-and-forget, idempotent)
+  // để broadcast tin truyền thông lọc đúng nhóm bệnh sau này.
+  if (freshConv?.channel === 'zalo' && freshConv?.zalo_user_id && knownCondition !== 'unknown') {
+    tagFollowerBenh(freshConv.zalo_user_id, knownCondition).catch(() => {});
+  }
 
   // ĐẢM BẢO gửi link sale page đúng bệnh (nếu Gemini quên chèn).
   let outMessages = ensureSalePageLink(reply.messages, knownCondition, conv);

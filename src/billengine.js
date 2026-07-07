@@ -9,6 +9,7 @@
 import * as store from './store.js';
 import { BILL_TOUCHES, buildBillMessages } from './billtouches.js';
 import { sendCareMessages } from './care-send.js';
+import { tagFollowerBenh } from './zalo.js';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -43,6 +44,10 @@ export function ingestBill(input) {
   if (!rec) { console.warn('[bill] ingest: payload thiếu phone/id → bỏ'); return null; }
   const saved = store.upsertBillCare(rec);
   console.log(`[bill] nạp ca ra bill ${rec.id} (bệnh ${rec.condition}, ${rec.has_injection ? 'tiêm' : ''}${rec.has_medicine ? ' thuốc' : ''})`);
+  // B4: ca ra bill có Zalo + biết bệnh → gắn tag bệnh cho follower (fire-and-forget)
+  if (rec.zalo_user_id && rec.condition && rec.condition !== 'unknown') {
+    tagFollowerBenh(rec.zalo_user_id, rec.condition).catch(() => {});
+  }
   return saved;
 }
 
