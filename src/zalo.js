@@ -14,9 +14,16 @@
 //  Token nằm trong env (đồng bộ .mcp.json zalo-hieploi):
 //   ZALO_ACCESS_TOKEN, ZALO_REFRESH_TOKEN, ZALO_APP_ID, ZALO_APP_SECRET, ZALO_OA_ID
 import axios from 'axios';
+import https from 'node:https';
 import * as store from './store.js';
 import { CONDITION_VI } from './conditions.js';
 import { noteBotSent, noteBotJustSent } from './echoguard.js';
+
+// ÉP IPv4 cho MỌI call tới hạ tầng Zalo. Bắt tận tay 08/07 trong container Render:
+// oauth.zaloapp.com có bản ghi IPv6 nhưng mạng Render không đi được IPv6 tới đó →
+// Node/axios chọn IPv6 → ETIMEDOUT với message RỖNG (curl thì tự lùi IPv4 nên chạy ngon).
+// Hậu quả: refresh token "chết" câm suốt từ 15:21, sập cả đường OpenAPI + ZNS.
+export const zaloAgentV4 = new https.Agent({ family: 4, keepAlive: true });
 
 const OA_API = 'https://openapi.zalo.me/v3.0/oa';
 const OA_API_V2 = 'https://openapi.zalo.me/v2.0/oa'; // vài API chỉ có ở v2 (tag, conversation)
@@ -68,6 +75,7 @@ export async function refreshAccessToken() {
       headers: { secret_key: appSecret, 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 15000,
       validateStatus: () => true,
+      httpsAgent: zaloAgentV4,
     }
   );
   const moTa = (res) => `HTTP ${res?.status} body=${JSON.stringify(res?.data ?? null).slice(0, 250)}`;
@@ -117,6 +125,7 @@ async function oaCall(method, pathName, { params, data, v2 } = {}) {
         headers: { access_token: accessToken, 'Content-Type': 'application/json' },
         timeout: 20000,
         validateStatus: () => true,
+        httpsAgent: zaloAgentV4,
       });
       const body = res.data;
       // Zalo trả error code trong body (error=0 là OK). -216/-124 = token hết hạn/sai.
@@ -204,7 +213,7 @@ export async function sendFileByUrl(userId, fileUrl, fileName = 'Cam-nang-cham-s
       const form = new FormData();
       form.append('file', new Blob([resp.data], { type: 'application/pdf' }), fileName);
       return axios.post('https://openapi.zalo.me/v2.0/oa/upload/file', form, {
-        headers: { access_token: accessToken }, timeout: 30000,
+        headers: { access_token: accessToken }, timeout: 30000, httpsAgent: zaloAgentV4,
       });
     };
     let up = await upload();

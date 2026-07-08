@@ -10,7 +10,7 @@
 //  Template dùng 4 tham số: ten, ngay_hen, ten_pk, sdt_pk.
 import axios from 'axios';
 import * as store from './store.js';
-import { getAccessTokenNow, refreshAccessToken } from './zalo.js';
+import { getAccessTokenNow, refreshAccessToken, zaloAgentV4 } from './zalo.js';
 
 const ZNS_API = 'https://business.openapi.zalo.me/message/template';
 const HOTLINE = process.env.HOTLINE_PK || '0962349329';
@@ -58,7 +58,7 @@ export async function sendZnsNhacLich(phone, { ten, ngay_hen } = {}) {
       schedule_time: String(ngay_hen).slice(0, 20),
     },
     tracking_id: `nhaclich-${Date.now()}`,
-  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true });
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
 
   try {
     let r = await goi();
@@ -98,7 +98,7 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
       ma_khach_hang: String(maKH || sdt.slice(-4)).slice(0, 30),
     },
     tracking_id: `rating-${Date.now()}`,
-  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true });
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
 
   try {
     let r = await goi();
