@@ -54,6 +54,9 @@ export async function refreshAccessToken() {
     console.warn('[zalo] thiếu ZALO_APP_ID/SECRET/REFRESH_TOKEN → không refresh được token');
     return accessToken;
   }
+  // validateStatus true: HTTP 4xx/5xx KHÔNG được văng ra ngoài — văng là nhảy vào catch,
+  // BỎ QUA LUÔN nhánh phao "thử cặp env" bên dưới (bug 08/07: chuỗi chết mà log trống trơn,
+  // anh dán cặp mới lên env bot cũng không tự hồi được).
   const goiRefresh = async (rt) => axios.post(
     OAUTH_API,
     new URLSearchParams({
@@ -61,15 +64,24 @@ export async function refreshAccessToken() {
       app_id: appId,
       grant_type: 'refresh_token',
     }).toString(),
-    { headers: { secret_key: appSecret, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
+    {
+      headers: { secret_key: appSecret, 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000,
+      validateStatus: () => true,
+    }
   );
+  const moTa = (res) => `HTTP ${res?.status} body=${JSON.stringify(res?.data ?? null).slice(0, 250)}`;
   try {
     let res = await goiRefresh(refreshToken);
-    // cặp trong DB chết (đã dùng/thu hồi) mà env có cặp KHÁC (anh vừa dán mới) → thử env
-    const envRt = process.env.ZALO_REFRESH_TOKEN;
-    if (!res.data?.access_token && envRt && envRt !== refreshToken) {
-      console.warn('[zalo] refresh bằng token DB thất bại → thử lại bằng token env (cặp mới dán)');
-      res = await goiRefresh(envRt);
+    if (!res.data?.access_token) {
+      console.warn(`[zalo] refresh bằng token DB thất bại (${moTa(res)})`);
+      // cặp trong DB chết (đã dùng/thu hồi) mà env có cặp KHÁC (anh vừa dán mới) → thử env
+      const envRt = process.env.ZALO_REFRESH_TOKEN;
+      if (envRt && envRt !== refreshToken) {
+        console.warn('[zalo] → thử lại bằng token env (cặp mới dán)');
+        res = await goiRefresh(envRt);
+        if (!res.data?.access_token) console.warn(`[zalo] token env cũng thất bại (${moTa(res)})`);
+      }
     }
     if (res.data?.access_token) {
       accessToken = res.data.access_token;
@@ -81,10 +93,10 @@ export async function refreshAccessToken() {
       } catch (e) { console.warn('[zalo] không ghi được token vào DB:', e?.message); }
       console.log('[zalo] ✅ refresh access token thành công (đã persist DB)');
     } else {
-      console.error('[zalo] refresh token: phản hồi không có access_token:', JSON.stringify(res.data).slice(0, 200));
+      console.error('[zalo] ❌ refresh token THẤT BẠI cả DB lẫn env — chuỗi có thể đã chết, cần anh cấp cặp OAuth mới (lay-token.js) rồi dán lên Render env');
     }
   } catch (err) {
-    console.error('[zalo] refresh token lỗi:', err?.response?.data || err.message);
+    console.error('[zalo] refresh token lỗi mạng/bất ngờ:', err?.response?.status, JSON.stringify(err?.response?.data ?? null).slice(0, 250), err?.message);
   }
   return accessToken;
 }
