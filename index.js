@@ -13,7 +13,7 @@ import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow, handleZaloSubmitInfo } from './src/follow.js';
-import { tagFollowerBenh } from './src/zalo.js';
+import { tagFollowerBenh, sendRequestInfo } from './src/zalo.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
 import { sendZnsNhacLich, isZnsEnabled, flushRatingCho } from './src/zns.js';
@@ -119,6 +119,23 @@ app.get('/admin/zalo-quota', (req, res) => {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
   res.status(200).json({ ok: true, ...quotaThongKe() });
+});
+
+// --- Admin: GỬI THỬ card "Chia sẻ thông tin" tới 1 uid Zalo (soi vì sao khách không thấy nút) ---
+// GET /admin/gui-card?token=XXX&uid=<zalo_uid> → gửi card + trả kết quả; lỗi chi tiết nằm trong log.
+app.get('/admin/gui-card', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const uid = String(req.query.uid || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'thiếu uid' });
+  try {
+    const ok = await sendRequestInfo(uid);
+    res.status(200).json({ ok, uid, ghi_chu: ok ? 'card đã gửi — nhờ khách/anh kiểm tra Zalo' : 'gửi HỤT — xem log [zalo] card request_user_info' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
 });
 
 // --- Admin: GẮN CỜ "ĐÃ KHÁM" tay cho 1 hội thoại (ca lọt lưới trước bản vá da_kham) ---

@@ -274,6 +274,9 @@ export async function sendRequestInfo(userId) {
       noteBotSent(cid, 'Mình bấm "Chia sẻ thông tin" để phòng khám nối đúng hồ sơ khám và chăm sóc cho mình nha ạ');
       noteBotJustSent(cid);
     }
+  } else {
+    // ĐỪNG nuốt lỗi im lặng (08/07: anh Trình báo "khách không thấy nút" mà log trắng trơn)
+    console.warn(`[zalo] card request_user_info gửi HỤT (uid ${stripZaloPrefix(userId)}):`, JSON.stringify(body || {}).slice(0, 250));
   }
   return ok;
 }

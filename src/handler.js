@@ -5,7 +5,7 @@ import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgent } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
-import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo } from './zalo.js';
+import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
 import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS } from './echoguard.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
@@ -106,6 +106,7 @@ export function laTinDaKham(text) {
   const n = ` ${boDauKham(text)} `;
   if (n.length > 90) return false; // câu dài là đang kể chuyện/hỏi bệnh → để Gemini xử theo prompt
   if (/ (chua|sap|chuan bi|dinh|muon|can|de|se) (di |den |toi |ghe )?kham/.test(n)) return false; // "chưa/sắp khám" ≠ đã khám
+  if (/ khac( |$)/.test(n)) return false; // "đã khám Ở CHỖ/NƠI/BV KHÁC" (ca Hạnh Nguyên 08/07) ≠ đã khám Hiệp Lợi
   return / (da|vua|moi) (di |den |toi |ghe )?kham | kham (xong|roi) /.test(n);
 }
 export function laConvDaKham(conversationId) {
@@ -255,6 +256,13 @@ export async function handleIncoming(ev) {
       }
     }
 
+    // KHÁCH ĐÒI CẨM NANG → ghi "LỜI HỨA" xuống kv NGAY, trước mọi cửa chặn (human-hold...).
+    // Ca Hạnh Nguyên 08/07: đòi 3 lần không được — lúc đòi bot đang bị khoá nhầm + chưa rõ bệnh,
+    // đến khi biết bệnh thì không ai còn nhớ lời hứa. Giờ: hứa là NỢ, biết bệnh là giao.
+    if (wantsDocument(messageText)) {
+      store.setKV(`doc_wanted:${conversationId}`, String(Date.now()));
+    }
+
     // NGƯỜI THẬT VÀO → BOT LUI. (Thiết kế mới chốt với anh 28/06: bot TOÀN QUYỀN xử tới khi
     // gửi sale page + xin SĐT. Telesale KHÔNG đụng check page, chỉ xử qua Telegram; muốn bot im
     // thì GẮN NHÃN — đã chặn ở hasStopLabel trên.) Cờ human CHỈ được đánh khi CHẮC CHẮN telesale
@@ -293,25 +301,13 @@ export async function handleIncoming(ev) {
     // Chỉ gửi khi ĐÃ biết bệnh (condition khác unknown) + có PDF. Chưa rõ bệnh → để Gemini hỏi bệnh.
     if (wantsDocument(messageText)) {
       const cond = conv.condition && conv.condition !== 'unknown' ? conv.condition : null;
-      const pdf = cond ? BROCHURE_PDF[cond] : null;
-      if (pdf) {
-        const ten = BROCHURE_NAME[cond] || 'cẩm nang chăm sóc tại nhà';
-        const msgs = [
-          `Dạ em gửi mình "${ten}" nha ạ 🌿`,
-          `Mình xem và áp dụng dần nha: ${pdf}`,
-        ];
-        if (!store.isCaptured(conv)) {
-          msgs.push('Mình muốn Bác sĩ xem kỹ tình trạng và tư vấn hướng phù hợp thì để lại số điện thoại giúp em nha, Bác sĩ gọi tư vấn miễn phí cho mình ạ 🙏');
-        }
-        msgs.forEach((m) => noteBotSent(conversationId, m));
-        noteBotJustSent(conversationId);
-        await sendMessages(pageId, conversationId, msgs);
-        store.appendHistory(conversationId, 'model', msgs.join('\n'));
-        console.log(`[doc] 📄 ${conversationId} xin tài liệu → đã gửi PDF bệnh ${cond}`);
+      if (cond && BROCHURE_PDF[cond]) {
+        await giaoCamNang(conversationId, pageId, cond, { xinSo: !store.isCaptured(conv) });
         return;
       }
-      // chưa rõ bệnh → KHÔNG return, để Gemini hỏi "mình đau vùng nào" rồi lần sau gửi.
-      console.log(`[doc] ${conversationId} xin tài liệu nhưng chưa rõ bệnh → để Gemini hỏi bệnh`);
+      // chưa rõ bệnh → KHÔNG return, để Gemini hỏi "mình đau vùng nào"; lời hứa đã nằm trong kv,
+      // biết bệnh là khối "trả nợ cẩm nang" sau dispatch giao liền.
+      console.log(`[doc] ${conversationId} xin tài liệu nhưng chưa rõ bệnh → hứa đã ghi sổ, để Gemini hỏi bệnh`);
     }
 
     // Chốt SĐT bằng regex (CHỈ nhận số VN hợp lệ đúng 10 số).
@@ -462,6 +458,21 @@ export async function handleIncoming(ev) {
     const reply = await generateReply(history, mode, customerName || conv.customer_name, null, { channel, contextTag });
 
     await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName);
+
+    // TRẢ NỢ CẨM NANG: khách từng đòi (kv doc_wanted) mà lúc đó chưa rõ bệnh / bot bị chặn —
+    // giờ lượt này đã chốt được bệnh (Gemini/link-fb/MEDi) → giao liền, không bắt đòi lại.
+    try {
+      const hua = Number(store.getKV(`doc_wanted:${conversationId}`) || 0);
+      if (hua) {
+        if (Date.now() - hua > 7 * 24 * 3600 * 1000) {
+          store.delKV(`doc_wanted:${conversationId}`); // hứa quá 7 ngày → coi như nguội
+        } else {
+          const after = store.getConversation(conversationId);
+          const c = after?.condition && after.condition !== 'unknown' ? after.condition : null;
+          if (c && BROCHURE_PDF[c]) await giaoCamNang(conversationId, pageId, c);
+        }
+      }
+    } catch (e) { console.warn('[doc] trả nợ cẩm nang lỗi:', e?.message); }
   } catch (err) {
     console.error('[handler] lỗi handleIncoming:', err?.message || err);
   } finally {
@@ -473,6 +484,39 @@ export async function handleIncoming(ev) {
       setTimeout(() => handleIncoming(merged), 1000);
     }
   }
+}
+
+/**
+ * GIAO CẨM NANG đúng bệnh. Kênh Zalo có uid + OpenAPI → gửi FILE PDF THẬT (sang hơn link);
+ * còn lại gửi link. Xoá "lời hứa" kv doc_wanted sau khi giao.
+ * @param {object} opts  { xinSo: true → kèm 1 ô xin số (lead chưa có số) }
+ */
+async function giaoCamNang(conversationId, pageId, cond, opts = {}) {
+  const pdf = BROCHURE_PDF[cond];
+  if (!pdf) return false;
+  const ten = BROCHURE_NAME[cond] || 'cẩm nang chăm sóc tại nhà';
+  const fresh = store.getConversation(conversationId);
+  // uid Zalo: ưu tiên cột zalo_user_id; conv Zalo nào thiếu thì móc từ chính conv id "zl_<oa>_<uid>"
+  const zuid = stripZaloPrefix(fresh?.zalo_user_id || '') ||
+    (String(conversationId).startsWith('zl_') ? String(conversationId).split('_')[2] : null);
+  const guiFileThat = Boolean(zuid && isOpenApiEnabled());
+
+  const msgs = [`Dạ em gửi mình "${ten}" nha ạ 🌿`];
+  if (!guiFileThat) msgs.push(`Mình xem và áp dụng dần nha: ${pdf}`);
+  if (opts.xinSo) {
+    msgs.push('Mình muốn Bác sĩ xem kỹ tình trạng và tư vấn hướng phù hợp thì để lại số điện thoại giúp em nha, Bác sĩ gọi tư vấn miễn phí cho mình ạ 🙏');
+  }
+  msgs.forEach((m) => noteBotSent(conversationId, m));
+  noteBotJustSent(conversationId);
+  await sendMessages(pageId, conversationId, msgs);
+  if (guiFileThat) {
+    // sendFileByUrl tự lùi về gửi link khi upload/gửi file hụt → không cần phao thêm
+    await sendFileByUrl(zuid, pdf, `${ten}.pdf`).catch(() => {});
+  }
+  store.appendHistory(conversationId, 'model', `${msgs.join('\n')}${guiFileThat ? '\n[đã gửi file PDF cẩm nang]' : ''}`);
+  store.delKV(`doc_wanted:${conversationId}`);
+  console.log(`[doc] 📄 ${conversationId} đã giao cẩm nang bệnh ${cond} (${guiFileThat ? 'FILE THẬT qua OpenAPI' : 'link'})`);
+  return true;
 }
 
 /**

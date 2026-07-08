@@ -13,11 +13,35 @@
 import { sendMessages, isPageEnabled } from './pancake.js';
 import { sendTexts, isOpenApiEnabled } from './zalo.js';
 import * as quota from './quota.js';
+import * as store from './store.js';
 
 export async function sendCareMessages(target, messages, opts = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return false;
-  const { conversation_id, page_id, zalo_user_id } = target || {};
+  let { conversation_id, page_id, zalo_user_id } = target || {};
   const priority = opts.priority || 'thuong';
+
+  // NỐI LẠI KÊNH NGAY LÚC GỬI (08/07 — "chưa ca nào vào được luồng 0-1-3-6-7"):
+  // lúc POS ingest ca thường CHƯA có link SĐT↔Zalo, nhưng link hình thành DẦN về sau
+  // (khách bấm nút Chia sẻ thông tin / nhắn OA / gõ số). Trước đây kênh chốt cứng tại
+  // thời điểm ingest → ca nào ingest lúc chưa nối là mù kênh VĨNH VIỄN. Giờ: mỗi lần
+  // gửi chạm, thiếu kênh thì tra lại theo SĐT; nối được thì ghi ngược vào bill_care.
+  if (!((conversation_id && page_id) || zalo_user_id) && target?.phone) {
+    const zconv = store.getZaloConvByPhone(target.phone);
+    if (zconv) {
+      conversation_id = zconv.conversation_id;
+      page_id = zconv.page_id;
+      zalo_user_id = zconv.zalo_user_id || zalo_user_id;
+    } else {
+      const uid = store.getKV(`phone_zalo:${target.phone}`);
+      if (uid) zalo_user_id = uid;
+    }
+    if (((conversation_id && page_id) || zalo_user_id) && target.id) {
+      try {
+        store.upsertBillCare({ id: target.id, conversation_id, page_id, zalo_user_id });
+        console.log(`[care-send] 🔗 nối được kênh Zalo cho ca ${target.id} theo SĐT lúc gửi`);
+      } catch { /* ghi ngược hụt không chặn gửi */ }
+    }
+  }
 
   // Gác cổng ngân sách: chạm thường nhường đạn khi quota cạn tới mức dự trữ.
   if (!quota.choPhepGui(priority)) {
