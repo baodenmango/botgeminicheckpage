@@ -44,17 +44,20 @@ function phone84(p) {
  * @param {string} phone  SĐT khách (0xxx...)
  * @param {object} p      { ten, ngay_hen } — ngay_hen dạng dd/MM/yyyy
  */
-export async function sendZnsNhacLich(phone, { ten, ngay_hen } = {}) {
+export async function sendZnsNhacLich(phone, { ten, ngay_hen, maKH } = {}) {
   if (!isZnsEnabled()) return false;
   const sdt = phone84(phone);
   if (!sdt || !ngay_hen) return false;
-  // Tham số khớp template ZBS 603887 "Nhắc lịch hẹn điều trị" (tạo + nộp duyệt 07/07/2026):
-  // customer_name (Tên khách hàng, ≤30) + schedule_time (Thời gian, ≤20, vd "08:30 15/07/2026").
+  // Tham số khớp template ZBS 603887 "Nhắc lịch hẹn điều trị" (NỘP LẠI 09/07/2026 — lần đầu
+  // bị từ chối vì thiếu CẶP ĐỊNH DANH tên + mã KH): customer_name (Tên KH, ≤30) +
+  // ma_khach_hang (Mã số, ≤30) + schedule_time (Thời gian, ≤20, vd "08:30 15/07/2026").
+  // Không có mã thật (POS display_id) → "KH-" + 5 số cuối SĐT: đủ định danh, không lộ nguyên số.
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
     template_id: process.env.ZNS_TEMPLATE_NHACLICH,
     template_data: {
       customer_name: (ten || 'Quý khách').slice(0, 30),
+      ma_khach_hang: String(maKH || `KH-${sdt.slice(-5)}`).slice(0, 30),
       schedule_time: String(ngay_hen).slice(0, 20),
     },
     tracking_id: `nhaclich-${Date.now()}`,
