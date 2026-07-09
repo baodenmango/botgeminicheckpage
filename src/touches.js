@@ -20,6 +20,15 @@ export const CAM_NANG_PDF = BROCHURE_PDF;
 // Token/OA của OA "Phòng khám Cơ xương khớp Hiệp Lợi" cấu hình ở .mcp.json (zalo-hieploi).
 export const ZALO_OA_LINK = 'https://zalo.me/3136814239074246132';
 
+// --- ĐA DẠNG HOÁ BIẾN THỂ (audit 09/07/2026) ---
+// Căn cứ: nhiều câu template gửi NGUYÊN VĂN 100+ lần giữa các khách khác nhau → lộ máy.
+// Giải: mỗi câu hay lặp có 5-6 biến thể CÙNG Ý (giữ đòn bẩy + tuân thủ y tế: KHÔNG bịa số suất,
+// KHÔNG cam kết khỏi 100%, giữ "miễn phí" + tên "Bác sĩ Trình"), rồi CHỌN NGẪU NHIÊN 1 biến thể.
+// Các hàm noiDungChamN KHÔNG nhận conversationId nên dùng Math.random (bot chạy runtime → chấp nhận).
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 // Câu MỜI QUAN TÂM Zalo OA — đứng riêng 1 ô để FB bung preview nút "Quan tâm" đẹp.
 // NGUYÊN TẮC (anh Trình chốt 30/06): KHÔNG ra lệnh "bấm Quan tâm", mà cho LÝ DO/PHẦN THƯỞNG.
 // Tệp 45-65 chỉ bấm khi thấy mình NHẬN được gì cụ thể (video bài tập, Bác sĩ dặn dò qua Zalo).
@@ -27,18 +36,45 @@ export const ZALO_OA_LINK = 'https://zalo.me/3136814239074246132';
 // daCoSo=false → chưa có số: OA là cách nhẹ nhàng để khách giữ kết nối mà chưa cần cho số ngay.
 // daCoPDF: nếu ô trước ĐÃ tặng PDF rồi thì câu mời OA KHÔNG nhắc lại "nhận cẩm nang" (trùng phần
 //   thưởng → loãng mồi). Thay bằng phần thưởng OA-only: VIDEO bài tập + Bác sĩ dặn dò riêng qua Zalo.
+// 4-5 cách MỜI OA cho mỗi nhánh (daCoPDF × daCoSo) — xoay câu chữ, giữ nguyên phần thưởng/đòn bẩy.
+// ${tenCN} = tên cẩm nang theo bệnh; chỉ dùng ở nhánh CHƯA có PDF (OA là nơi nhận trọn bộ tài liệu).
+const MOI_OA_COPDF_COSO = [
+  `Mình quan tâm thêm Zalo phòng khám nha ạ 🌿 Bên Zalo em gửi mình video bài tập minh hoạ cho dễ làm theo, nhắc lịch hẹn với Bác sĩ khỏi quên, có thắc mắc gì nhắn em trả lời liền cho mình ạ`,
+  `Mình quan tâm Zalo phòng khám giúp em nha 🌿 Trên đó em có video bài tập minh hoạ cho dễ tập, còn nhắc lịch với Bác sĩ cho mình khỏi quên, cần gì nhắn em hỗ trợ liền ạ`,
+  `Mình kết nối thêm Zalo bên em nha ạ 🌿 Em gửi mình clip bài tập minh hoạ xem cho dễ làm theo, tới lịch hẹn Bác sĩ em cũng nhắc giúp, có gì thắc mắc mình cứ nhắn em ạ`,
+  `Mình bấm quan tâm Zalo phòng khám cho tiện nha 🌿 Bên đó em có sẵn video bài tập minh hoạ dễ theo, lại nhắc lịch hẹn với Bác sĩ khỏi quên, cần gì nhắn em liền cho mình ạ`,
+  `Mình theo dõi Zalo bên em luôn nha ạ 🌿 Em gửi video bài tập minh hoạ cho dễ tập tại nhà, nhắc mình lịch hẹn với Bác sĩ, thắc mắc gì nhắn em trả lời liền cho mình ạ`,
+];
+const MOI_OA_COPDF_CHUASO = [
+  `Mình quan tâm thêm Zalo phòng khám nha ạ 🌿 Bên Zalo em gửi mình video bài tập minh hoạ cho dễ làm theo, lại được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì cứ nhắn em hỗ trợ liền ạ`,
+  `Mình kết nối thêm Zalo bên em nha 🌿 Trên đó em có video bài tập minh hoạ dễ theo, mình còn được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì nhắn em hỗ trợ liền ạ`,
+  `Mình bấm quan tâm Zalo phòng khám giúp em nha ạ 🌿 Em gửi clip bài tập minh hoạ xem cho dễ làm, được Bác sĩ Trình theo sát dặn dò, có gì mình cứ nhắn em hỗ trợ ạ`,
+  `Mình theo dõi Zalo bên em cho tiện nha 🌿 Bên đó có sẵn video bài tập minh hoạ dễ tập, lại được Bác sĩ Trình dặn dò chăm sóc đều, cần gì nhắn em liền cho mình ạ`,
+  `Mình quan tâm Zalo phòng khám nha ạ 🌿 Em gửi mình video bài tập minh hoạ tập tại nhà, được Bác sĩ Trình chăm sóc dặn dò thường xuyên, có gì cứ nhắn em hỗ trợ ạ`,
+];
+const MOI_OA_CHUAPDF_COSO = [
+  (tenCN) => `Mình quan tâm Zalo phòng khám để em gửi trọn bộ "${tenCN}" + video bài tập theo dõi tại nhà nha ạ 🌿 Bên Zalo em cũng nhắc lịch hẹn với Bác sĩ cho mình khỏi quên, có gì thắc mắc nhắn em trả lời liền ạ`,
+  (tenCN) => `Mình kết nối Zalo bên em để em gửi trọn bộ "${tenCN}" + clip bài tập tại nhà nha 🌿 Tới lịch hẹn Bác sĩ em nhắc giúp mình khỏi quên, cần gì mình cứ nhắn em hỗ trợ ạ`,
+  (tenCN) => `Mình bấm quan tâm Zalo phòng khám nha ạ 🌿 Em gửi trọn bộ "${tenCN}" + video bài tập theo dõi tại nhà, còn nhắc lịch với Bác sĩ cho mình khỏi quên, có gì nhắn em liền ạ`,
+  (tenCN) => `Mình theo dõi Zalo bên em cho tiện nha ạ 🌿 Em gửi mình trọn bộ "${tenCN}" + clip bài tập tại nhà, tới lịch hẹn Bác sĩ em nhắc giúp, thắc mắc gì nhắn em trả lời liền ạ`,
+  (tenCN) => `Mình quan tâm Zalo phòng khám giúp em nha 🌿 Em gửi trọn bộ "${tenCN}" + video bài tập theo dõi tại nhà cho mình, nhắc lịch với Bác sĩ khỏi quên, cần gì nhắn em hỗ trợ ạ`,
+];
+const MOI_OA_CHUAPDF_CHUASO = [
+  (tenCN) => `Mình quan tâm Zalo phòng khám để nhận trọn bộ "${tenCN}" + video bài tập tại nhà nha ạ 🌿 Bên Zalo mình được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì cứ nhắn em hỗ trợ liền cho mình ạ`,
+  (tenCN) => `Mình kết nối Zalo bên em để nhận trọn bộ "${tenCN}" + clip bài tập tại nhà nha 🌿 Trên đó mình được Bác sĩ Trình dặn dò chăm sóc đều, có gì mình cứ nhắn em hỗ trợ ạ`,
+  (tenCN) => `Mình bấm quan tâm Zalo phòng khám để nhận trọn bộ "${tenCN}" + video bài tập tại nhà nha ạ 🌿 Bên đó có Bác sĩ Trình theo sát dặn dò, cần gì nhắn em hỗ trợ liền cho mình ạ`,
+  (tenCN) => `Mình theo dõi Zalo bên em để nhận trọn bộ "${tenCN}" + clip bài tập tại nhà nha 🌿 Mình được Bác sĩ Trình dặn dò chăm sóc thường xuyên, có gì cứ nhắn em hỗ trợ ạ`,
+  (tenCN) => `Mình quan tâm Zalo phòng khám nha ạ, em gửi trọn bộ "${tenCN}" + video bài tập tại nhà cho mình 🌿 Bên Zalo được Bác sĩ Trình dặn dò chăm sóc đều, cần gì nhắn em hỗ trợ liền ạ`,
+];
+
 export function loiMoiZaloOA(tenCN, daCoSo, daCoPDF) {
   let moi;
   if (daCoPDF) {
     // Đã có PDF → mồi OA là thứ Drive KHÔNG có: video minh hoạ + chăm sóc 1-1.
-    moi = daCoSo
-      ? `Mình quan tâm thêm Zalo phòng khám nha ạ 🌿 Bên Zalo em gửi mình video bài tập minh hoạ cho dễ làm theo, nhắc lịch hẹn với Bác sĩ khỏi quên, có thắc mắc gì nhắn em trả lời liền cho mình ạ`
-      : `Mình quan tâm thêm Zalo phòng khám nha ạ 🌿 Bên Zalo em gửi mình video bài tập minh hoạ cho dễ làm theo, lại được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì cứ nhắn em hỗ trợ liền ạ`;
+    moi = daCoSo ? pick(MOI_OA_COPDF_COSO) : pick(MOI_OA_COPDF_CHUASO);
   } else {
     // Chưa có PDF (bệnh chưa có cẩm nang) → OA chính là nơi nhận trọn bộ tài liệu.
-    moi = daCoSo
-      ? `Mình quan tâm Zalo phòng khám để em gửi trọn bộ "${tenCN}" + video bài tập theo dõi tại nhà nha ạ 🌿 Bên Zalo em cũng nhắc lịch hẹn với Bác sĩ cho mình khỏi quên, có gì thắc mắc nhắn em trả lời liền ạ`
-      : `Mình quan tâm Zalo phòng khám để nhận trọn bộ "${tenCN}" + video bài tập tại nhà nha ạ 🌿 Bên Zalo mình được Bác sĩ Trình dặn dò chăm sóc thường xuyên, cần gì cứ nhắn em hỗ trợ liền cho mình ạ`;
+    moi = daCoSo ? pick(MOI_OA_CHUAPDF_COSO)(tenCN) : pick(MOI_OA_CHUAPDF_CHUASO)(tenCN);
   }
   // Link đứng CUỐI ô để FB bung thẻ preview "Quan tâm OA".
   return `${moi}\n👉 ${ZALO_OA_LINK}`;
@@ -123,15 +159,23 @@ function noiDungCham4(condition, daCoSo) {
 // ===================== CHẠM 6 — BÁM ĐUỔI NHẸ (T+30h) =====================
 // Anh chốt 29/06: thay "retarget ad" bằng bot nhắn inbox bám đuổi nhẹ.
 // NÉN 04/07: 1 ô duy nhất.
+// Biến thể chạm 6 — giữ "suất tư vấn (miễn phí) với Bác sĩ Trình" nhưng xoay câu chữ để không trùng.
+const CHAM6_COSO = [
+  'Dạ em hỏi thăm mình chút xíu ạ 🌸 Mấy mẹo hôm trước mình áp dụng có đỡ hơn không ạ? Bác sĩ vẫn giữ suất tư vấn cho mình — hôm nào tiện qua khám mình nhắn em book giúp cho khỏi chờ nha 🙏',
+  'Dạ mấy hôm nay mình sao rồi ạ 🌸 Bài tập hôm trước có giúp mình dễ chịu hơn chút nào không? Suất tư vấn với Bác sĩ em vẫn để dành cho mình — khi nào tiện qua khám nhắn em xếp lịch cho khỏi chờ nha 🙏',
+  'Dạ em ghé hỏi thăm mình xíu nha 🌸 Mấy mẹo bữa trước mình làm thấy đỡ hơn không ạ? Bác sĩ vẫn dành suất tư vấn cho mình đó — bữa nào rảnh qua khám mình nhắn em giữ chỗ trước cho ạ 🙏',
+  'Dạ không biết mấy bữa nay mình thấy trong người sao rồi ạ 🌸 Hôm trước em có gửi mấy mẹo, mình áp dụng có nhẹ hơn không? Suất tư vấn với Bác sĩ em vẫn giữ — tiện hôm nào mình nhắn em book cho khỏi phải chờ nha 🙏',
+  'Dạ em nhắn hỏi thăm mình chút ạ 🌸 Tình trạng mấy hôm nay đỡ hơn được phần nào chưa mình? Bác sĩ vẫn còn giữ suất tư vấn cho mình — khi nào qua khám tiện thì nhắn em, em xếp lịch trước cho khỏi chờ ạ 🙏',
+];
+const CHAM6_CHUASO = [
+  'Dạ em hỏi thăm mình chút xíu ạ 🌸 Tình trạng mấy hôm nay có đỡ hơn không ạ? Suất tư vấn miễn phí với Bác sĩ Trình em vẫn giữ — mình để lại số giúp em để Bác sĩ gọi xem kỹ cho mình nha 🙏',
+  'Dạ mấy bữa nay mình thấy sao rồi ạ 🌸 Chỗ đau có dịu hơn được chút nào chưa? Em vẫn để dành suất tư vấn miễn phí với Bác sĩ Trình cho mình — mình để lại số, Bác sĩ gọi xem kỹ giúp mình nha 🙏',
+  'Dạ em ghé hỏi thăm mình xíu nha 🌸 Tình trạng mấy hôm nay đỡ hơn không ạ? Suất tư vấn miễn phí với Bác sĩ Trình vẫn còn cho mình đó — mình cho em xin số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  'Dạ không biết mấy hôm nay mình còn khó chịu nhiều không ạ 🌸 Em vẫn giữ suất tư vấn miễn phí với Bác sĩ Trình cho mình nè — mình để lại số giúp em, Bác sĩ gọi xem kỹ tình trạng cho mình nha 🙏',
+  'Dạ em nhắn hỏi thăm mình chút ạ 🌸 Chỗ đau hôm nay có bớt hơn được phần nào chưa mình? Suất tư vấn miễn phí với Bác sĩ Trình em vẫn để dành — mình gửi em số điện thoại, Bác sĩ gọi xem giúp cho mình nha 🙏',
+];
 function noiDungCham6(condition, daCoSo) {
-  if (daCoSo) {
-    return [
-      'Dạ em hỏi thăm mình chút xíu ạ 🌸 Mấy mẹo hôm trước mình áp dụng có đỡ hơn không ạ? Bác sĩ vẫn giữ suất tư vấn cho mình — hôm nào tiện qua khám mình nhắn em book giúp cho khỏi chờ nha 🙏',
-    ];
-  }
-  return [
-    'Dạ em hỏi thăm mình chút xíu ạ 🌸 Tình trạng mấy hôm nay có đỡ hơn không ạ? Suất tư vấn miễn phí với Bác sĩ Trình em vẫn giữ — mình để lại số giúp em để Bác sĩ gọi xem kỹ cho mình nha 🙏',
-  ];
+  return [daCoSo ? pick(CHAM6_COSO) : pick(CHAM6_CHUASO)];
 }
 
 // ===================== CHẠM 2/5/7 — LEO THANG CẤP BÁCH (khi CHƯA có số) =====================
@@ -139,23 +183,41 @@ function noiDungCham6(condition, daCoSo) {
 // CHƯA số → bot tự nhắn xin số, mức khan hiếm/cấp bách TĂNG DẦN qua 3 mốc (15p → 24h → 47h).
 // Tuân thủ y tế: KHÔNG cam kết khỏi 100%, không bịa kết quả, không dọa. Chỉ khan hiếm suất + bằng chứng nhẹ.
 
+// Biến thể chạm 2 (~15p, chưa số) — giữ đòn bẩy "suất giữ riêng" + xin số, KHÔNG bịa số suất cụ thể.
+const CHAM2_CHUASO = [
+  'Dạ em thấy mình quan tâm mà chưa kịp để lại số ạ 🌸 Bên em đang giữ riêng cho mình 1 suất tư vấn với Bác sĩ Trình hôm nay — mình để lại số điện thoại, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
+  'Dạ nãy mình có quan tâm mà chưa kịp gửi số cho em ạ 🌸 Em vẫn đang giữ riêng cho mình một suất tư vấn với Bác sĩ Trình trong hôm nay — mình cho em xin số, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
+  'Dạ hình như mình còn bỏ ngỏ chưa để lại số cho em ạ 🌸 Bên em đang ưu tiên giữ cho mình một suất tư vấn với Bác sĩ Trình — mình gửi em số điện thoại để Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
+  'Dạ em để ý mình quan tâm mà chưa kịp cho số ạ 🌸 Suất tư vấn với Bác sĩ Trình em đang giữ riêng cho mình hôm nay đó — mình để lại số giúp em, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
+  'Dạ nãy giờ mình quan tâm mà em chưa có số để nhờ Bác sĩ gọi ạ 🌸 Bên em vẫn dành riêng cho mình một suất tư vấn với Bác sĩ Trình hôm nay — mình cho em xin số, Bác sĩ gọi tư vấn miễn phí nha 🙏',
+];
 // Chạm 2 (~15 phút, chưa số) — NÉN 04/07: 1 ô.
 function noiDungCham2(condition, daCoSo) {
-  return [
-    'Dạ em thấy mình quan tâm mà chưa kịp để lại số ạ 🌸 Bên em đang giữ riêng cho mình 1 suất tư vấn với Bác sĩ Trình hôm nay — mình để lại số điện thoại, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
-  ];
+  return [pick(CHAM2_CHUASO)];
 }
+// Biến thể chạm 5 (~24h, chưa số) — bằng chứng xã hội nhẹ + xin số. KHÔNG cam kết khỏi 100%.
+const CHAM5_CHUASO = [
+  'Dạ mấy hôm nay tình trạng của mình sao rồi ạ, còn khó chịu nhiều không? 🌸 Nhiều cô chú giống tình trạng mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng là cải thiện tốt lắm ạ — mình để lại số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  'Dạ chỗ đau của mình mấy bữa nay có dịu hơn được chút nào chưa ạ? 🌸 Nhiều cô chú tình trạng giống mình, được Bác sĩ Trình xem kỹ và hướng dẫn đúng nên đỡ hơn nhiều lắm ạ — mình cho em xin số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  'Dạ không biết mấy hôm nay mình còn đau nhiều không ạ 🌸 Bên em nhiều cô chú tình trạng như mình, sau khi được Bác sĩ Trình xem kỹ và dặn đúng cách thì cải thiện rõ lắm ạ — mình để lại số, Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  'Dạ tình trạng của mình mấy bữa nay đỡ hơn được phần nào chưa ạ? 🌸 Nhiều cô chú giống mình được Bác sĩ Trình khám kỹ tìm đúng gốc rồi hướng dẫn nên nhẹ nhõm hơn hẳn ạ — mình gửi em số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  'Dạ em hỏi thăm chút, mấy hôm nay mình còn khó chịu nhiều không ạ 🌸 Nhiều cô chú tình trạng như mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng nên cải thiện tốt lắm — mình để lại số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
+];
 // Chạm 5 (~24h, chưa số) — NÉN 04/07: 1 ô.
 function noiDungCham5(condition, daCoSo) {
-  return [
-    'Dạ mấy hôm nay tình trạng của mình sao rồi ạ, còn khó chịu nhiều không? 🌸 Nhiều cô chú giống tình trạng mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng là cải thiện tốt lắm ạ — mình để lại số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
-  ];
+  return [pick(CHAM5_CHUASO)];
 }
+// Biến thể chạm 7 (~47h, chưa số) — lời cuối nhẹ để cửa mở, giữ "miễn phí" + xin số.
+const CHAM7_CHUASO = [
+  'Dạ em nhắn mình lần cuối nha ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em giữ cho mình sắp hết hạn — nếu mình còn cần, để lại số điện thoại là Bác sĩ gọi cho mình liền, hoàn toàn miễn phí ạ 🙏',
+  'Dạ em xin phép nhắn mình một lần cuối nha 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em dành cho mình cũng sắp hết đợt — nếu mình còn cần thì để lại số, Bác sĩ gọi cho mình liền, không tốn gì đâu ạ 🙏',
+  'Dạ em ghé nhắn mình lần cuối thôi ạ 🌸 Suất tư vấn với Bác sĩ Trình em giữ cho mình sắp tới hạn rồi — mình còn cần thì cho em xin số, Bác sĩ gọi tư vấn cho mình liền, hoàn toàn miễn phí nha 🙏',
+  'Dạ đây là lần cuối em nhắn để mình khỏi lỡ ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình dành cho mình sắp hết hạn — nếu mình còn muốn thì để lại số, Bác sĩ gọi cho mình liền, không mất phí gì đâu ạ 🙏',
+  'Dạ em nhắn nhẹ mình lần cuối nha ạ 🌸 Em vẫn còn giữ cho mình suất tư vấn miễn phí với Bác sĩ Trình nhưng sắp hết đợt rồi — mình còn cần thì gửi em số, Bác sĩ gọi cho mình liền, hoàn toàn miễn phí ạ 🙏',
+];
 // Chạm 7 (~47h, chưa số) — NÉN 04/07: 1 ô, lời cuối nhẹ nhàng để cửa mở.
 function noiDungCham7(condition, daCoSo) {
-  return [
-    'Dạ em nhắn mình lần cuối nha ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em giữ cho mình sắp hết hạn — nếu mình còn cần, để lại số điện thoại là Bác sĩ gọi cho mình liền, hoàn toàn miễn phí ạ 🙏',
-  ];
+  return [pick(CHAM7_CHUASO)];
 }
 
 // --- Bảng định nghĩa các chạm bot TỰ GỬI. `hours` khớp nhac-7cham/config.js. ---

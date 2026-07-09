@@ -25,6 +25,17 @@ function chuanHoaCau(s) {
   return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+// Ô này có nhắc "suất tư vấn" / "suất tư vấn miễn phí" không? (bỏ dấu cho chắc).
+// Audit 09/07: câu mời "giữ suất tư vấn với Bs Trình" lặp ≥2 lần với CÙNG 1 khách ở 54%
+// hội thoại → ra số tụt 17% (nhắc 1 lần) xuống 7% (nhắc 2+). Lặp nguyên văn = lộ máy.
+function demSuatTuVan(text) {
+  const n = String(text || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  return /su[aâ]t tu van/.test(n);
+}
+// Câu chốt trung tính khi đã phải bỏ hết ô "suất tư vấn" (tránh gửi lượt rỗng).
+const CAU_CHOT_TRUNG_TINH = 'Dạ mình cứ nhắn em bất cứ lúc nào cần nha ạ 🙏';
+
 // Khách XIN tài liệu/cẩm nang/bài tập → gửi PDF ngay (không đợi chạm 4).
 const ASK_DOC_RE = /\b(gửi|cho|xin|share|sen)\b.*(tài liệu|tai lieu|cẩm nang|cam nang|bài tập|bai tap|file|pdf|hướng dẫn|huong dan|video)|(tài liệu|cẩm nang|bài tập|file|pdf).*(đâu|chưa|gửi|gui)/i;
 function wantsDocument(text) {
@@ -653,10 +664,39 @@ export async function handleBotTouch(conv, touchNo) {
       }
     }
 
+    // ===== CHỐNG LẶP ĐÒN "SUẤT TƯ VẤN" (VIỆC #4) — chạm gửi TRỰC TIẾP, không qua dispatch =====
+    // Chuỗi chạm 2/5/6/7 (touches.js) cũng nhắc "suất tư vấn" → dùng CHUNG sổ với dispatch.
+    // Audit 09/07: lặp ≥2 lần → ra số 7% vs 17% (nhắc 1 lần), 54% hội thoại lặp.
+    {
+      const daNhac = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
+      if (daNhac >= 1) {
+        // Audit đặt mốc: NHẮC 1 LẦN = ra số 17%, nhắc 2+ = tụt 7%. Vậy chỉ LẦN ĐẦU (lúc count=0)
+        // mới cho câu "suất tư vấn" đi qua; đã nhắc ≥1 lần thì các lượt sau BỎ HẾT ô mời tư vấn.
+        const truoc = messages.length;
+        messages = messages.filter((m) => !demSuatTuVan(m));
+        if (messages.length < truoc) {
+          console.log(`[cham${touchNo}] ${conversationId} đã nhắc "suất tư vấn" ${daNhac} lần → bỏ ${truoc - messages.length} ô mời trùng (chỉ cho nhắc 1 lần)`);
+        }
+        if (!messages.length) {
+          console.log(`[cham${touchNo}] ${conversationId} chạm chỉ toàn ô "suất tư vấn" trùng → đánh dấu xong, không nhắn`);
+          store.markTouchDone(conversationId, touchNo);
+          return;
+        }
+      }
+    }
+
     messages.forEach((m) => noteBotSent(conversationId, m));
     noteBotJustSent(conversationId); // chống race echo
     await sendMessages(pageId, conversationId, messages);
     store.appendHistory(conversationId, 'model', `[CHẠM ${touchNo}] ` + messages.join('\n'));
+    // Cập nhật SỔ "suất tư vấn" (dùng chung dispatch) — cộng số ô mời thực gửi ở chạm này.
+    {
+      const soOMoi = messages.filter((m) => demSuatTuVan(m)).length;
+      if (soOMoi > 0) {
+        const truoc = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
+        store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
+      }
+    }
     store.markTouchDone(conversationId, touchNo);
     // Bỏ qua các chạm THẤP hơn còn sót (lead vào đêm, sáng đã quá nhiều mốc → ta gửi mốc cao nhất,
     // các mốc cũ coi như lỡ, đánh dấu xong để KHÔNG gửi ngược chạm 3 sau khi đã gửi chạm 4).
@@ -718,6 +758,54 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     }
   }
 
+  // ===== VIỆC #2 — KỶ LUẬT LINK (audit 09/07: loạt CÓ link khách nhắn tiếp 30% vs KHÔNG link 57%) =====
+  // Bot gắn sale page quá sớm, quá dày → rớt khách. Thêm 2 luật (giữ nguyên cờ sale_link_sent
+  // của ensureSalePageLink, chỉ SIẾT thêm):
+  {
+    // (a) LƯỢT TRẢ LỜI ĐẦU của bot KHÔNG được kèm BẤT KỲ link nào — gửi link ngay câu đầu làm rớt khách.
+    //     Bỏ MỌI link http/https (sale page, Drive/PDF, clip FB, Zalo OA), không chỉ riêng sale page.
+    //     Lượt model đầu = trong lịch sử CHƯA có 'model' nào trước lượt này.
+    const daCoModel = (freshConv?.history || []).some((h) => h.role === 'model');
+    if (!daCoModel) {
+      const truoc = outMessages.length;
+      outMessages = outMessages.filter((m) => !/https?:\/\//i.test(String(m)));
+      if (outMessages.length < truoc) {
+        console.log(`[dispatch] ${conversationId} lượt trả lời ĐẦU → bỏ ${truoc - outMessages.length} ô link (30% vs 57% continuation)`);
+      }
+    }
+    // (b) TỐI ĐA 1 link/lượt: nếu có ≥2 ô chứa 'http' → chỉ giữ ô link ĐẦU, bỏ các ô link sau.
+    let daGiuLink = false;
+    const truocHttp = outMessages.length;
+    outMessages = outMessages.filter((m) => {
+      if (!String(m).includes('http')) return true;
+      if (!daGiuLink) { daGiuLink = true; return true; }
+      return false; // ô link thứ 2 trở đi → bỏ
+    });
+    if (outMessages.length < truocHttp) {
+      console.log(`[dispatch] ${conversationId} bỏ ${truocHttp - outMessages.length} ô link thừa (tối đa 1 link/lượt)`);
+    }
+  }
+
+  // ===== VIỆC #4 — SỔ CHỐNG LẶP ĐÒN "SUẤT TƯ VẤN" (audit 09/07: lặp ≥2 lần → ra số 7% vs 17%, 54% hội thoại) =====
+  // Sổ đếm theo hội thoại: đã nhắc "suất tư vấn" bao nhiêu lần. Nhiều nguồn (Gemini, chạm, care)
+  // cùng nhắc → cần đếm chung. dispatch là điểm nghẽn của cả retouch/incoming nên đặt luật ở đây.
+  {
+    const daNhac = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
+    if (daNhac >= 1) {
+      // Audit đặt mốc: NHẮC 1 LẦN = ra số 17%, nhắc 2+ = tụt 7%. Vậy chỉ LẦN ĐẦU (lúc count=0)
+      // mới cho câu "suất tư vấn" đi qua; đã nhắc ≥1 lần thì các lượt sau BỎ HẾT ô mời tư vấn.
+      const truoc = outMessages.length;
+      outMessages = outMessages.filter((m) => !demSuatTuVan(m));
+      if (outMessages.length < truoc) {
+        console.log(`[dispatch] ${conversationId} đã nhắc "suất tư vấn" ${daNhac} lần → bỏ ${truoc - outMessages.length} ô mời trùng (chống lặp đòn)`);
+      }
+      // Sau khi bỏ mà rỗng lượt (chỉ toàn ô mời) → giữ lại 1 ô trung tính, đừng gửi lượt rỗng/im.
+      if (!outMessages.length && truoc > 0) {
+        outMessages = [CAU_CHOT_TRUNG_TINH];
+      }
+    }
+  }
+
   if (outMessages.length) {
     // Gửi các ô thoại về khách qua Pancake
     outMessages.forEach((m) => noteBotSent(conversationId, m)); // đánh dấu bot gửi (để khỏi nhầm là người gõ)
@@ -728,6 +816,12 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     // Đánh dấu đã gửi link để không lặp lại mỗi lượt
     if (linkWasAdded && SALE_PAGE[knownCondition]) {
       store.markSaleLinkSent(conversationId);
+    }
+    // Cập nhật SỔ "suất tư vấn": cộng số ô mời THỰC GỬI (audit 09/07 — 17%→7%, 54% hội thoại).
+    const soOMoi = outMessages.filter((m) => demSuatTuVan(m)).length;
+    if (soOMoi > 0) {
+      const truoc = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
+      store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
     }
   } else {
     console.log(`[dispatch] ${conversationId} mọi ô đều trùng tin cũ → không gửi gì (tránh lộ bot)`);

@@ -24,6 +24,47 @@ function zaloUserIdFromConv(conversationId) {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// --- TRẦN BÓNG CỨNG Ở TẦNG GỬI (chống "dội bom") ---
+// Căn cứ (audit 09/07/2026 trên 324 hội thoại thật): bot gửi TB 5,2 bóng/lượt, 51% lượt ≥5 bóng
+// (người thật chỉ 1,9 bóng). Khách CÒN nhắn tiếp giảm dốc: loạt 1–4 bóng ~70% → loạt 7+ bóng chỉ 15%.
+// VÁCH ĐÁ ở bóng thứ 5 → cắt cứng ≤ MAX_BUBBLES ô ở đây là chặn được TẤT CẢ nguồn (dispatch,
+// giaoCamNang, chuỗi chạm, care) vì mọi tin bot gửi đều đi qua sendMessages/sendPrivateReply.
+// MAX mặc định 4, KHÔNG để thấp hơn 3 kẻo cắt mất ô xin số.
+const MAX_BUBBLES = Math.max(3, parseInt(process.env.BOT_MAX_BUBBLES || '4', 10));
+
+// Gộp THÔNG MINH mảng ô về tối đa `max` ô, KHÔNG chặt cụt mất ý:
+//  - ≤ max: giữ nguyên.
+//  - > max: giữ nguyên các ô ĐẦU (thường là câu trả lời cốt lõi + ô xin số), rồi GỘP phần thừa
+//    cuối vào ô cuối cùng được giữ (nối bằng '\n') để không rơi ý.
+//  - Ô chứa 'http' (link/clip) cần ĐỨNG RIÊNG (để FB bung preview) → tách các ô link ra, ưu tiên
+//    gộp/bỏ các ô CHỮ trùng lặp trước, giữ 1 ô link (nếu còn chỗ, ưu tiên link cuối = mới nhất).
+// KHÔNG bao giờ trả mảng rỗng (vào rỗng thì trả rỗng).
+function capBubbles(messages, max = MAX_BUBBLES) {
+  const arr = (Array.isArray(messages) ? messages : []).filter((m) => m != null && String(m).trim() !== '');
+  if (arr.length === 0) return [];
+  if (arr.length <= max) return arr;
+
+  // Tách ô link (chứa 'http') ra riêng — link phải đứng 1 ô để bung preview, không gộp chung chữ.
+  const links = arr.filter((m) => /https?:\/\//i.test(m));
+  const texts = arr.filter((m) => !/https?:\/\//i.test(m));
+
+  // Giữ 1 ô link (mới nhất = cuối) nếu có; phần còn lại của "budget" dành cho ô chữ.
+  const keepLink = links.length > 0 ? links[links.length - 1] : null;
+  const budgetForText = keepLink ? max - 1 : max;
+
+  let out;
+  if (texts.length <= budgetForText) {
+    out = texts.slice();
+  } else {
+    // Giữ các ô chữ ĐẦU, GỘP phần chữ thừa cuối vào ô cuối cùng được giữ (nối bằng '\n').
+    const head = texts.slice(0, budgetForText - 1);
+    const tail = texts.slice(budgetForText - 1).join('\n');
+    out = [...head, tail];
+  }
+  if (keepLink) out.push(keepLink); // link xuống cuối, đứng riêng để bung preview
+  return out;
+}
+
 // Delay "giống người thật" TRƯỚC khi gửi ô thứ i (i bắt đầu từ 0).
 // Mô phỏng người tư vấn thật: ĐỌC tin khách → NGHĨ (lắng nghe, đồng cảm) → GÕ trên điện thoại.
 // Tốc độ gõ ĐT thật ~4–5 ký tự/giây (KHÔNG phải máy bắn tức thì). Tin đầu cũng phải có
@@ -37,21 +78,33 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Mục tiêu (chốt với anh): 1 câu thường ~45 ký tự hiện ra sau ~4–6s — giống người đọc+gõ.
 const TYPE_MS_PER_CHAR = parseInt(process.env.TYPE_MS_PER_CHAR || '70', 10);  // ~14 ký tự/s, gõ nhanh tay
 const THINK_MIN_MS = parseInt(process.env.THINK_MIN_MS || '1000', 10);
-const THINK_RAND_MS = parseInt(process.env.THINK_RAND_MS || '1200', 10);
+// Nới THINK_RAND rộng ra (1200 → 2500): biên ngẫu nhiên cũ quá hẹp nên các lượt sau hội tụ 16–20s.
+const THINK_RAND_MS = parseInt(process.env.THINK_RAND_MS || '2500', 10);
 const FIRST_READ_MS = parseInt(process.env.FIRST_READ_MS || '800', 10);       // nhịp đọc tin khách trước khi gõ ô đầu
-const DELAY_CAP_MS = parseInt(process.env.DELAY_CAP_MS || '8000', 10);        // trần 8s/ô (câu rất dài)
+// Nâng trần lên 12s để dải delay các ô sau giãn ra (ai muốn giữ 8s cứ set env DELAY_CAP_MS=8000).
+const DELAY_CAP_MS = parseInt(process.env.DELAY_CAP_MS || '12000', 10);       // trần 12s/ô (câu rất dài / có jitter)
 
+// DELAY ĐỘNG BIÊN RỘNG — chống "nhịp máy":
+// Đo được (audit 09/07/2026): từ lượt khách thứ 3–4, bot trả lời 16–20s ĐỀU TĂM TẮP (median 16–20s,
+// IQR chỉ 7–20s) trong khi người thật dao động rộng → đây là "tell" lộ bot. Nghiên cứu Gnewuch et al.
+// (ECIS 2018): delay ĐỘNG theo độ phức tạp + có dao động làm tăng cảm nhận "người".
+// Cách chữa: GIỮ tin ĐẦU nhanh (<30s, đây là TÀI SẢN — tuyệt đối không làm chậm), còn các ô SAU
+// (index>0) nhân thêm hệ số jitter ±30% để phá thế đều đặn.
 function humanDelay(text, index) {
   const len = (text || '').length;
   // gõ: tỉ lệ độ dài, tốc độ người thật trên ĐT
   const typing = len * TYPE_MS_PER_CHAR;
-  // nghĩ: nhịp "lắng nghe + cân nhắc" trước khi gõ, có ngẫu nhiên cho tự nhiên
+  // nghĩ: nhịp "lắng nghe + cân nhắc" trước khi gõ, có ngẫu nhiên cho tự nhiên (biên đã nới rộng)
   const thinking = THINK_MIN_MS + Math.floor(Math.random() * THINK_RAND_MS);
   // ô ĐẦU: thêm nhịp ĐỌC tin khách (người thật đọc xong mới gõ — không bắn ngay)
   const read = index === 0 ? FIRST_READ_MS + Math.floor(Math.random() * 1500) : 0;
   // tin càng về sau nghĩ thêm chút (như đang cân nhắc nói tiếp)
   const lean = index > 0 ? (index - 1) * 500 : 0;
-  return Math.min(read + thinking + typing + lean, DELAY_CAP_MS);
+  let total = read + thinking + typing + lean;
+  // JITTER ±30% CHỈ cho ô SAU (index>0) — phá thế 16–20s đều tăm tắp. Ô ĐẦU (index===0) GIỮ NGUYÊN
+  // để tin đầu vẫn nhanh (<30s), KHÔNG chạm cap — đây là tài sản.
+  if (index > 0) total *= (0.7 + Math.random() * 0.6);
+  return Math.min(Math.round(total), DELAY_CAP_MS);
 }
 
 // Tra cấu hình 1 page theo page_id, KHỚP LINH HOẠT tiền tố kênh.
@@ -312,6 +365,8 @@ async function sendOne(pageId, conversationId, text) {
  * @param {string[]} messages - mảng các ô (đã giới hạn 4 ô ở gemini.js)
  */
 export async function sendMessages(pageId, conversationId, messages) {
+  // TRẦN BÓNG CỨNG: gộp/cắt xuống ≤ MAX_BUBBLES ở tầng gửi (điểm nghẽn duy nhất) — chống dội bom.
+  messages = capBubbles(messages);
   for (let i = 0; i < messages.length; i++) {
     // Chờ "đọc + nghĩ + gõ" TRƯỚC khi gửi ô này (tin đầu = 0, gửi ngay).
     await sleep(humanDelay(messages[i], i));
@@ -373,6 +428,8 @@ export async function sendPrivateReply(pageId, conversationId, commentId, messag
   const token = getPageToken(pageId);
   if (!token) return false;
   const url = `${API_BASE}/pages/${pageId}/conversations/${conversationId}/messages`;
+  // TRẦN BÓNG CỨNG: chống dội bom ngay cả với private reply (xem capBubbles).
+  messages = capBubbles(messages);
   let okAny = false;
   for (let i = 0; i < messages.length; i++) {
     await sleep(humanDelay(messages[i], i));
