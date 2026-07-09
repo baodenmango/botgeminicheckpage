@@ -768,9 +768,21 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     const daCoModel = (freshConv?.history || []).some((h) => h.role === 'model');
     if (!daCoModel) {
       const truoc = outMessages.length;
-      outMessages = outMessages.filter((m) => !/https?:\/\//i.test(String(m)));
-      if (outMessages.length < truoc) {
-        console.log(`[dispatch] ${conversationId} lượt trả lời ĐẦU → bỏ ${truoc - outMessages.length} ô link (30% vs 57% continuation)`);
+      const locSach = outMessages.filter((m) => !/https?:\/\//i.test(String(m)));
+      if (locSach.length > 0) {
+        // Còn ô chữ → bỏ hẳn các ô link.
+        outMessages = locSach;
+      } else {
+        // LƯỢT ĐẦU mà Gemini CHỈ trả ô chứa link (không có ô chữ nào) → ĐỪNG để lượt rỗng (bot im).
+        // Gỡ link RA KHỎI từng ô, giữ lại phần chữ; ô nào gỡ xong rỗng thì bỏ.
+        outMessages = outMessages
+          .map((m) => String(m).replace(/https?:\/\/\S+/gi, '').replace(/[ \t]{2,}/g, ' ').trim())
+          .filter((m) => m.length > 0);
+        // Cùng lắm vẫn rỗng (ô chỉ có mỗi link) → giữ 1 câu trung tính, KHÔNG im.
+        if (outMessages.length === 0) outMessages = [CAU_CHOT_TRUNG_TINH];
+      }
+      if (outMessages.length !== truoc) {
+        console.log(`[dispatch] ${conversationId} lượt trả lời ĐẦU → gỡ link (30% vs 57% continuation, không để lượt rỗng)`);
       }
     }
     // (b) TỐI ĐA 1 link/lượt: nếu có ≥2 ô chứa 'http' → chỉ giữ ô link ĐẦU, bỏ các ô link sau.
