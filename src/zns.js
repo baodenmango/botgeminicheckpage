@@ -141,7 +141,7 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
  * @param {object} p      { ten, maHoSo, ngayKham } — ngayKham là epoch giây (bill_date)
  * @returns {Promise<{ok:boolean, voucher_code?:string, ly_do?:string}>}
  */
-export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham } = {}) {
+export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh } = {}) {
   const sdt = phone84(phone);
   if (!sdt) return { ok: false, ly_do: 'sdt_khong_hop_le' };
   if (!VOUCHER_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };
@@ -152,6 +152,7 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham } = {}) {
   const rnd = (Number(sdt.slice(-6)) * 2654435761 % 2176782336).toString(36); // ổn định theo SĐT, không dùng Math.random
   const voucher_code = `SA${(rnd + sdt.slice(-4)).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}`;
   const now = Math.floor(Date.now() / 1000);
+  const ct = chuongTrinh === 'ct2' ? 'ct2' : 'ct1'; // mặc định CT1 (tầm soát 150k)
 
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
@@ -172,8 +173,15 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham } = {}) {
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
     if (r.data?.error === 0) {
       store.setKV(key, String(now));
-      console.log(`[zns] 🎁 gửi voucher ${voucher_code} tới ${sdt.slice(0, 5)}*** (HSD ${VOUCHER_HSD_NGAY} ngày)`);
-      return { ok: true, voucher_code };
+      // SỔ VOUCHER (anh Trình chốt 09/07): lưu bản ghi để quầy XÁC THỰC + khách xem ưu đãi rõ.
+      // Key theo MÃ (quầy tra bằng mã), lưu đủ SĐT/tên/chương trình/HSD/trạng thái dùng.
+      store.setKV(`voucher:${voucher_code}`, JSON.stringify({
+        ma: voucher_code, sdt, ten: ten || null, chuong_trinh: ct,
+        phat_luc: now, het_han: now + VOUCHER_HSD_NGAY * 86400,
+        da_dung: false, dung_luc: null,
+      }));
+      console.log(`[zns] 🎁 gửi voucher ${voucher_code} (${ct.toUpperCase()}) tới ${sdt.slice(0, 5)}*** (HSD ${VOUCHER_HSD_NGAY} ngày)`);
+      return { ok: true, voucher_code, chuong_trinh: ct };
     }
     console.warn('[zns] gửi voucher lỗi:', JSON.stringify(r.data).slice(0, 200));
     return { ok: false, ly_do: `zalo_loi_${r.data?.error}` };

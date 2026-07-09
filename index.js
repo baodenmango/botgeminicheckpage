@@ -45,6 +45,109 @@ app.get('/', (_req, res) => {
   );
 });
 
+// ============================================================
+//  VOUCHER — trang xem ưu đãi (khách bấm "Xem mã ưu đãi") + xác thực cho quầy.
+//  Template ZNS 518980 chữ CỐ ĐỊNH "voucher siêu âm vi điểm", KHÔNG ghi được giá/chương trình
+//  → giá + điều kiện + trạng thái mã hiển thị Ở ĐÂY (nút "Xem mã ưu đãi" trỏ về URL này).
+//  Sổ voucher lưu ở kv `voucher:<MÃ>` khi sendZnsVoucher phát mã.
+const VOUCHER_CT = {
+  ct1: { ten: 'Gói tầm soát xương khớp', g_goc: '800.000đ', gia: '150.000đ',
+    gom: ['Siêu âm vi điểm cơ xương khớp (500.000đ)', 'Đo cơ mỡ, đánh giá xương khớp (300.000đ)'] },
+  ct2: { ten: 'Gói khám ưu đãi chủ lực', g_goc: '1.300.000đ', gia: '300.000đ',
+    gom: ['Khám BS chuyên khoa Cơ Xương Khớp', 'Siêu âm khớp gối (máy Mindray MX3)', 'Điện trị liệu 1 buổi giảm đau', 'Tư vấn phác đồ riêng + lộ trình', 'Bộ bài tập tại nhà (tặng kèm)'] },
+};
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function ngayVNstr(sec) { const d = new Date(sec * 1000 + 7 * 3600 * 1000); return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; }
+
+function trangVoucher(rec, thongBao) {
+  const nowS = Math.floor(Date.now() / 1000);
+  const ct = VOUCHER_CT[rec?.chuong_trinh] || VOUCHER_CT.ct1;
+  const hetHan = rec ? rec.het_han < nowS : false;
+  const daDung = rec ? rec.da_dung : false;
+  let trangThai, mauTt;
+  if (!rec) { trangThai = 'Mã không tồn tại'; mauTt = '#B4232A'; }
+  else if (daDung) { trangThai = 'ĐÃ SỬ DỤNG'; mauTt = '#8A6D1F'; }
+  else if (hetHan) { trangThai = 'ĐÃ HẾT HẠN'; mauTt = '#B4232A'; }
+  else { trangThai = 'CÒN HIỆU LỰC'; mauTt = '#2F6B54'; }
+  const dsGom = ct.gom.map((g) => `<li>${esc(g)}</li>`).join('');
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voucher — Phòng khám Hiệp Lợi</title>
+<style>
+:root{--g:#2F6B54;--gold:#9A7B1F;--ink:#1C3A32;--muted:#6B7169;--line:#E3E0D7;--bg:#F4F6F3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",system-ui,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:440px;margin:0 auto;padding:24px 18px 40px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 8px 28px -14px rgba(28,58,50,.22)}
+.top{background:linear-gradient(135deg,#2F6B54,#3F8468);color:#fff;padding:22px 22px 18px}
+.top .brand{font-size:.82rem;opacity:.9;letter-spacing:.02em}
+.top h1{margin:6px 0 0;font-size:1.32rem;line-height:1.25;font-weight:700}
+.status{display:inline-block;margin:14px 22px 0;padding:6px 14px;border-radius:999px;font-weight:700;font-size:.86rem;color:#fff;background:${mauTt}}
+.body{padding:18px 22px 24px}
+.price{display:flex;align-items:baseline;gap:12px;margin:6px 0 4px}
+.price .now{font-size:2rem;font-weight:800;color:var(--g);letter-spacing:-.02em}
+.price .was{font-size:1rem;color:var(--muted);text-decoration:line-through}
+.lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;margin:18px 0 8px}
+ul.gom{margin:0;padding-left:18px;color:var(--ink)}ul.gom li{margin:4px 0}
+.ma{margin-top:18px;padding:14px;background:var(--bg);border:1px dashed var(--g);border-radius:12px;text-align:center}
+.ma .code{font-size:1.5rem;font-weight:800;letter-spacing:.12em;color:var(--ink);font-family:ui-monospace,Menlo,monospace}
+.ma .hd{font-size:.78rem;color:var(--muted)}
+.meta{margin-top:16px;font-size:.86rem;color:var(--muted)}.meta b{color:var(--ink)}
+.dk{margin-top:16px;font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+.foot{text-align:center;margin-top:20px;font-size:.78rem;color:var(--muted)}
+.tb{margin:0 0 14px;padding:10px 14px;border-radius:10px;background:#EAF3EE;color:#245c47;font-size:.9rem;font-weight:600}
+</style></head><body><div class="wrap">
+${thongBao ? `<div class="tb">${esc(thongBao)}</div>` : ''}
+<div class="card">
+  <div class="top"><div class="brand">🩺 Phòng khám Cơ Xương Khớp Hiệp Lợi</div>
+    <h1>Ưu đãi tri ân khách cũ</h1></div>
+  <div class="status">${trangThai}</div>
+  <div class="body">
+    ${rec ? `
+    <div class="lbl">${esc(ct.ten)}</div>
+    <div class="price"><span class="now">${esc(ct.gia)}</span><span class="was">${esc(ct.g_goc)}</span></div>
+    <div class="lbl">Bao gồm</div>
+    <ul class="gom">${dsGom}</ul>
+    <div class="ma"><div class="hd">Mã ưu đãi — đưa mã này cho quầy lễ tân</div><div class="code">${esc(rec.ma)}</div></div>
+    <div class="meta">Khách: <b>${esc(rec.ten || 'Quý khách')}</b><br>Hiệu lực đến: <b>${ngayVNstr(rec.het_han)}</b></div>
+    <div class="dk">Áp dụng cho bệnh nhân cũ hoặc người được giới thiệu. Mỗi mã dùng 1 lần, xuất trình khi đến khám. Giá trị dịch vụ mang tính thăm khám — tầm soát, không thay thế chỉ định trực tiếp của Bác sĩ.</div>
+    ` : `<p>Mã ưu đãi không đúng hoặc đã bị thu hồi. Vui lòng liên hệ phòng khám <b>0962 349 329</b> để được hỗ trợ.</p>`}
+  </div>
+</div>
+<div class="foot">📍 262/3 Lũy Bán Bích, P. Hòa Thạnh, Q. Tân Phú · ☎️ 0962 349 329</div>
+</div></body></html>`;
+}
+
+// Trang khách xem ưu đãi (PUBLIC — nút "Xem mã ưu đãi" trỏ về đây).
+app.get('/voucher/:ma', (req, res) => {
+  let rec = null;
+  try { rec = JSON.parse(store.getKV(`voucher:${String(req.params.ma || '').toUpperCase()}`) || 'null'); } catch { /* mã lỗi */ }
+  res.status(200).type('html').send(trangVoucher(rec));
+});
+
+// Quầy XÁC THỰC + đánh dấu đã dùng (cần token). GET để quầy mở link/quét nhanh trên điện thoại.
+// /voucher-quay/:ma?token=XXX        → xem trạng thái (không đổi)
+// /voucher-quay/:ma?token=XXX&dung=1 → đánh dấu ĐÃ DÙNG (chốt khi khách tới thật)
+app.get('/voucher-quay/:ma', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).type('html').send('<h3>403 — thiếu/ sai token quầy</h3>');
+  }
+  const ma = String(req.params.ma || '').toUpperCase();
+  let rec = null;
+  try { rec = JSON.parse(store.getKV(`voucher:${ma}`) || 'null'); } catch { /* lỗi */ }
+  let thongBao = null;
+  if (rec && (req.query.dung === '1' || req.query.dung === 'true')) {
+    if (rec.da_dung) { thongBao = `⚠️ Mã này ĐÃ được dùng lúc ${ngayVNstr(rec.dung_luc)} — KHÔNG áp dụng lại.`; }
+    else if (rec.het_han < Math.floor(Date.now() / 1000)) { thongBao = '⚠️ Mã đã HẾT HẠN — không áp dụng.'; }
+    else {
+      rec.da_dung = true; rec.dung_luc = Math.floor(Date.now() / 1000);
+      store.setKV(`voucher:${ma}`, JSON.stringify(rec));
+      thongBao = '✅ Đã xác nhận sử dụng mã. Áp dụng ưu đãi cho khách.';
+    }
+  }
+  res.status(200).type('html').send(trangVoucher(rec, thongBao));
+});
+
 // --- Admin: gỡ cờ "người giữ" bị kẹt (do bug nhận nhầm echo là telesale) ---
 // GET /admin/reset-human?token=XXX            → gỡ cờ TẤT CẢ hội thoại
 // GET /admin/reset-human?token=XXX&conv=<id>  → gỡ cờ 1 hội thoại
@@ -159,6 +262,33 @@ app.post('/admin/broadcast-tag', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// --- Admin: SỔ VOUCHER — liệt kê mã đã phát + backfill mã cũ ---
+// GET /admin/voucher-so?token=XXX                    → liệt kê tất cả voucher đã phát
+// GET /admin/voucher-so?token=XXX&backfill=MÃ&sdt=..&ten=..&ct=ct1 → thêm tay 1 mã cũ vào sổ
+app.get('/admin/voucher-so', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const bf = req.query.backfill ? String(req.query.backfill).toUpperCase() : null;
+  if (bf) {
+    const now = Math.floor(Date.now() / 1000);
+    const rec = {
+      ma: bf, sdt: String(req.query.sdt || ''), ten: req.query.ten || null,
+      chuong_trinh: req.query.ct === 'ct2' ? 'ct2' : 'ct1',
+      phat_luc: now, het_han: now + 30 * 86400, da_dung: false, dung_luc: null,
+    };
+    store.setKV(`voucher:${bf}`, JSON.stringify(rec));
+    return res.status(200).json({ ok: true, backfilled: rec });
+  }
+  const ds = store.listKVByPrefix('voucher:').map((row) => {
+    try { return JSON.parse(row.value); } catch { return null; }
+  }).filter(Boolean);
+  const tong = ds.length;
+  const daDung = ds.filter((v) => v.da_dung).length;
+  res.status(200).json({ ok: true, tong, da_dung: daDung, con_hieu_luc: tong - daDung, ds });
 });
 
 // --- Admin: CHIẾN DỊCH VOUCHER khách cũ (template 518980 đã duyệt) ---
