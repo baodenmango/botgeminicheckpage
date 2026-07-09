@@ -358,3 +358,75 @@ export async function tagFollowerBenh(userId, condition) {
     return false;
   }
 }
+
+// --- BROADCAST TIN TRUYỀN THÔNG theo tag bệnh (khai thác 4 tin miễn phí/follower/tháng) ---
+// Tin truyền thông là loại KHÁC tin tư vấn 1-1 → KHÔNG đụng quota 500 của quota.js.
+// Zalo giới hạn: ≤4 tin truyền thông/follower/tháng + ≤1 tin/ngày/người → dedup CHỦ ĐỘNG
+// bằng kv trước khi gửi (khỏi đốt oan + tránh Zalo phạt rate). Dùng oaCall (auto-refresh + IPv4).
+const thangVN = () => { const d = new Date(Date.now() + 7 * 3600 * 1000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
+const ngayVNstr = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+const TT_TRAN_THANG = parseInt(process.env.ZALO_TT_THANG || '4', 10); // trần Zalo: 4 tin/follower/tháng
+
+/**
+ * Gửi 1 tin truyền thông cho toàn bộ follower gắn 1 tag bệnh.
+ * @param {object} p { tagKey?, tagName?, header, text, dryRun }
+ *   - tagKey: key trong TAG_BENH (vd 'goi'); HOẶC tagName: giá trị tag thô (vd 'Khớp gối')
+ *   - dryRun: chỉ đếm người nhận, KHÔNG gửi
+ * @returns {Promise<object>} thống kê { tag, tong_follower, da_gui, bo_qua, loi }
+ */
+export async function broadcastTag({ tagKey, tagName, header, text, dryRun = false } = {}) {
+  if (!isOpenApiEnabled()) return { ok: false, ly_do: 'openapi_tat', se_gui_cho: 0 };
+  const tag = tagName || (tagKey ? tagTheoBenh(tagKey) : null);
+  if (!tag) return { ok: false, ly_do: 'thieu_tag', se_gui_cho: 0 };
+  if (!dryRun && (!header || !text)) return { ok: false, ly_do: 'thieu_noi_dung', se_gui_cho: 0 };
+
+  // 1) gom danh sách user_id theo tag (phân trang, chặn trần offset chống lặp vô hạn)
+  const uids = [];
+  let offset = 0;
+  for (let guard = 0; guard < 40; guard++) { // 40*50 = 2000 trần
+    const body = await oaCall('get', 'user/getlist', {
+      params: { data: JSON.stringify({ offset, count: 50, is_follower: true, tag_name: tag }) },
+    });
+    const arr = body?.data?.users || [];
+    for (const u of arr) { const id = stripZaloPrefix(u.user_id || u.user_id_by_app || ''); if (id) uids.push(id); }
+    const total = body?.data?.total ?? uids.length;
+    offset += 50;
+    if (offset >= total || arr.length === 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  if (dryRun) return { ok: true, dry_run: true, tag, se_gui_cho: uids.length };
+
+  // 2) gửi từng người, dedup 1 tin/ngày + trần 4 tin/tháng
+  const thang = thangVN();
+  const ngay = ngayVNstr();
+  let daGui = 0, boQua = 0; const loi = [];
+  for (const uid of uids) {
+    const kNgay = `zalo_bc_day:${ngay}:${uid}`;
+    const kThang = `zalo_bc_month:${thang}:${uid}`;
+    if (store.getKV(kNgay)) { boQua++; continue; }            // đã nhận tin truyền thông hôm nay
+    if (parseInt(store.getKV(kThang) || '0', 10) >= TT_TRAN_THANG) { boQua++; continue; } // hết 4 tin/tháng
+    const body = await oaCall('post', 'message/promotion', {
+      data: {
+        recipient: { user_id: uid },
+        message: { attachment: { type: 'template', payload: {
+          template_type: 'promotion', language: 'VI',
+          elements: [
+            { type: 'header', content: String(header).slice(0, 100) },
+            { type: 'text', align: 'left', content: String(text).slice(0, 2000) },
+          ],
+        } } },
+      },
+    });
+    if (body?.error === 0) {
+      store.setKV(kNgay, '1');
+      store.setKV(kThang, String(parseInt(store.getKV(kThang) || '0', 10) + 1));
+      daGui++;
+    } else {
+      loi.push(`${uid.slice(0, 8)}:${body?.error}`);
+    }
+    await new Promise((r) => setTimeout(r, 350)); // nương rate-limit Zalo
+  }
+  console.log(`[broadcast] tag "${tag}": gửi ${daGui}, bỏ qua ${boQua}, lỗi ${loi.length}`);
+  return { ok: true, tag, tong_follower: uids.length, da_gui: daGui, bo_qua: boQua, loi: loi.slice(0, 10) };
+}

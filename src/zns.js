@@ -27,6 +27,19 @@ const RATING_COOLDOWN_S = 180 * 86400; // 1 lần/khách/6 tháng — tái khám
 const gioVN = () => new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
 const trongKhungGio = () => gioVN() >= 7 && gioVN() < 21;
 
+// Epoch giây (hoặc ms) → dd/MM/yyyy giờ VN. Nhận số giây; nếu > 1e12 coi là ms.
+function ngayVN(epoch) {
+  const ms = epoch > 1e12 ? epoch : epoch * 1000;
+  const d = new Date(ms + 7 * 3600 * 1000);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+}
+
+// Voucher tri ân khách cũ (template ZBS 518980 ĐÃ DUYỆT, loại Voucher 600đ/tin) — anh Trình
+// chốt 09/07: CT1 siêu âm vi điểm + đo cơ mỡ 800k→150k, CT2 gói 1.3tr→300k. Template riêng,
+// KHÔNG dùng chung ZNS_TEMPLATE_NHACLICH. Bật độc lập bằng ZNS_TEMPLATE_VOUCHER.
+const VOUCHER_TEMPLATE = process.env.ZNS_TEMPLATE_VOUCHER || '518980';
+const VOUCHER_HSD_NGAY = parseInt(process.env.ZNS_VOUCHER_HSD_NGAY || '30', 10);
+
 export function isZnsEnabled() {
   return /^(1|true|yes|on)$/i.test(process.env.ZNS_ENABLED || '') && !!process.env.ZNS_TEMPLATE_NHACLICH;
 }
@@ -48,17 +61,20 @@ export async function sendZnsNhacLich(phone, { ten, ngay_hen, maKH } = {}) {
   if (!isZnsEnabled()) return false;
   const sdt = phone84(phone);
   if (!sdt || !ngay_hen) return false;
-  // Tham số khớp template ZBS 603887 "Nhắc lịch hẹn điều trị" (NỘP LẠI 09/07/2026 — lần đầu
-  // bị từ chối vì thiếu CẶP ĐỊNH DANH tên + mã KH): customer_name (Tên KH, ≤30) +
-  // ma_khach_hang (Mã số, ≤30) + schedule_time (Thời gian, ≤20, vd "08:30 15/07/2026").
+  // Chọn template bằng ENV ZNS_TEMPLATE_NHACLICH → gửi CẢ HAI khoá mã KH để khớp cả 2 mẫu:
+  //  • 500295 (ĐÃ DUYỆT, dùng ngay): customer_name + schedule_time + booking_code (Nhãn tùy chỉnh ≤30)
+  //  • 603887 (đang duyệt lại): customer_name + schedule_time + ma_khach_hang (Mã số ≤30)
+  // Zalo chỉ đọc tham số CÓ trong mẫu, khoá thừa vô hại → đổi 500295↔603887 chỉ cần sửa ENV.
   // Không có mã thật (POS display_id) → "KH-" + 5 số cuối SĐT: đủ định danh, không lộ nguyên số.
+  const maSt = String(maKH || `KH-${sdt.slice(-5)}`).slice(0, 30);
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
     template_id: process.env.ZNS_TEMPLATE_NHACLICH,
     template_data: {
       customer_name: (ten || 'Quý khách').slice(0, 30),
-      ma_khach_hang: String(maKH || `KH-${sdt.slice(-5)}`).slice(0, 30),
       schedule_time: String(ngay_hen).slice(0, 20),
+      booking_code: maSt,   // mẫu 500295
+      ma_khach_hang: maSt,  // mẫu 603887
     },
     tracking_id: `nhaclich-${Date.now()}`,
   }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
@@ -116,6 +132,54 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
   } catch (err) {
     console.warn('[zns] rating gọi API lỗi:', err?.message);
     return false;
+  }
+}
+
+/**
+ * Gửi VOUCHER tri ân khách cũ (template 518980). Chống trùng 1 voucher/khách/chiến dịch.
+ * @param {string} phone  SĐT khách (0xxx...)
+ * @param {object} p      { ten, maHoSo, ngayKham } — ngayKham là epoch giây (bill_date)
+ * @returns {Promise<{ok:boolean, voucher_code?:string, ly_do?:string}>}
+ */
+export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham } = {}) {
+  const sdt = phone84(phone);
+  if (!sdt) return { ok: false, ly_do: 'sdt_khong_hop_le' };
+  if (!VOUCHER_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };
+  const key = `zns_voucher_sent:${sdt}`;
+  if (store.getKV(key)) return { ok: false, ly_do: 'da_gui_roi' };
+
+  // mã voucher: SA + 8 ký tự base36 (chỉ chữ+số — loại "Mã số" của ZNS không nhận ký tự lạ)
+  const rnd = (Number(sdt.slice(-6)) * 2654435761 % 2176782336).toString(36); // ổn định theo SĐT, không dùng Math.random
+  const voucher_code = `SA${(rnd + sdt.slice(-4)).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}`;
+  const now = Math.floor(Date.now() / 1000);
+
+  const goi = async () => axios.post(ZNS_API, {
+    phone: sdt,
+    template_id: VOUCHER_TEMPLATE,
+    template_data: {
+      customer_name: (ten || 'Quý khách').slice(0, 30),
+      voucher_code: voucher_code.slice(0, 30),
+      record_code: String(maHoSo || `KH-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
+      start_date: ngayVN(now),
+      expire: ngayVN(now + VOUCHER_HSD_NGAY * 86400),
+      visit_date: ngayVN(ngayKham || now),
+    },
+    tracking_id: `voucher-${Date.now()}`,
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
+
+  try {
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error === 0) {
+      store.setKV(key, String(now));
+      console.log(`[zns] 🎁 gửi voucher ${voucher_code} tới ${sdt.slice(0, 5)}*** (HSD ${VOUCHER_HSD_NGAY} ngày)`);
+      return { ok: true, voucher_code };
+    }
+    console.warn('[zns] gửi voucher lỗi:', JSON.stringify(r.data).slice(0, 200));
+    return { ok: false, ly_do: `zalo_loi_${r.data?.error}` };
+  } catch (err) {
+    console.warn('[zns] voucher gọi API lỗi:', err?.message);
+    return { ok: false, ly_do: 'ngoai_le' };
   }
 }
 

@@ -12,11 +12,11 @@ import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
-import { handleZaloFollow, handleZaloSubmitInfo } from './src/follow.js';
-import { tagFollowerBenh, sendRequestInfo } from './src/zalo.js';
+import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating } from './src/follow.js';
+import { tagFollowerBenh, sendRequestInfo, broadcastTag } from './src/zalo.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher } from './src/zns.js';
 import { lookupMedi, mapDiagnosis } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -133,6 +133,61 @@ app.get('/admin/gui-card', async (req, res) => {
   try {
     const ok = await sendRequestInfo(uid);
     res.status(200).json({ ok, uid, ghi_chu: ok ? 'card đã gửi — nhờ khách/anh kiểm tra Zalo' : 'gửi HỤT — xem log [zalo] card request_user_info' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: BROADCAST tin truyền thông theo tag bệnh (4 tin miễn phí/follower/tháng) ---
+// POST /admin/broadcast-tag?token=XXX  body: { tag, header, text, dry_run }
+//   tag = key ('goi') HOẶC giá trị tag ('Khớp gối'); dry_run=true → chỉ đếm người nhận.
+app.post('/admin/broadcast-tag', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const { tag, header, text, dry_run } = req.body || {};
+  if (!tag) return res.status(400).json({ ok: false, error: 'thiếu tag' });
+  try {
+    // tag có thể là key ('goi') hoặc giá trị ('Khớp gối') — thử cả hai
+    const opts = /^[a-z]+$/.test(String(tag)) ? { tagKey: tag } : { tagName: tag };
+    const kq = await broadcastTag({ ...opts, header, text, dryRun: !!dry_run });
+    if (!dry_run && kq.da_gui) {
+      notifyText(`📣 <b>Broadcast tag "${kq.tag}"</b>: gửi ${kq.da_gui} tin, bỏ qua ${kq.bo_qua} (đã nhận hôm nay/hết quota tháng), lỗi ${kq.loi?.length || 0}.`).catch(() => {});
+    }
+    res.status(200).json({ ok: true, ...kq });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: CHIẾN DỊCH VOUCHER khách cũ (template 518980 đã duyệt) ---
+// GET /admin/voucher-khach-cu?token=XXX&nhom=3&limit=100&dry=1[&phone=09xx test 1 số]
+//   nhom = group_no bill_care (3=đã xong liệu trình); dry=1 → chỉ đếm; phone → bắn thử 1 số.
+app.get('/admin/voucher-khach-cu', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const nhom = Number(req.query.nhom || 3);
+  const limit = Math.min(Number(req.query.limit || 100), 300);
+  const dry = req.query.dry === '1' || req.query.dry === 'true';
+  const phoneTest = req.query.phone ? String(req.query.phone) : null;
+  try {
+    if (phoneTest) {
+      const r = await sendZnsVoucher(phoneTest, { ten: 'Quý khách', ngayKham: Math.floor(Date.now() / 1000) });
+      return res.status(200).json({ ok: true, test: phoneTest, ket_qua: r });
+    }
+    const rows = store.listBillCare(limit).filter((r) => r.group_no === nhom && r.bill_date && !r.opt_out);
+    if (dry) return res.status(200).json({ ok: true, dry_run: true, nhom, se_gui_cho: rows.length });
+    let daGui = 0, boQua = 0, loi = 0;
+    for (const rec of rows) {
+      const r = await sendZnsVoucher(rec.phone, { ten: rec.name, maHoSo: rec.id, ngayKham: rec.bill_date });
+      if (r.ok) daGui++; else if (r.ly_do === 'da_gui_roi') boQua++; else loi++;
+      await new Promise((s) => setTimeout(s, 300));
+    }
+    notifyText(`🎁 <b>Chiến dịch voucher nhóm ${nhom}</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi} / tổng ${rows.length} ca.`).catch(() => {});
+    res.status(200).json({ ok: true, nhom, tong: rows.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
@@ -341,6 +396,8 @@ app.post('/zalo/webhook', (req, res) => {
   try { handleZaloFollow(req.body, mac); } catch (err) { console.error('[zalo-webhook] lỗi:', err?.message || err); }
   // khách bấm nút "Chia sẻ thông tin" → nhận SĐT chính chủ, nối hồ sơ (mỗi handler tự lọc event)
   try { handleZaloSubmitInfo(req.body); } catch (err) { console.error('[zalo-webhook] submit-info lỗi:', err?.message || err); }
+  // khách chấm sao form đánh giá → radar: ≤3 sao réo anh gọi cứu (van xả complain)
+  try { handleZaloRating(req.body); } catch (err) { console.error('[zalo-webhook] rating lỗi:', err?.message || err); }
 });
 
 // --- Xác thực domain với Zalo (nếu Console đòi) ---

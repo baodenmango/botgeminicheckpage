@@ -147,3 +147,77 @@ export async function handleZaloSubmitInfo(body) {
   ).catch(() => {});
   return true;
 }
+
+// --- RADAR ĐÁNH GIÁ THẤP (đóng vòng van xả rating) ---
+// Khách chấm sao trên form ZNS 522230 → Zalo bắn event feedback về webhook.
+// ≤3 sao = khách KHÔNG hài lòng → réo anh Telegram NGAY kèm SĐT/tên/góp ý để gọi cứu
+// trước khi họ đăng review công khai. ≥4 sao → chỉ log (không làm phiền).
+function escTele(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+// Đọc điểm sao 1-5 từ payload feedback linh hoạt (star/rating/rate/value/score/point).
+function docDiemSao(obj, depth = 0) {
+  if (obj == null || depth > 6) return null;
+  if (typeof obj === 'number') return (obj >= 1 && obj <= 5) ? obj : null;
+  if (typeof obj === 'string') { const n = parseInt(obj, 10); return (n >= 1 && n <= 5) ? n : null; }
+  if (Array.isArray(obj)) { for (const x of obj) { const r = docDiemSao(x, depth + 1); if (r) return r; } return null; }
+  if (typeof obj === 'object') {
+    for (const k of Object.keys(obj)) {
+      if (/^(star|rating|rate|value|score|point)s?$/i.test(k)) { const r = docDiemSao(obj[k], depth + 1); if (r) return r; }
+    }
+    for (const k of Object.keys(obj)) { const r = docDiemSao(obj[k], depth + 1); if (r) return r; }
+  }
+  return null;
+}
+// Đọc nội dung góp ý (comment/feedback/content/note/reason/message).
+function docGopY(obj, depth = 0) {
+  if (obj == null || depth > 6 || typeof obj === 'number') return null;
+  if (typeof obj === 'string') return obj.trim() ? obj.trim().slice(0, 500) : null;
+  if (Array.isArray(obj)) { for (const x of obj) { const r = docGopY(x, depth + 1); if (r) return r; } return null; }
+  for (const k of Object.keys(obj)) {
+    if (/^(comment|feedback|content|note|reason|message|noi_?dung|gop_?y)$/i.test(k)) { const r = docGopY(obj[k], depth + 1); if (r) return r; }
+  }
+  return null;
+}
+
+/**
+ * Webhook ĐÁNH GIÁ ZNS (form 522230): khách chấm sao → Zalo bắn event feedback/rating.
+ * ≤3 sao → réo anh Telegram kèm SĐT/tên + góp ý; ≥4 sao → chỉ log.
+ */
+export async function handleZaloRating(body) {
+  const eventName = body?.event_name || body?.event || '';
+  if (/user_submit_info/i.test(eventName)) return false; // đã có handler riêng
+  if (!/rat(e|ing)|feedback|review|danh_?gia|user_submit/i.test(eventName)) return false;
+  const uid = stripZaloPrefix(body.sender?.id || body.user_id_by_app || body.user_id || body.follower?.id || '');
+  const sao = docDiemSao(body.info || body.data || body);
+  if (sao == null) { console.log('[rating] event dạng đánh giá nhưng không đọc được điểm sao:', eventName); return true; }
+  const gopY = docGopY(body.info || body.data || body);
+
+  // chống trùng: 1 form có thể bắn event lặp (Zalo retry) → chỉ xử 1 lần/uid/ngày
+  const ngay = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const dkey = `zalo_rating_done:${uid}:${ngay}`;
+  if (store.getKV(dkey)) return true;
+  store.setKV(dkey, String(sao));
+
+  // tra SĐT + tên (map do handleZaloSubmitInfo tạo, hoặc getUserInfo)
+  let phone = store.getKV(`zalo_phone:${uid}`) || null;
+  let ten = null;
+  if (uid) { try { const info = await getUserInfo(uid); ten = info?.name || null; if (!phone) phone = info?.phone || null; } catch { /* OpenAPI tắt */ } }
+
+  if (sao >= 4) {
+    console.log(`[rating] 😊 ${uid} chấm ${sao}★ (tốt) — chỉ log, không réo`);
+    return true;
+  }
+  // ≤3 sao → RADAR: réo anh gọi cứu khách trước khi họ review công khai
+  const dong = [
+    `🚨 <b>ĐÁNH GIÁ THẤP ${sao}★ — CẦN GỌI CỨU KHÁCH</b>`,
+    `👤 Tên: ${escTele(ten) || '(chưa rõ)'}`,
+    `📞 SĐT: <b>${escTele(phone) || '(chưa có — mở Zalo OA tìm uid ' + escTele(uid).slice(0, 12) + ')'}</b>`,
+    `⭐ Chấm: ${sao}/5 sao`,
+  ];
+  if (gopY) dong.push(`📝 Góp ý: "${escTele(gopY)}"`);
+  dong.push('⚡️ Gọi xin lỗi + xử lý NGAY để khách không đăng review công khai (van xả complain).');
+  notifyText(dong.join('\n')).catch(() => {});
+  console.log(`[rating] 🚨 ${uid} chấm ${sao}★ → đã réo Telegram (phone ${phone ? phone.slice(0, 4) + '***' : 'chưa có'})`);
+  return true;
+}
