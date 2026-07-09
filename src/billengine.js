@@ -10,8 +10,15 @@ import * as store from './store.js';
 import { BILL_TOUCHES, buildBillMessages } from './billtouches.js';
 import { sendCareMessages } from './care-send.js';
 import { tagFollowerBenh } from './zalo.js';
+import { sendZnsNhacLich, isZnsEnabled } from './zns.js';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
+
+// epoch giây → dd/MM/yyyy giờ VN (tham số schedule_time của ZNS nhắc lịch)
+function ngayVN(epochSec) {
+  const d = new Date(epochSec * 1000 + 7 * 3600 * 1000);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+}
 
 // Chuẩn hoá 1 ca từ payload tự do (admin endpoint / nguồn POS) thành record bill_care.
 // Bắt buộc: phone HOẶC zalo_user_id (để gửi được), bill_date. id tự sinh nếu thiếu.
@@ -79,7 +86,17 @@ export async function runBillTouches() {
       });
       if (!messages) { store.markBillChamDone(rec.id, code); continue; }
       const touchDef = BILL_TOUCHES.find((x) => x.code === code);
-      const ok = await sendCareMessages(rec, messages, { priority: touchDef?.priority, code });
+      let ok = await sendCareMessages(rec, messages, { priority: touchDef?.priority, code });
+
+      // ZNS FALLBACK cho chạm NHẮC TÁI KHÁM d6/d7 (anh Trình chốt 09/07: "ngày 7 kéo họ tái khám").
+      // 43/44 ca ra bill KHÔNG follow OA → sendCareMessages hụt vì mù kênh → mất luôn đòn tái khám.
+      // Giờ: d6/d7 gửi hụt OA + có SĐT + ZNS bật → bắn ZNS nhắc lịch theo SĐT (mời quay lại trong 3 ngày).
+      if (!ok && (code === 'd6' || code === 'd7') && rec.phone && isZnsEnabled()) {
+        const hen = ngayVN(nowSec() + 3 * 86400); // mời tái khám trong ~3 ngày tới
+        ok = await sendZnsNhacLich(rec.phone, { ten: rec.name, ngay_hen: hen, maKH: rec.id });
+        if (ok) console.log(`[bill] ✅ ZNS nhắc tái khám ${code} (mù kênh OA) cho ca ${rec.id}`);
+      }
+
       if (ok) {
         store.markBillChamDone(rec.id, code);
         // đánh dấu các mốc THẤP hơn còn sót là đã xong (ca nạp muộn, đã quá nhiều mốc → gửi mốc cao nhất)

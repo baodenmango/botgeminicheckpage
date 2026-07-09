@@ -13,7 +13,7 @@ import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating } from './src/follow.js';
-import { tagFollowerBenh, sendRequestInfo, broadcastTag } from './src/zalo.js';
+import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './src/zalo.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
 import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher } from './src/zns.js';
@@ -146,12 +146,12 @@ app.post('/admin/broadcast-tag', async (req, res) => {
   if (!adminToken || req.query.token !== adminToken) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
-  const { tag, header, text, dry_run } = req.body || {};
+  const { tag, header, text, dry_run, force } = req.body || {};
   if (!tag) return res.status(400).json({ ok: false, error: 'thiếu tag' });
   try {
     // tag có thể là key ('goi') hoặc giá trị ('Khớp gối') — thử cả hai
     const opts = /^[a-z]+$/.test(String(tag)) ? { tagKey: tag } : { tagName: tag };
-    const kq = await broadcastTag({ ...opts, header, text, dryRun: !!dry_run });
+    const kq = await broadcastTag({ ...opts, header, text, dryRun: !!dry_run, force: !!force });
     if (!dry_run && kq.da_gui) {
       notifyText(`📣 <b>Broadcast tag "${kq.tag}"</b>: gửi ${kq.da_gui} tin, bỏ qua ${kq.bo_qua} (đã nhận hôm nay/hết quota tháng), lỗi ${kq.loi?.length || 0}.`).catch(() => {});
     }
@@ -172,6 +172,7 @@ app.get('/admin/voucher-khach-cu', async (req, res) => {
   const nhom = Number(req.query.nhom || 3);
   const limit = Math.min(Number(req.query.limit || 100), 300);
   const dry = req.query.dry === '1' || req.query.dry === 'true';
+  const force = req.query.force === '1' || req.query.force === 'true';
   const phoneTest = req.query.phone ? String(req.query.phone) : null;
   try {
     if (phoneTest) {
@@ -180,6 +181,10 @@ app.get('/admin/voucher-khach-cu', async (req, res) => {
     }
     const rows = store.listBillCare(limit).filter((r) => r.group_no === nhom && r.bill_date && !r.opt_out);
     if (dry) return res.status(200).json({ ok: true, dry_run: true, nhom, se_gui_cho: rows.length });
+    // GIỜ VÀNG: gửi thật ngoài khung → chặn, trừ khi &force=1 (anh Trình chốt 09/07)
+    if (!force && !trongGioVang()) {
+      return res.status(200).json({ ok: false, ly_do: 'ngoai_gio_vang', ghi_chu: 'Voucher chỉ bắn 8h–21h VN để khách đọc. Thêm &force=1 nếu muốn gửi ngay.', se_gui_cho: rows.length });
+    }
     let daGui = 0, boQua = 0, loi = 0;
     for (const rec of rows) {
       const r = await sendZnsVoucher(rec.phone, { ten: rec.name, maHoSo: rec.id, ngayKham: rec.bill_date });

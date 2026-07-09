@@ -366,6 +366,12 @@ export async function tagFollowerBenh(userId, condition) {
 const thangVN = () => { const d = new Date(Date.now() + 7 * 3600 * 1000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
 const ngayVNstr = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 const TT_TRAN_THANG = parseInt(process.env.ZALO_TT_THANG || '4', 10); // trần Zalo: 4 tin/follower/tháng
+// GIỜ VÀNG (anh Trình chốt 09/07: "phải gửi đúng giờ vàng để họ đọc được tin"). Mặc định 8h–21h VN
+// — chặn lỡ tay bắn đêm khiến khách khó chịu + tin chìm. Chỉnh qua ZALO_GIO_VANG_TU/DEN.
+const gioVN = () => new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
+const GIO_VANG_TU = parseInt(process.env.ZALO_GIO_VANG_TU || '8', 10);
+const GIO_VANG_DEN = parseInt(process.env.ZALO_GIO_VANG_DEN || '21', 10);
+export function trongGioVang() { const h = gioVN(); return h >= GIO_VANG_TU && h < GIO_VANG_DEN; }
 
 /**
  * Gửi 1 tin truyền thông cho toàn bộ follower gắn 1 tag bệnh.
@@ -374,8 +380,12 @@ const TT_TRAN_THANG = parseInt(process.env.ZALO_TT_THANG || '4', 10); // trần 
  *   - dryRun: chỉ đếm người nhận, KHÔNG gửi
  * @returns {Promise<object>} thống kê { tag, tong_follower, da_gui, bo_qua, loi }
  */
-export async function broadcastTag({ tagKey, tagName, header, text, dryRun = false } = {}) {
+export async function broadcastTag({ tagKey, tagName, header, text, dryRun = false, force = false } = {}) {
   if (!isOpenApiEnabled()) return { ok: false, ly_do: 'openapi_tat', se_gui_cho: 0 };
+  // Chốt chặn GIỜ VÀNG: gửi thật ngoài 8h–21h VN → chặn (trừ khi force). dryRun luôn qua để xem trước.
+  if (!dryRun && !force && !trongGioVang()) {
+    return { ok: false, ly_do: 'ngoai_gio_vang', gio_vn: gioVN(), khung: `${GIO_VANG_TU}h-${GIO_VANG_DEN}h`, se_gui_cho: 0 };
+  }
   const tag = tagName || (tagKey ? tagTheoBenh(tagKey) : null);
   if (!tag) return { ok: false, ly_do: 'thieu_tag', se_gui_cho: 0 };
   if (!dryRun && (!header || !text)) return { ok: false, ly_do: 'thieu_noi_dung', se_gui_cho: 0 };
