@@ -198,6 +198,13 @@ export async function handleIncoming(ev) {
   try {
     const conv = store.ensureConversation(conversationId, pageId, customerName);
 
+    // GHI DẤU NGUỒN (camp QC/ref/bài viết) — chỉ ghi LẦN ĐẦU (first touch mới là nguồn thật).
+    // telegram.js đọc kv này dựng dòng "📣 Nguồn" cho telesale (yêu cầu anh Trình 09/07).
+    if (ev.nguon && !store.getKV(`nguon:${conversationId}`)) {
+      store.setKV(`nguon:${conversationId}`, JSON.stringify(ev.nguon));
+      console.log(`[nguon] ${conversationId}: ${JSON.stringify(ev.nguon)}`);
+    }
+
     // CHỈ handover thật (khiếu nại/đòi gặp người) → bot KHÔNG tự trả lời.
     // NHƯNG nếu khách vẫn nhắn tiếp → NHẮC người thật qua Telegram (đừng bỏ quên khách),
     // gắn cờ KHẨN nếu có dấu hiệu y tế nguy hiểm.

@@ -92,6 +92,21 @@ export function getPageChannel(pageId) {
   return findPageConfig(pageId)?.channel || 'facebook';
 }
 
+// Tên hiển thị của trang — cho dòng "📣 Nguồn" báo telesale biết khách đến từ page/OA nào.
+// Ưu tiên env PANCAKE_PAGE_{N}_NAME; thiếu thì tra map các trang đã biết; bí quá in id.
+const DEFAULT_PAGE_NAMES = {
+  '386613267864665': 'Page Phòng Khám Hiệp Lợi',
+  '957014354156110': 'Page Dr Nhật Trình',
+  '3136814239074246132': 'Zalo OA Hiệp Lợi',
+};
+export function getPageName(pageId) {
+  const cfg = findPageConfig(pageId);
+  if (cfg?.name) return cfg.name;
+  const core = stripChannelPrefix(pageId);
+  if (DEFAULT_PAGE_NAMES[core]) return DEFAULT_PAGE_NAMES[core];
+  return getPageChannel(pageId) === 'zalo' ? `Zalo OA (${core})` : `trang ${core}`;
+}
+
 // Có biết trang này không (để bỏ qua webhook của trang chưa bật bot).
 export function isPageEnabled(pageId) {
   return Boolean(findPageConfig(pageId));

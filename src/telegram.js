@@ -2,10 +2,40 @@
 import axios from 'axios';
 import { config } from './config.js';
 import { CONDITION_VI } from './conditions.js';
+import * as store from './store.js';
+import { canonicalPageId, getPageName } from './pancake.js';
+import { adMeta } from './fb.js';
 
 function pancakeLink(pageId, conversationId) {
   // Link mở hội thoại trong Pancake (giúp telesale bấm vào xem ngay).
-  return `https://pages.fm/${pageId}/inbox/${conversationId}`;
+  // ⚠️ Dạng cũ pages.fm/{page}/inbox/{conv} đã CHẾT (Pancake trả 404 — anh Trình báo 09/07).
+  // Dạng web Pancake đang dùng: pancake.vn/{page_id}?c_id={conversation_id}.
+  return `https://pancake.vn/${canonicalPageId(pageId)}?c_id=${conversationId}`;
+}
+
+// DÒNG NGUỒN cho telesale: khách đến từ trang/kênh nào + camp quảng cáo nào (nếu bắt được).
+// Dấu nguồn ghi ở kv `nguon:<convId>` lúc webhook đến (index.js trích, handler.js lưu lần đầu).
+// Link Pancake chỉ là phụ — dòng này phải đủ để telesale gọi mà KHÔNG cần mở link.
+async function nguonLine(pageId, conversationId) {
+  const parts = [getPageName(pageId)];
+  try {
+    const raw = store.getKV(`nguon:${conversationId}`);
+    if (raw) {
+      const n = JSON.parse(raw);
+      if (n.adId) {
+        const meta = await adMeta(n.adId); // tra tên camp/mẫu QC (cần FB_ADS_TOKEN, có cache)
+        parts.push(meta?.campaignName
+          ? `QC "${meta.campaignName}"${meta.adName ? ` · mẫu "${meta.adName}"` : ''}`
+          : `QC Messenger (ad ${n.adId})`);
+      }
+      if (n.ref) parts.push(`ref ${n.ref}`);
+      if (n.postId) parts.push(`comment bài facebook.com/${n.postId}`);
+    }
+  } catch (err) {
+    console.warn('[telegram] dựng dòng nguồn lỗi:', err?.message);
+  }
+  if (parts.length === 1) parts.push('inbox trực tiếp (không thấy dấu QC)');
+  return `📣 Nguồn: ${escapeHtml(parts.join(' — '))}`;
 }
 
 async function send(text, replyMarkup) {
@@ -74,6 +104,7 @@ export async function notifyLead({ name, phone, condition, summary, customerType
     `🩺 Bệnh: ${benh}\n`;
   if (kieu) text += `🧭 Kiểu khách: ${kieu}\n`;
   if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `${await nguonLine(pageId, conversationId)}\n`;
   text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
   await send(text, nutDaGoi(phone));   // giữ NGUYÊN nội dung, chỉ thêm nút telesale bấm
 }
@@ -88,6 +119,7 @@ export async function notifyBooking({ name, condition, summary, pageId, conversa
     `🩺 Bệnh: ${benh}\n` +
     `⚡️ Khách đang hỏi đặt lịch/hẹn khám — vào chốt nóng kẻo nguội!\n`;
   if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `${await nguonLine(pageId, conversationId)}\n`;
   text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
   await send(text);
 }
@@ -109,6 +141,7 @@ export async function notifyCallTouch({ touchNo, name, phone, condition, summary
     `🩺 Bệnh: ${benh}\n`;
   if (muctieu) text += `🎯 ${escapeHtml(muctieu)}\n`;
   if (summary) text += `📋 ${escapeHtml(summary)}\n`;
+  text += `${await nguonLine(pageId, conversationId)}\n`;
   text += `💬 ${pancakeLink(pageId, conversationId)}`;
   await send(text, nutChamLead(conversationId));
 }
@@ -122,6 +155,7 @@ export async function notifyHandover({ name, reason, condition, summary, pageId,
     `📝 Lý do: ${escapeHtml(reason) || 'khách cần gặp người'}\n` +
     `🩺 Bệnh: ${benh}\n`;
   if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `${await nguonLine(pageId, conversationId)}\n`;
   text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
   await send(text);
 }
@@ -133,7 +167,10 @@ export async function notifyComment({ name, commentText, pageId, conversationId,
     `👤 ${escapeHtml(name) || '(chưa rõ)'}\n` +
     `📝 Nội dung: "${escapeHtml((commentText || '').slice(0, 150))}"\n` +
     `🤖 Bot đã rep mời công khai${privateOk ? ' + nhắn riêng kéo vào inbox' : ' (private reply CHƯA gửi được — xem inbox/log)'}\n`;
-  if (conversationId) text += `➡️ ${pancakeLink(pageId, conversationId)}`;
+  if (conversationId) {
+    text += `${await nguonLine(pageId, conversationId)}\n`;
+    text += `➡️ ${pancakeLink(pageId, conversationId)}`;
+  }
   await send(text);
 }
 
@@ -166,6 +203,7 @@ export async function notifyHandoverNudge({ name, messageText, urgent, pageId, c
     `👤 ${escapeHtml(name) || '(chưa rõ)'}\n` +
     `💬 Khách vừa nhắn: "${escapeHtml((messageText || '').slice(0, 120))}"\n`;
   if (urgent) text += `❗️ Có dấu hiệu y tế cần xử lý GẤP — gọi khách ngay, khuyên tới cơ sở y tế nếu nặng.\n`;
+  text += `${await nguonLine(pageId, conversationId)}\n`;
   text += `➡️ ${pancakeLink(pageId, conversationId)}`;
   await send(text);
 }

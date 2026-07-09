@@ -31,11 +31,12 @@ function loadPancakePages() {
     if (!id) break; // hết trang
     const token = process.env[`PANCAKE_PAGE_${n}_TOKEN`];
     const channel = process.env[`PANCAKE_PAGE_${n}_CHANNEL`] || 'facebook';
+    const name = process.env[`PANCAKE_PAGE_${n}_NAME`] || null; // tên hiển thị cho dòng "Nguồn" báo telesale
     if (!token) {
       console.warn(`[config] PANCAKE_PAGE_${n}_ID=${id} thiếu TOKEN → bỏ qua trang này`);
       continue;
     }
-    pages[String(id)] = { token, channel };
+    pages[String(id)] = { token, channel, name };
   }
   return pages;
 }

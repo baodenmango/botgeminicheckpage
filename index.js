@@ -408,6 +408,28 @@ function findPhoneInPayload(obj, depth = 0) {
   return null;
 }
 
+// Trích DẤU NGUỒN quảng cáo từ payload webhook: khách bấm QC Messenger → Meta gắn referral
+// {ad_id, ref, source:'ADS'}; Pancake chuyển tiếp ở vị trí khác nhau tuỳ kênh/sự kiện.
+// Quét đệ quy tìm ad_id / ref / post_id — best-effort, thiếu thì thôi, KHÔNG chặn luồng chính.
+// Telesale cần dòng này để biết khách đến từ camp nào (yêu cầu anh Trình 09/07).
+function findNguonInPayload(obj, out = {}, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 6) return out;
+  if (Array.isArray(obj)) {
+    for (const x of obj) findNguonInPayload(x, out, depth + 1);
+    return out;
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    if (!out.adId && /^ads?_id$/.test(k) && (typeof v === 'string' || typeof v === 'number') && String(v).length >= 8) {
+      out.adId = String(v);
+    }
+    if (!out.adId && k === 'ad_ids' && Array.isArray(v) && v.length > 0) out.adId = String(v[0]);
+    if (!out.ref && k === 'ref' && typeof v === 'string' && v.trim()) out.ref = v.trim().slice(0, 80);
+    if (!out.postId && k === 'post_id' && typeof v === 'string' && /^\d+_\d+$/.test(v)) out.postId = v;
+    if (v && typeof v === 'object') findNguonInPayload(v, out, depth + 1);
+  }
+  return out;
+}
+
 function parsePancakeWebhook(body) {
   if (!body || typeof body !== 'object') return null;
 
@@ -471,6 +493,10 @@ function parsePancakeWebhook(body) {
     console.log(`[zalo-debug] from.id=${senderId} | page_id=${pageId} | fromPage=${fromPage} | name=${customerName} | text="${String(messageText).slice(0,30)}"`);
   }
 
+  // Dấu nguồn QC (ad_id/ref/post_id) — handler lưu kv lần đầu để dòng "Nguồn" báo telesale.
+  const nguonRaw = findNguonInPayload(data);
+  const nguon = (nguonRaw.adId || nguonRaw.ref || nguonRaw.postId) ? nguonRaw : null;
+
   return {
     pageId: String(pageId),
     conversationId: String(conversationId),
@@ -480,6 +506,7 @@ function parsePancakeWebhook(body) {
     fromPage,
     attachmentOnly,
     aiGenerated: fromObj.ai_generated === true,
+    nguon,
   };
 }
 

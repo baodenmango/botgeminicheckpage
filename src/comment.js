@@ -101,6 +101,9 @@ export function parseComment(body) {
   // Comment do CHÍNH PAGE đăng (from.id === page_id) → bỏ qua, đừng tự rep chính mình / rep của bot.
   const fromPage = !!(senderId && String(senderId) === String(pageId));
 
+  // Bài viết chứa comment — cho dòng "Nguồn" báo telesale biết khách vào từ bài nào.
+  const postId = cm.post_id || msg.post_id || data.post_id || conv.post_id || null;
+
   return {
     pageId: String(pageId),
     commentId: String(commentId),
@@ -109,6 +112,7 @@ export function parseComment(body) {
     customerName,
     commentText, // có thể rỗng (comment chỉ icon/ảnh) — vẫn rep mời được
     fromPage,
+    postId: postId ? String(postId) : null,
   };
 }
 
@@ -135,6 +139,11 @@ export async function handleComment(ev) {
   }
 
   console.log(`[comment] 💬 comment mới của ${customerName || ev.customerId} (comment ${commentId}): "${(commentText || '[không chữ]').slice(0, 80)}"`);
+
+  // Ghi dấu nguồn "comment từ bài X" cho hội thoại (nếu Pancake gom được conv) — lần đầu thôi.
+  if (ev.postId && conversationId && !store.getKV(`nguon:${conversationId}`)) {
+    store.setKV(`nguon:${conversationId}`, JSON.stringify({ postId: ev.postId }));
+  }
 
   // 1) Rep CÔNG KHAI 1 câu mời ngắn dưới comment.
   const publicMsg = nextPublicReply();
