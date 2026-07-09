@@ -625,6 +625,29 @@ app.post('/admin/medi-upsert', (req, res) => {
   }
 });
 
+// --- Admin: SOI mẫu chẩn đoán MEDi bị "unknown" (để nới bộ lọc bệnh cho voucher) ---
+// GET /admin/medi-unknown?token=XXX[&limit=40] → liệt kê các chuỗi diagnosis map ra 'unknown' + tần suất.
+app.get('/admin/medi-unknown', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const limit = Math.min(Number(req.query.limit || 40), 120);
+  try {
+    const records = await getAllMediRecords();
+    const dem = new Map();
+    for (const r of records) {
+      if (mapDiagnosis(r.diagnosis) !== 'unknown') continue;
+      const d = String(r.diagnosis || '(trống)').trim().slice(0, 60);
+      dem.set(d, (dem.get(d) || 0) + 1);
+    }
+    const ds = [...dem.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([dienGiai, soCa]) => ({ dienGiai, soCa }));
+    res.status(200).json({ ok: true, tong_unknown: [...dem.values()].reduce((a, b) => a + b, 0), so_loai: dem.size, mau: ds });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 // --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---
 // Zalo gửi event 'follow' về URL này (cấu hình trong Zalo Developer Console).
 // Nút "Kiểm tra" của Console gửi GET → phải trả 200, không thì báo "đường dẫn không hợp lệ".
