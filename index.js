@@ -162,25 +162,34 @@ app.post('/admin/broadcast-tag', async (req, res) => {
 });
 
 // --- Admin: CHIẾN DỊCH VOUCHER khách cũ (template 518980 đã duyệt) ---
-// GET /admin/voucher-khach-cu?token=XXX&nhom=3&limit=100&dry=1[&phone=09xx test 1 số]
-//   nhom = group_no bill_care (3=đã xong liệu trình); dry=1 → chỉ đếm; phone → bắn thử 1 số.
+// GET /admin/voucher-khach-cu?token=XXX[&cach_day=N][&nhom=3][&limit=200][&dry=1][&force=1][&phone=09xx]
+//   Đối tượng = khách ĐÃ TỪNG KHÁM (bill_care có bill_date, chưa opt_out).
+//   cach_day=N: chỉ khách khám cách đây ≥ N ngày (mặc định 0 = mọi khách cũ). Đây là tệp chính
+//     ("bệnh nhân cũ lâu chưa lại"). nhom (tùy chọn): lọc thêm theo group_no liệu trình nếu có.
+//   dry=1 chỉ đếm; phone=09xx bắn thử 1 số; force=1 bỏ chặn giờ vàng.
 app.get('/admin/voucher-khach-cu', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken || req.query.token !== adminToken) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
-  const nhom = Number(req.query.nhom || 3);
-  const limit = Math.min(Number(req.query.limit || 100), 300);
+  const cachDay = Number(req.query.cach_day || 0);
+  const nhom = req.query.nhom != null ? Number(req.query.nhom) : null;
+  const limit = Math.min(Number(req.query.limit || 200), 500);
   const dry = req.query.dry === '1' || req.query.dry === 'true';
   const force = req.query.force === '1' || req.query.force === 'true';
   const phoneTest = req.query.phone ? String(req.query.phone) : null;
+  const nowS = Math.floor(Date.now() / 1000);
   try {
     if (phoneTest) {
-      const r = await sendZnsVoucher(phoneTest, { ten: 'Quý khách', ngayKham: Math.floor(Date.now() / 1000) });
+      const r = await sendZnsVoucher(phoneTest, { ten: 'Quý khách', ngayKham: nowS });
       return res.status(200).json({ ok: true, test: phoneTest, ket_qua: r });
     }
-    const rows = store.listBillCare(limit).filter((r) => r.group_no === nhom && r.bill_date && !r.opt_out);
-    if (dry) return res.status(200).json({ ok: true, dry_run: true, nhom, se_gui_cho: rows.length });
+    const rows = store.listBillCare(limit).filter((r) =>
+      r.bill_date && !r.opt_out && r.phone &&
+      (nhom == null || r.group_no === nhom) &&
+      (cachDay <= 0 || (nowS - r.bill_date) >= cachDay * 86400)
+    );
+    if (dry) return res.status(200).json({ ok: true, dry_run: true, cach_day: cachDay, nhom, se_gui_cho: rows.length });
     // GIỜ VÀNG: gửi thật ngoài khung → chặn, trừ khi &force=1 (anh Trình chốt 09/07)
     if (!force && !trongGioVang()) {
       return res.status(200).json({ ok: false, ly_do: 'ngoai_gio_vang', ghi_chu: 'Voucher chỉ bắn 8h–21h VN để khách đọc. Thêm &force=1 nếu muốn gửi ngay.', se_gui_cho: rows.length });
@@ -191,8 +200,8 @@ app.get('/admin/voucher-khach-cu', async (req, res) => {
       if (r.ok) daGui++; else if (r.ly_do === 'da_gui_roi') boQua++; else loi++;
       await new Promise((s) => setTimeout(s, 300));
     }
-    notifyText(`🎁 <b>Chiến dịch voucher nhóm ${nhom}</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi} / tổng ${rows.length} ca.`).catch(() => {});
-    res.status(200).json({ ok: true, nhom, tong: rows.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi });
+    notifyText(`🎁 <b>Chiến dịch voucher khách cũ</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi} / tổng ${rows.length} ca.`).catch(() => {});
+    res.status(200).json({ ok: true, cach_day: cachDay, nhom, tong: rows.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
