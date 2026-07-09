@@ -279,6 +279,20 @@ app.get('/admin/gui-card', async (req, res) => {
   }
 });
 
+// --- Admin: RESET dedup voucher 1 SĐT (để test lại / xử ca gửi lỗi cần phát lại) ---
+// GET /admin/voucher-reset?token=XXX&phone=09xx → xoá key zns_voucher_sent để số đó nhận lại được.
+app.get('/admin/voucher-reset', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  let s = String(req.query.phone || '').replace(/[^\d]/g, '');
+  if (s.startsWith('0')) s = '84' + s.slice(1);
+  if (!/^84\d{9}$/.test(s)) return res.status(400).json({ ok: false, error: 'SĐT không hợp lệ' });
+  store.delKV(`zns_voucher_sent:${s}`);
+  res.status(200).json({ ok: true, da_reset: s });
+});
+
 // --- Admin: BROADCAST tin truyền thông theo tag bệnh (4 tin miễn phí/follower/tháng) ---
 // POST /admin/broadcast-tag?token=XXX  body: { tag, header, text, dry_run }
 //   tag = key ('goi') HOẶC giá trị tag ('Khớp gối'); dry_run=true → chỉ đếm người nhận.
