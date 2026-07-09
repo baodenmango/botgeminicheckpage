@@ -16,8 +16,8 @@ import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating } from './src/
 import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './src/zalo.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher } from './src/zns.js';
-import { lookupMedi, mapDiagnosis } from './src/medi.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe } from './src/zns.js';
+import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
 import { runRescueLead } from './src/rescueLead.js';
@@ -58,8 +58,11 @@ const VOUCHER_CT = {
 };
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function ngayVNstr(sec) { const d = new Date(sec * 1000 + 7 * 3600 * 1000); return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; }
+// SĐT che để quầy đối chiếu mà không lộ nguyên số: 0978***211
+function sdtChe(sdt84) { const s = String(sdt84 || '').replace(/^84/, '0'); return s.length === 10 ? `${s.slice(0, 4)}***${s.slice(-3)}` : '(ẩn)'; }
 
-function trangVoucher(rec, thongBao) {
+// choQuay=true → trang lễ tân: hiện TÊN + SĐT che để đối chiếu người thật. Mặc định (khách) ẩn PII.
+function trangVoucher(rec, thongBao, choQuay = false) {
   const nowS = Math.floor(Date.now() / 1000);
   const ct = VOUCHER_CT[rec?.chuong_trinh] || VOUCHER_CT.ct1;
   const hetHan = rec ? rec.het_han < nowS : false;
@@ -108,7 +111,7 @@ ${thongBao ? `<div class="tb">${esc(thongBao)}</div>` : ''}
     <div class="lbl">Bao gồm</div>
     <ul class="gom">${dsGom}</ul>
     <div class="ma"><div class="hd">Mã ưu đãi — đưa mã này cho quầy lễ tân</div><div class="code">${esc(rec.ma)}</div></div>
-    <div class="meta">Khách: <b>${esc(rec.ten || 'Quý khách')}</b><br>Hiệu lực đến: <b>${ngayVNstr(rec.het_han)}</b></div>
+    <div class="meta">${choQuay ? `Khách: <b>${esc(rec.ten || 'Quý khách')}</b> · SĐT: <b>${esc(sdtChe(rec.sdt))}</b><br>` : ''}Hiệu lực đến: <b>${ngayVNstr(rec.het_han)}</b></div>
     <div class="dk">Áp dụng cho bệnh nhân cũ hoặc người được giới thiệu. Mỗi mã dùng 1 lần, xuất trình khi đến khám. Giá trị dịch vụ mang tính thăm khám — tầm soát, không thay thế chỉ định trực tiếp của Bác sĩ.</div>
     ` : `<p>Mã ưu đãi không đúng hoặc đã bị thu hồi. Vui lòng liên hệ phòng khám <b>0962 349 329</b> để được hỗ trợ.</p>`}
   </div>
@@ -124,19 +127,28 @@ app.get('/voucher/:ma', (req, res) => {
   res.status(200).type('html').send(trangVoucher(rec));
 });
 
-// Quầy XÁC THỰC + đánh dấu đã dùng (cần token). GET để quầy mở link/quét nhanh trên điện thoại.
-// /voucher-quay/:ma?token=XXX        → xem trạng thái (không đổi)
+// Token quầy TÁCH khỏi token admin (bảo mật — lễ tân chỉ có quyền tra/đánh dấu voucher,
+// KHÔNG đụng được /admin/*). Env QUAY_TOKEN riêng; ADMIN_TOKEN vẫn vào được để anh test.
+function laTokenQuay(t) {
+  const q = process.env.QUAY_TOKEN, a = process.env.ADMIN_TOKEN;
+  return !!t && ((q && t === q) || (a && t === a));
+}
+
+// Quầy XÁC THỰC + đánh dấu đã dùng. GET để quầy mở link/quét nhanh trên điện thoại.
+// /voucher-quay/:ma?token=XXX        → xem trạng thái + tên/SĐT che để đối chiếu người thật
 // /voucher-quay/:ma?token=XXX&dung=1 → đánh dấu ĐÃ DÙNG (chốt khi khách tới thật)
 app.get('/voucher-quay/:ma', (req, res) => {
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (!adminToken || req.query.token !== adminToken) {
-    return res.status(403).type('html').send('<h3>403 — thiếu/ sai token quầy</h3>');
+  if (!laTokenQuay(req.query.token)) {
+    return res.status(403).type('html').send('<h3>403 — thiếu/sai token quầy</h3>');
   }
   const ma = String(req.params.ma || '').toUpperCase();
   let rec = null;
-  try { rec = JSON.parse(store.getKV(`voucher:${ma}`) || 'null'); } catch { /* lỗi */ }
+  if (maHopLe(ma)) { // chặn mã bịa (sai checksum) trước khi tra sổ
+    try { rec = JSON.parse(store.getKV(`voucher:${ma}`) || 'null'); } catch { /* lỗi */ }
+  }
   let thongBao = null;
-  if (rec && (req.query.dung === '1' || req.query.dung === 'true')) {
+  if (!maHopLe(ma)) { thongBao = '⚠️ Mã sai định dạng — không phải mã hợp lệ của phòng khám.'; }
+  else if (rec && (req.query.dung === '1' || req.query.dung === 'true')) {
     if (rec.da_dung) { thongBao = `⚠️ Mã này ĐÃ được dùng lúc ${ngayVNstr(rec.dung_luc)} — KHÔNG áp dụng lại.`; }
     else if (rec.het_han < Math.floor(Date.now() / 1000)) { thongBao = '⚠️ Mã đã HẾT HẠN — không áp dụng.'; }
     else {
@@ -145,7 +157,33 @@ app.get('/voucher-quay/:ma', (req, res) => {
       thongBao = '✅ Đã xác nhận sử dụng mã. Áp dụng ưu đãi cho khách.';
     }
   }
-  res.status(200).type('html').send(trangVoucher(rec, thongBao));
+  res.status(200).type('html').send(trangVoucher(rec, thongBao, true));
+});
+
+// TRANG QUẦY — lễ tân bookmark 1 lần: /quay?token=QUAY_TOKEN. Có ô nhập/dán mã (quét QR ra mã
+// rồi dán), bấm "Kiểm tra" mở /voucher-quay/<mã>. Token nhúng sẵn nên không phải gõ lại.
+app.get('/quay', (req, res) => {
+  if (!laTokenQuay(req.query.token)) {
+    return res.status(403).type('html').send('<h3>403 — cần link quầy có token. Liên hệ quản trị.</h3>');
+  }
+  const tk = esc(req.query.token);
+  res.status(200).type('html').send(`<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Quầy — kiểm voucher Hiệp Lợi</title>
+<style>body{margin:0;background:#F4F6F3;color:#1C3A32;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.w{max-width:420px;margin:0 auto;padding:32px 20px}h1{font-size:1.3rem;margin:0 0 4px}p.sub{color:#6B7169;margin:0 0 24px;font-size:.9rem}
+form{background:#fff;border:1px solid #E3E0D7;border-radius:16px;padding:22px;box-shadow:0 8px 28px -14px rgba(28,58,50,.2)}
+label{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6B7169}
+input{width:100%;margin-top:8px;padding:14px;font-size:1.3rem;letter-spacing:.1em;text-align:center;text-transform:uppercase;font-family:ui-monospace,Menlo,monospace;border:2px solid #2F6B54;border-radius:12px;box-sizing:border-box}
+button{width:100%;margin-top:16px;padding:15px;font-size:1.05rem;font-weight:700;color:#fff;background:#2F6B54;border:0;border-radius:12px;cursor:pointer}
+.hint{margin-top:18px;font-size:.82rem;color:#6B7169;line-height:1.5}</style></head><body><div class="w">
+<h1>🩺 Kiểm voucher — Quầy lễ tân</h1><p class="sub">Phòng khám Cơ Xương Khớp Hiệp Lợi</p>
+<form onsubmit="var m=document.getElementById('m').value.trim().toUpperCase();if(m){location.href='/voucher-quay/'+encodeURIComponent(m)+'?token='+encodeURIComponent('${tk}')};return false;">
+<label>Mã voucher khách đưa</label>
+<input id="m" autocomplete="off" autocapitalize="characters" placeholder="V1XXXXXXX" autofocus>
+<button type="submit">Kiểm tra mã</button>
+</form>
+<div class="hint">📷 Quét QR trên điện thoại khách bằng camera → ra chuỗi mã → dán vào ô trên.<br>✅ Trang sau hiện tên + SĐT che để đối chiếu đúng người, rồi bấm "Xác nhận đã dùng".</div>
+</div></body></html>`);
 });
 
 // --- Admin: gỡ cờ "người giữ" bị kẹt (do bug nhận nhầm echo là telesale) ---
@@ -332,6 +370,63 @@ app.get('/admin/voucher-khach-cu', async (req, res) => {
     }
     notifyText(`🎁 <b>Chiến dịch voucher khách cũ</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi} / tổng ${rows.length} ca.`).catch(() => {});
     res.status(200).json({ ok: true, cach_day: cachDay, nhom, tong: rows.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: VOUCHER cho ~1200 BỆNH NHÂN CŨ từ MEDi (EMR) — lọc theo BỆNH ---
+// GET /admin/voucher-medi?token=XXX&benh=goi[&cach_day=45][&cach_day_max=730][&ct=ct1][&batch=200][&dry=1][&force=1][&phone=09xx]
+//   benh = mã bệnh (goi|gut|lung|vai|tvdd|covaigay|...) hoặc 'all'. BẮT BUỘC (chống lỡ bắn cả 1200 mọi bệnh).
+//   cach_day = chỉ BN khám cách ≥N ngày (mặc định 45 = "lâu chưa lại"); cach_day_max loại BN quá cũ (SĐT die).
+//   batch = TRẦN CỨNG ≤200/lượt (chống đốt ví — mỗi tin 600đ). dedup zns_voucher_sent → gọi nhiều lượt quét hết.
+app.get('/admin/voucher-medi', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const benh = String(req.query.benh || '').trim();
+  if (!benh) return res.status(400).json({ ok: false, error: 'thiếu tham số benh (mã bệnh hoặc "all") — bắt buộc để không lỡ bắn cả tệp' });
+  const cachDay = Number(req.query.cach_day || 45);
+  const cachDayMax = Number(req.query.cach_day_max || 0); // 0 = không giới hạn trần trên
+  const ct = req.query.ct === 'ct2' ? 'ct2' : 'ct1';
+  const batch = Math.min(Number(req.query.batch || 200), 200); // HARD CAP 200 — không tin query
+  const dry = req.query.dry === '1' || req.query.dry === 'true';
+  const force = req.query.force === '1' || req.query.force === 'true';
+  const phoneTest = req.query.phone ? String(req.query.phone) : null;
+  const nowS = Math.floor(Date.now() / 1000);
+  try {
+    if (phoneTest) {
+      const r = await sendZnsVoucher(phoneTest, { ten: 'Quý khách', ngayKham: nowS, chuongTrinh: ct });
+      return res.status(200).json({ ok: true, test: phoneTest, ket_qua: r });
+    }
+    if (!isMediConfigured()) return res.status(200).json({ ok: false, ly_do: 'medi_chua_cau_hinh', ghi_chu: 'Cần MEDI_SHEET_CSV_URL hoặc đẩy medi_cache trước.' });
+    const records = await getAllMediRecords();
+    const ungVien = [];
+    for (const rec of records) {
+      if (!rec.phone) continue;
+      const visit = parseVisitDate(rec.lastVisit);
+      if (!visit) continue;
+      const tuoi = nowS - visit;
+      if (tuoi < cachDay * 86400) continue;                        // chưa đủ "lâu chưa lại"
+      if (cachDayMax > 0 && tuoi > cachDayMax * 86400) continue;   // quá cũ → bỏ (SĐT có thể die)
+      if (benh !== 'all' && mapDiagnosis(rec.diagnosis) !== benh) continue;
+      ungVien.push({ phone: rec.phone, ten: rec.name, visit });
+    }
+    if (dry) return res.status(200).json({ ok: true, dry_run: true, benh, cach_day: cachDay, tong_ung_vien: ungVien.length, se_gui_lot_batch: Math.min(ungVien.length, batch), uoc_phi_dong: Math.min(ungVien.length, batch) * 600 });
+    // GIỜ VÀNG
+    if (!force && !trongGioVang()) {
+      return res.status(200).json({ ok: false, ly_do: 'ngoai_gio_vang', ghi_chu: 'Chỉ bắn 8h–21h VN. Thêm &force=1 nếu muốn gửi ngay.', se_gui_cho: Math.min(ungVien.length, batch) });
+    }
+    const lot = ungVien.slice(0, batch);
+    let daGui = 0, boQua = 0, loi = 0;
+    for (const uv of lot) {
+      const r = await sendZnsVoucher(uv.phone, { ten: uv.ten, ngayKham: uv.visit, chuongTrinh: ct });
+      if (r.ok) daGui++; else if (r.ly_do === 'da_gui_roi') boQua++; else loi++;
+      await new Promise((s) => setTimeout(s, 300));
+    }
+    notifyText(`🎁 <b>Voucher MEDi (${esc(benh)}/${ct.toUpperCase()})</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi}. Còn lại ${ungVien.length - lot.length} ứng viên (gọi lại để quét tiếp).`).catch(() => {});
+    res.status(200).json({ ok: true, benh, cach_day: cachDay, ct, tong_ung_vien: ungVien.length, da_quet: lot.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi, con_lai: ungVien.length - lot.length });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }

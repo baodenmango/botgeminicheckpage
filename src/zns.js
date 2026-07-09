@@ -9,8 +9,33 @@
 //   2) Env: ZNS_ENABLED=1 + ZNS_TEMPLATE_NHACLICH=<template_id đã duyệt>.
 //  Template dùng 4 tham số: ten, ngay_hen, ten_pk, sdt_pk.
 import axios from 'axios';
+import crypto from 'node:crypto';
 import * as store from './store.js';
 import { getAccessTokenNow, refreshAccessToken, zaloAgentV4 } from './zalo.js';
+
+// Sinh mã voucher NGẪU NHIÊN THẬT + ký tự checksum (bảo mật — vá 10/07: mã cũ tính được từ SĐT).
+// Chỉ [A-Z0-9] (loại "Mã số" của ZNS + để Zalo render QR đúng), độ dài 9: tiền tố theo chương trình
+// + 6 ký tự crypto random + 1 checksum. Checksum lọc nhanh mã bịa trước cả khi tra sổ.
+const B32 = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ I,O,0,1 tránh nhìn nhầm khi đọc mã
+function sinhMaVoucher(ct) {
+  const tien = ct === 'ct2' ? 'V2' : 'V1';
+  let than = '';
+  const b = crypto.randomBytes(6);
+  for (let i = 0; i < 6; i++) than += B32[b[i] % 32];
+  const body = tien + than; // 8 ký tự
+  let sum = 0;
+  for (const c of body) sum += c.charCodeAt(0);
+  return body + B32[sum % 32]; // 9 ký tự, vd V1K7QM4PX
+}
+// Kiểm mã có checksum hợp lệ không (chặn mã bịa trước khi tra sổ).
+export function maHopLe(ma) {
+  const s = String(ma || '').toUpperCase();
+  if (!/^[A-Z0-9]{9}$/.test(s)) return false;
+  const body = s.slice(0, 8);
+  let sum = 0;
+  for (const c of body) sum += c.charCodeAt(0);
+  return B32[sum % 32] === s[8];
+}
 
 const ZNS_API = 'https://business.openapi.zalo.me/message/template';
 const HOTLINE = process.env.HOTLINE_PK || '0962349329';
@@ -148,11 +173,9 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
   const key = `zns_voucher_sent:${sdt}`;
   if (store.getKV(key)) return { ok: false, ly_do: 'da_gui_roi' };
 
-  // mã voucher: SA + 8 ký tự base36 (chỉ chữ+số — loại "Mã số" của ZNS không nhận ký tự lạ)
-  const rnd = (Number(sdt.slice(-6)) * 2654435761 % 2176782336).toString(36); // ổn định theo SĐT, không dùng Math.random
-  const voucher_code = `SA${(rnd + sdt.slice(-4)).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}`;
   const now = Math.floor(Date.now() / 1000);
   const ct = chuongTrinh === 'ct2' ? 'ct2' : 'ct1'; // mặc định CT1 (tầm soát 150k)
+  const voucher_code = sinhMaVoucher(ct); // ngẫu nhiên thật, không suy ra được từ SĐT
 
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
