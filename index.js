@@ -16,7 +16,7 @@ import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating } from './src/
 import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './src/zalo.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich } from './src/zns.js';
 import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -660,6 +660,74 @@ app.get('/admin/medi-unknown', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// ============================================================
+//  XÁC NHẬN ĐẶT LỊCH — telesale dán block "Booking" (từ group Viber) vào group Telegram
+//  → webhook này parse tên/SĐT/thời gian → gửi ZNS xác nhận 605793 (giảm no-show).
+//  Format telesale gõ (ảnh Viber 10/07): "Booking:\n- tên: X\n- sđt: 09..\n- thời gian: 15h 09/07/2026 tại HL"
+// Trích 1 trường "- nhãn: giá trị" (không phân biệt hoa thường, chịu dấu tiếng Việt).
+function trichTruong(text, nhan) {
+  const re = new RegExp(`[-•*]?\\s*${nhan}\\s*[:：]\\s*(.+)`, 'i');
+  const m = String(text || '').split('\n').map((l) => l.match(re)).find(Boolean);
+  return m ? m[1].trim() : null;
+}
+// SĐT VN 10 số từ chuỗi tự do.
+function sdtTuChuoi(s) {
+  const m = String(s || '').replace(/[^\d]/g, '').match(/0\d{9}/);
+  return m ? m[0] : null;
+}
+// Chuẩn hoá "15h 09/07/2026 tại HL" / "15h NGÀY 09/07" → "15:00 09/07/2026" (≤30, đủ cho khách đọc).
+function chuanGioHen(s) {
+  let t = String(s || '').replace(/\btại\s+HL\b/i, '').replace(/\bNGÀY\b/i, '').replace(/\s+/g, ' ').trim();
+  // "15h" / "15h30" → "15:00" / "15:30"
+  t = t.replace(/(\d{1,2})h(\d{2})?/i, (_, h, mi) => `${h.padStart(2, '0')}:${mi || '00'}`);
+  return t.slice(0, 30);
+}
+// parse 1 block Booking → { ten, phone, gio_hen } hoặc null nếu thiếu SĐT/thời gian.
+export function parseBooking(text) {
+  if (!/booking/i.test(text || '')) return null;
+  const ten = trichTruong(text, 'tên') || trichTruong(text, 'ten') || 'Quý khách';
+  const phone = sdtTuChuoi(trichTruong(text, 'sđt') || trichTruong(text, 'sdt') || text);
+  const gioRaw = trichTruong(text, 'thời gian') || trichTruong(text, 'thoi gian') || trichTruong(text, 'giờ') || trichTruong(text, 'gio');
+  if (!phone || !gioRaw) return null;
+  return { ten: ten.slice(0, 30), phone, gio_hen: chuanGioHen(gioRaw) };
+}
+
+// Webhook Telegram nhận tin group đặt lịch. Đăng ký: setWebhook bot Telegram → BASE/telegram/booking.
+// Bảo vệ bằng secret token (header X-Telegram-Bot-Api-Secret-Token khớp TELEGRAM_BOOKING_SECRET).
+app.post('/telegram/booking', (req, res) => {
+  res.status(200).json({ ok: true }); // trả 200 ngay
+  try {
+    const secret = process.env.TELEGRAM_BOOKING_SECRET;
+    if (secret && req.get('X-Telegram-Bot-Api-Secret-Token') !== secret) return;
+    const msg = req.body?.message || req.body?.channel_post;
+    const text = msg?.text || msg?.caption;
+    if (!text) return;
+    const bk = parseBooking(text);
+    if (!bk) return; // không phải block booking đủ dữ liệu → bỏ qua
+    sendZnsXacNhanLich(bk.phone, { ten: bk.ten, gio_hen: bk.gio_hen }).then((r) => {
+      if (r.ok) {
+        notifyText(`📅 <b>Đã gửi ZNS xác nhận đặt lịch</b>\n• Khách: ${bk.ten}\n• SĐT: ${bk.phone}\n• Hẹn: ${bk.gio_hen}`).catch(() => {});
+      } else if (r.ly_do !== 'vua_gui_roi') {
+        notifyText(`⚠️ Xác nhận đặt lịch KHÔNG gửi được (${r.ly_do})\n• ${bk.ten} ${bk.phone} — ${bk.gio_hen}`).catch(() => {});
+      }
+    }).catch(() => {});
+  } catch (err) {
+    console.error('[telegram-booking] lỗi:', err?.message || err);
+  }
+});
+
+// Admin: test parse + gửi xác nhận thủ công. GET /admin/xac-nhan-lich?token=&phone=&ten=&gio=
+app.get('/admin/xac-nhan-lich', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const { phone, ten, gio } = req.query;
+  if (!phone || !gio) return res.status(400).json({ ok: false, error: 'thiếu phone hoặc gio' });
+  const r = await sendZnsXacNhanLich(String(phone), { ten: ten ? String(ten) : undefined, gio_hen: chuanGioHen(gio) });
+  res.status(r.ok ? 200 : 500).json({ ok: r.ok, ...r });
 });
 
 // --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---

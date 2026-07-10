@@ -122,6 +122,55 @@ export async function sendZnsNhacLich(phone, { ten, ngay_hen, maKH } = {}) {
   }
 }
 
+// Template XÁC NHẬN ĐẶT LỊCH 605793 (ĐÃ DUYỆT 10/07) — tham số THẬT đã xác minh trên ZBS:
+// customer_name (Tên KH ≤30) + booking_code (Mã số ≤30) + schedule_time (Nhãn tùy chỉnh ≤30).
+// Bật độc lập bằng ZNS_TEMPLATE_XACNHAN (KHÔNG dùng chung ZNS_TEMPLATE_NHACLICH — khác mục đích).
+const XACNHAN_TEMPLATE = process.env.ZNS_TEMPLATE_XACNHAN || '605793';
+
+/**
+ * Gửi ZNS XÁC NHẬN ĐẶT LỊCH ngay sau khi telesale chốt lịch (giảm no-show).
+ * Nguồn giờ hẹn: block "Booking" telesale dán vào Telegram (parse ở index.js).
+ * KHÔNG dedup cứng theo SĐT (1 khách đặt nhiều lịch khác giờ vẫn phải xác nhận từng cái);
+ * chỉ chống double-fire vô tình bằng dedup mềm phone+giờ TTL 5 phút.
+ * @param {object} p { ten, gio_hen (chuỗi "08:30 15/07/2026"), maDatLich }
+ */
+export async function sendZnsXacNhanLich(phone, { ten, gio_hen, maDatLich } = {}) {
+  const sdt = phone84(phone);
+  if (!sdt || !gio_hen) return { ok: false, ly_do: 'thieu_sdt_hoac_gio' };
+  if (!XACNHAN_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };
+  // dedup mềm: cùng SĐT + cùng giờ hẹn trong 5 phút → coi là bấm lặp, bỏ qua
+  const dkey = `zns_xacnhan:${sdt}:${String(gio_hen).replace(/\s+/g, '')}`;
+  if (store.getKV(dkey)) return { ok: false, ly_do: 'vua_gui_roi' };
+
+  const goi = async () => axios.post(ZNS_API, {
+    phone: sdt,
+    template_id: XACNHAN_TEMPLATE,
+    template_data: {
+      customer_name: (ten || 'Quý khách').slice(0, 30),
+      booking_code: String(maDatLich || `HL-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
+      schedule_time: String(gio_hen).slice(0, 30),
+    },
+    tracking_id: `xacnhanlich-${Date.now()}`,
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
+
+  try {
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error === 0) {
+      store.setKV(dkey, String(Math.floor(Date.now() / 1000)));
+      // TTL mềm: xoá key sau 5' để lịch mới (giờ khác) hoặc đặt lại vẫn gửi được
+      setTimeout(() => { try { store.delKV(dkey); } catch { /* bỏ qua */ } }, 5 * 60 * 1000);
+      console.log(`[zns] 📅 xác nhận đặt lịch ${gio_hen} tới ${sdt.slice(0, 5)}***`);
+      return { ok: true };
+    }
+    console.warn('[zns] xác nhận lịch lỗi:', JSON.stringify(r.data).slice(0, 200));
+    return { ok: false, ly_do: `zalo_loi_${r.data?.error}` };
+  } catch (err) {
+    console.warn('[zns] xác nhận lịch API lỗi:', err?.message);
+    return { ok: false, ly_do: 'ngoai_le' };
+  }
+}
+
 /**
  * Gửi ZNS ĐÁNH GIÁ 5 SAO (mẫu 522230 đã duyệt — customer_name + ma_khach_hang).
  * Chống trùng 6 tháng/khách. Trả true nếu Zalo nhận.
