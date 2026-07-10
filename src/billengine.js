@@ -13,6 +13,45 @@ import { tagFollowerBenh } from './zalo.js';
 import { sendZnsNhacLich, isZnsEnabled } from './zns.js';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
+const DAY = 86400;
+
+// Liệu trình PRP/biogen/TBG = 3 buổi × 1 THÁNG (anh Trình chốt 30/06, mục D-TER).
+// Khoảng cách buổi (ngày) — chỉnh qua env nếu phác đồ đổi.
+const SESSION_GAP_DAYS = parseInt(process.env.REBILL_SESSION_GAP_DAYS || '30', 10);
+const SESSIONS_TOTAL = parseInt(process.env.REBILL_SESSIONS_TOTAL || '3', 10);
+const isLieuTrinh = (treatment) => /prp_khop|sinh_hoc|biogen|tbg|te_bao_goc/i.test(String(treatment || ''));
+
+/**
+ * Suy NHÓM TÁI BILL + lịch buổi kế từ payload (mục D + D-TER).
+ * Trả về { group_no, sessions_done, sessions_total, next_session_at } hoặc {} nếu không xếp được.
+ *   - Nhóm 2 (đang liệu trình PRP/biogen/TBG): tự tính next_session_at = bill_date + gap,
+ *     trừ khi payload đã cho sessions_done/next_session_at chính xác từ MEDi.
+ *   - Nhóm 4 (bỏ dở): payload.dropped=true (nguồn MEDi đánh dấu ngưng giữa chừng).
+ *   - Nhóm 1/3: để trống group_no → đi chuỗi ca-ra-bill (D-BIS) như cũ; engine tái bill bỏ qua.
+ * KHÔNG ép nhóm 1/3 vào tái bill để tránh chồng tin với chuỗi D-BIS đang chạy.
+ */
+export function inferRebillGroup(input, billDate) {
+  const out = {};
+  if (input.group_no != null) out.group_no = Number(input.group_no); // nguồn MEDi ép sẵn thì tôn trọng
+  if (input.dropped === true && out.group_no == null) out.group_no = 4; // bỏ dở giữa chừng
+  if (out.group_no == null && isLieuTrinh(input.treatment)) out.group_no = 2; // đang liệu trình
+
+  if (out.group_no === 2) {
+    const total = Number(input.sessions_total) || SESSIONS_TOTAL;
+    const done = Number(input.sessions_done) || 1; // ca vừa ra bill = vừa xong ≥ buổi 1
+    out.sessions_total = total;
+    out.sessions_done = done;
+    // next_session_at: ưu tiên MEDi cho sẵn; nếu chưa & chưa hết liệu trình → bill_date + gap.
+    if (input.next_session_at) {
+      out.next_session_at = typeof input.next_session_at === 'number'
+        ? input.next_session_at
+        : Math.floor(new Date(input.next_session_at).getTime() / 1000);
+    } else if (done < total) {
+      out.next_session_at = billDate + SESSION_GAP_DAYS * DAY;
+    }
+  }
+  return out;
+}
 
 // epoch giây → dd/MM/yyyy giờ VN (tham số schedule_time của ZNS nhắc lịch)
 function ngayVN(epochSec) {
@@ -30,6 +69,9 @@ export function normalizeBillRecord(input) {
     : nowSec();
   const id = input.id || (phone ? `${phone}:${billDate}` : null);
   if (!id) return null;
+  // Suy nhóm tái bill + lịch buổi kế (mục D/D-TER) — mở khóa engine rebill vốn luôn trả 0
+  // vì record cũ không có group_no/next_session_at. Nhóm 1/3 để trống → đi chuỗi D-BIS như cũ.
+  const grp = inferRebillGroup(input, billDate);
   return {
     id: String(id),
     phone: phone || null,
@@ -42,6 +84,10 @@ export function normalizeBillRecord(input) {
     has_injection: Boolean(input.has_injection),
     bill_date: billDate,
     treatment: input.treatment || null,
+    group_no: grp.group_no ?? null,
+    sessions_done: grp.sessions_done ?? null,
+    sessions_total: grp.sessions_total ?? null,
+    next_session_at: grp.next_session_at ?? null,
   };
 }
 

@@ -263,6 +263,80 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
   }
 }
 
+// ============================================================
+//  T2 — DẶN DÒ SAU BUỔI ĐIỀU TRỊ (loại CSKH) + T3 — THÔNG BÁO KẾT QUẢ ĐÃ CÓ (loại Giao dịch).
+//  Bộ template soạn lại 10/07 (qua panel adversarial) để LÁCH được kiểm duyệt Zalo — xem
+//  05-Ky-thuat-AI/ZNS-BO-TEMPLATE-DE-DUYET-2026-07-10.md. CHỜ Zalo duyệt → điền ENV template id.
+//  Đến khi có id, hàm fail-safe trả false (không gửi) — bật bằng cách set ENV, không phải sửa code.
+
+// T2 — DẶN DÒ (CSKH). Tham số template: customer_name, ma_phieu_dieu_tri, ngay_dieu_tri.
+const DANDO_TEMPLATE = process.env.ZNS_TEMPLATE_DANDO || null; // set sau khi duyệt
+export function isDanDoEnabled() { return !!DANDO_TEMPLATE && /^(1|true|yes|on)$/i.test(process.env.ZNS_ENABLED || ''); }
+
+/**
+ * Gửi ZNS DẶN DÒ sau buổi điều trị. Trả true nếu Zalo nhận.
+ * @param {string} phone SĐT (0xxx...)
+ * @param {object} p { ten, ma_phieu (mã phiếu điều trị), ngay_dt (dd/MM/yyyy hoặc epoch giây) }
+ */
+export async function sendZnsDanDo(phone, { ten, ma_phieu, ngay_dt } = {}) {
+  if (!isDanDoEnabled()) return false;
+  const sdt = phone84(phone);
+  if (!sdt) return false;
+  const ngay = typeof ngay_dt === 'number' ? ngayVN(ngay_dt) : String(ngay_dt || ngayVN(Math.floor(Date.now() / 1000)));
+  const goi = async () => axios.post(ZNS_API, {
+    phone: sdt,
+    template_id: DANDO_TEMPLATE,
+    template_data: {
+      customer_name: (ten || 'Quý khách').slice(0, 30),
+      ma_phieu_dieu_tri: String(ma_phieu || `PDT-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
+      ngay_dieu_tri: ngay.slice(0, 20),
+    },
+    tracking_id: `dando-${Date.now()}`,
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
+  try {
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error === 0) { console.log(`[zns] 💊 dặn dò sau điều trị → ${sdt.slice(0, 5)}***`); return true; }
+    console.warn('[zns] dặn dò lỗi:', JSON.stringify(r.data).slice(0, 200));
+    return false;
+  } catch (err) { console.warn('[zns] dặn dò API lỗi:', err?.message); return false; }
+}
+
+// T3 — KẾT QUẢ ĐÃ CÓ (Giao dịch). Tham số: customer_name, ma_ho_so, ma_phieu, ngay_kham.
+// TRUNG TÍNH: chỉ báo "kết quả đã có, mời đến nhận" — TUYỆT ĐỐI không chẩn đoán/chỉ số/tên thuốc.
+const KETQUA_TEMPLATE = process.env.ZNS_TEMPLATE_KETQUA || null; // set sau khi duyệt
+export function isKetQuaEnabled() { return !!KETQUA_TEMPLATE && /^(1|true|yes|on)$/i.test(process.env.ZNS_ENABLED || ''); }
+
+/**
+ * Gửi ZNS THÔNG BÁO KẾT QUẢ ĐÃ CÓ. Trả true nếu Zalo nhận.
+ * @param {string} phone SĐT (0xxx...)
+ * @param {object} p { ten, ma_ho_so, ma_phieu (mã phiếu kết quả), ngay_kham (dd/MM/yyyy hoặc epoch giây) }
+ */
+export async function sendZnsKetQua(phone, { ten, ma_ho_so, ma_phieu, ngay_kham } = {}) {
+  if (!isKetQuaEnabled()) return false;
+  const sdt = phone84(phone);
+  if (!sdt) return false;
+  const ngay = typeof ngay_kham === 'number' ? ngayVN(ngay_kham) : String(ngay_kham || ngayVN(Math.floor(Date.now() / 1000)));
+  const goi = async () => axios.post(ZNS_API, {
+    phone: sdt,
+    template_id: KETQUA_TEMPLATE,
+    template_data: {
+      customer_name: (ten || 'Quý khách').slice(0, 30),
+      ma_ho_so: String(ma_ho_so || `HL-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
+      ma_phieu: String(ma_phieu || `KQ-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
+      ngay_kham: ngay.slice(0, 20),
+    },
+    tracking_id: `ketqua-${Date.now()}`,
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
+  try {
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error === 0) { console.log(`[zns] 📋 báo kết quả đã có → ${sdt.slice(0, 5)}***`); return true; }
+    console.warn('[zns] kết quả lỗi:', JSON.stringify(r.data).slice(0, 200));
+    return false;
+  } catch (err) { console.warn('[zns] kết quả API lỗi:', err?.message); return false; }
+}
+
 /**
  * Gửi rating NGAY nếu trong khung 7h–21h VN; ngoài khung → xếp hàng chờ,
  * cron flushRatingCho() sẽ bắn vào khung giờ cho phép (ca thanh toán tối muộn → sáng mai).

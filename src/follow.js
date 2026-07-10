@@ -14,18 +14,58 @@ import { lookupMedi, mapDiagnosis } from './medi.js';
 import { notifyText } from './telegram.js';
 import * as store from './store.js';
 
-// Xác thực chữ ký webhook Zalo (mac = SHA256(appId + data + timestamp + oaSecret)).
-// Nếu không cấu hình secret → bỏ qua kiểm (fail-open, vẫn xử event) nhưng log cảnh báo.
-function verifySignature(body, macHeader) {
-  const secret = process.env.ZALO_WEBHOOK_SECRET;
-  if (!secret) return true; // chưa cấu hình → không chặn (môi trường nội bộ)
+// Xác thực chữ ký webhook Zalo OA. Công thức CHUẨN (đối chiếu tài liệu Zalo + nhiều nguồn dev,
+// 10/07): mac = SHA256(app_id + RAW_BODY + timestamp + OA_SECRET), header X-ZEvent-Signature (hex trần).
+//  • RAW_BODY = đúng byte Zalo gửi (req.rawBody), KHÔNG JSON.stringify(parsed) — parse rồi stringify
+//    đổi thứ tự key/escape Unicode → hash luôn sai (lỗi của bản cũ).
+//  • timestamp = body.timestamp LẤY TỪ TRONG payload (không phải header, không tự sinh).
+//  • secret = OA Secret Key (ZALO_OA_SECRET), KHÔNG phải App Secret. Bản cũ dùng nhầm App Secret.
+//
+// 3 CHẾ ĐỘ (env ZALO_WEBHOOK_MODE), chọn an toàn để KHÔNG rớt event thật khi bật lần đầu:
+//   'off'     — bỏ qua kiểm (mặc định khi CHƯA có OA secret). Vẫn xử event.
+//   'log'     — verify + CẢNH BÁO nếu sai NHƯNG VẪN XỬ event (mặc định khi CÓ secret).
+//               Bật vài ngày, soi log: nếu event thật luôn 'khớp' → yên tâm chuyển 'enforce'.
+//   'enforce' — verify NGHIÊM: sai chữ ký → BỎ event (chặn giả mạo).
+// Trả về true nếu ĐƯỢC PHÉP xử event (đã khớp, hoặc chế độ off/log).
+function webhookMode() {
+  const m = String(process.env.ZALO_WEBHOOK_MODE || '').toLowerCase();
+  if (['off', 'log', 'enforce'].includes(m)) return m;
+  return process.env.ZALO_OA_SECRET ? 'log' : 'off'; // mặc định an toàn
+}
+
+// Tính MAC kỳ vọng. Trả { ok, expect } — ok=null nghĩa là thiếu dữ liệu để tính (coi như không kết luận).
+export function computeWebhookMac(rawBody, timestamp) {
+  const secret = process.env.ZALO_OA_SECRET || process.env.ZALO_WEBHOOK_SECRET; // ưu tiên OA secret
+  const appId = process.env.ZALO_APP_ID || '';
+  if (!secret || !rawBody || !timestamp) return { ok: null, expect: null };
+  const expect = crypto.createHash('sha256').update(appId + rawBody + String(timestamp) + secret).digest('hex');
+  return { ok: true, expect };
+}
+
+// @param opts { rawBody, macHeader } — rawBody đúng byte (req.rawBody). Fallback JSON.stringify chỉ để
+//   không crash khi thiếu rawBody (sẽ không khớp — nên luôn truyền rawBody thật).
+function verifySignature(body, { rawBody, macHeader } = {}) {
+  const mode = webhookMode();
+  if (mode === 'off') return true;
   try {
-    const appId = process.env.ZALO_APP_ID || '';
-    const data = typeof body === 'string' ? body : JSON.stringify(body);
+    const raw = rawBody || (typeof body === 'string' ? body : JSON.stringify(body));
     const ts = body?.timestamp || '';
-    const expect = crypto.createHash('sha256').update(appId + data + ts + secret).digest('hex');
-    return macHeader && expect === macHeader;
-  } catch { return false; }
+    const { ok, expect } = computeWebhookMac(raw, ts);
+    const khop = ok && macHeader &&
+      macHeader.length === expect.length &&
+      crypto.timingSafeEqual(Buffer.from(macHeader), Buffer.from(expect));
+    if (khop) return true;
+    if (mode === 'log') {
+      console.warn(`[zalo-webhook] ⚠️ chữ ký KHÔNG khớp (mode=log, VẪN xử event). mac_header=${String(macHeader).slice(0, 12)}… ts=${ts}`);
+      return true; // log-only: không chặn
+    }
+    console.warn('[zalo-webhook] ❌ chữ ký KHÔNG hợp lệ (mode=enforce) → BỎ event');
+    return false;
+  } catch (e) {
+    // lỗi tính toán: enforce thì chặn (an toàn), log/off thì cho qua
+    if (webhookMode() === 'enforce') { console.warn('[zalo-webhook] lỗi verify → chặn:', e?.message); return false; }
+    return true;
+  }
 }
 
 // Tìm bệnh (condition) đã biết cho 1 zalo user: ưu tiên hội thoại Zalo đã lưu; rồi MEDi theo SĐT.
@@ -52,13 +92,23 @@ async function resolveCondition(zaloUserId) {
 }
 
 /**
+ * Cổng verify chung cho MỌI handler webhook Zalo (follow/submit-info/rating).
+ * Trả true nếu được phép xử event. Dùng ở index.js trước khi gọi từng handler.
+ * @param {object} body  payload đã parse
+ * @param {object} opts  { rawBody, macHeader }
+ */
+export function zaloWebhookAllowed(body, opts) {
+  return verifySignature(body, opts);
+}
+
+/**
  * Xử lý 1 event webhook Zalo. Chỉ quan tâm event_name = 'follow'.
  * @param {object} body  payload webhook Zalo
- * @param {string} macHeader  header X-ZEvent-Signature (nếu có)
+ * @param {object} opts  { rawBody, macHeader } — rawBody đúng byte để verify chữ ký
  */
-export async function handleZaloFollow(body, macHeader) {
+export async function handleZaloFollow(body, opts = {}) {
   if (!body || typeof body !== 'object') return;
-  if (!verifySignature(body, macHeader)) {
+  if (!verifySignature(body, opts)) {
     console.warn('[follow] chữ ký webhook KHÔNG hợp lệ → bỏ qua event');
     return;
   }

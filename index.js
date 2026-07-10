@@ -12,8 +12,9 @@ import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
-import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating } from './src/follow.js';
+import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating, zaloWebhookAllowed } from './src/follow.js';
 import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './src/zalo.js';
+import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
 import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich } from './src/zns.js';
@@ -25,7 +26,10 @@ import { runRescueLead } from './src/rescueLead.js';
 checkConfig();
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+// verify hook: giữ RAW body (đúng byte Zalo gửi) để verify chữ ký webhook Zalo OA.
+// Chữ ký Zalo = sha256(app_id + rawBody + timestamp + OA_secret) — PHẢI dùng raw body,
+// KHÔNG được JSON.stringify(parsed) (đổi thứ tự key/escape → hash sai). Xem src/follow.js.
+app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }));
 
 // --- Health check (Render kiểm tra sống) ---
 // Kèm commit SHA + thời điểm process khởi động → verify deploy chỉ bằng 1 lệnh curl
@@ -788,9 +792,13 @@ app.get('/admin/booking-webhook', async (req, res) => {
 // Nút "Kiểm tra" của Console gửi GET → phải trả 200, không thì báo "đường dẫn không hợp lệ".
 app.get('/zalo/webhook', (_req, res) => res.status(200).json({ ok: true }));
 app.post('/zalo/webhook', (req, res) => {
-  res.status(200).json({ received: true }); // trả 200 ngay
+  res.status(200).json({ received: true }); // trả 200 ngay (Zalo khỏi retry)
   const mac = req.get('X-ZEvent-Signature') || req.get('x-zevent-signature') || null;
-  try { handleZaloFollow(req.body, mac); } catch (err) { console.error('[zalo-webhook] lỗi:', err?.message || err); }
+  const opts = { rawBody: req.rawBody, macHeader: mac };
+  // VERIFY 1 LẦN CHUNG cho cả 3 handler (trước đây submit-info/rating KHÔNG qua verify → giả mạo được).
+  // Chế độ 'enforce' sai chữ ký → bỏ TẤT CẢ; 'log'/'off' → cho qua (xem src/follow.js webhookMode()).
+  if (!zaloWebhookAllowed(req.body, opts)) return;
+  try { handleZaloFollow(req.body, opts); } catch (err) { console.error('[zalo-webhook] lỗi:', err?.message || err); }
   // khách bấm nút "Chia sẻ thông tin" → nhận SĐT chính chủ, nối hồ sơ (mỗi handler tự lọc event)
   try { handleZaloSubmitInfo(req.body); } catch (err) { console.error('[zalo-webhook] submit-info lỗi:', err?.message || err); }
   // khách chấm sao form đánh giá → radar: ≤3 sao réo anh gọi cứu (van xả complain)
@@ -1082,6 +1090,37 @@ cron.schedule('0 8 * * 1', async () => {
     await baoCaoTuanZalo();
   } catch (err) {
     console.error('[cron-baocao] lỗi báo cáo tuần Zalo:', err?.message || err);
+  }
+}, { timezone: 'Asia/Ho_Chi_Minh' });
+
+// --- Cron BROADCAST 4 TIN TRUYỀN THÔNG/THÁNG theo tag bệnh (Đòn 1 — kênh MIỄN PHÍ chạm cả tệp) ---
+// Mỗi tuần 1 lần (thứ 4, 09:00 VN — giữa tuần, trong giờ vàng). Nội dung xoay theo tuần trong tháng:
+// tuần1 giáo dục · tuần2 nhắc tái khám · tuần3 ưu đãi CT1 150k · tuần4 CT2 300k.
+// broadcastTag tự dedup (1 tin/ngày/người, trần 4/tháng/người) + chốt giờ vàng → an toàn quota.
+// Bật/tắt bằng BROADCAST_CRON_ENABLED (mặc định BẬT; tắt khẩn =0). Cần ZALO_OPENAPI_ENABLED=1.
+const BROADCAST_CRON_ENABLED = !/^(0|false|no|off)$/i.test(process.env.BROADCAST_CRON_ENABLED || '1');
+cron.schedule('0 9 * * 3', async () => {
+  if (!BROADCAST_CRON_ENABLED) return;
+  try {
+    const jobs = broadcastJobsForNow();
+    let tongGui = 0, tongBoQua = 0, tongLoi = 0, chay = 0;
+    for (const job of jobs) {
+      const kq = await broadcastTag({ tagKey: job.tagKey, header: job.header, text: job.text });
+      if (kq?.ly_do === 'openapi_tat') {
+        console.warn('[cron-broadcast] ZALO_OPENAPI_ENABLED chưa bật → không broadcast được. Bỏ lượt.');
+        notifyText('⚠️ <b>Broadcast tuần bỏ lượt</b>: ZALO_OPENAPI_ENABLED chưa bật trên Render.').catch(() => {});
+        return;
+      }
+      if (kq?.ly_do === 'ngoai_gio_vang') { console.warn('[cron-broadcast] ngoài giờ vàng → bỏ lượt.'); return; }
+      if (kq?.ok) { tongGui += kq.da_gui || 0; tongBoQua += kq.bo_qua || 0; tongLoi += kq.loi?.length || 0; chay++; }
+      await new Promise((r) => setTimeout(r, 1500)); // giãn giữa các tag, nương rate-limit Zalo
+    }
+    console.log(`[cron-broadcast] tuần ${tuanTrongThang()}: ${chay} tag, gửi ${tongGui}, bỏ qua ${tongBoQua}, lỗi ${tongLoi}`);
+    if (tongGui) {
+      notifyText(`📣 <b>Broadcast tuần ${tuanTrongThang()}</b>: gửi ${tongGui} tin qua ${chay} tag bệnh, bỏ qua ${tongBoQua} (đã nhận/hết quota tháng), lỗi ${tongLoi}.`).catch(() => {});
+    }
+  } catch (err) {
+    console.error('[cron-broadcast] lỗi broadcast tuần:', err?.message || err);
   }
 }, { timezone: 'Asia/Ho_Chi_Minh' });
 
