@@ -3,9 +3,11 @@
 //  Đọc các ca trong bảng bill_care (nguồn POS/MEDi nạp vào) → tới mốc ngày 0/1/3/6/7
 //  thì gửi tin chăm sóc qua Zalo OA. Chống trùng bằng bill_cham_done. Đặt được lịch tái khám → DỪNG.
 //
-//  NẠP NGUỒN (2 cách — fail-open, chưa đấu POS thì engine vẫn chạy trên data đã nạp):
-//   A) Admin endpoint POST /admin/bill-ingest (index.js) — nhân viên/automation đẩy 1 ca vào.
-//   B) ingestFromPosSheet() — khung đọc Sheet POS export (giống medi.js), đấu sau.
+//  NẠP NGUỒN (fail-open — engine vẫn chạy trên data đã nạp nếu 1 nguồn hụt):
+//   A) runPosIngest() (src/posingest.js) — NGUỒN CHÍNH, TỰ ĐỘNG: đọc thẳng Pancake POS API
+//      (đơn status=11) mỗi 25,55 phút → enrich MEDi → ingestBill. Đây là "đấu POS" đã xong.
+//   B) Admin endpoint POST /admin/bill-ingest (index.js) — nhân viên đẩy tay 1 ca (dự phòng).
+//   (ingestFromPosSheet() cũ đọc Sheet đã BỎ — xem chú thích tại hàm bên dưới.)
 import * as store from './store.js';
 import { BILL_TOUCHES, buildBillMessages } from './billtouches.js';
 import { sendCareMessages } from './care-send.js';
@@ -163,14 +165,17 @@ export async function runBillTouches() {
 }
 
 /**
- * (KHUNG) Đọc nguồn POS export (Sheet) để nạp ca ra bill tự động — đấu sau.
- * Khi có POS_SHEET_CSV_URL / POS_SHEET_ID, đọc giống medi.js rồi gọi ingestBill cho mỗi dòng
- * có thuốc/tiêm trong N ngày gần đây. Hiện fail-open: chưa cấu hình → không làm gì.
+ * ⚠️ ĐÃ THAY THẾ (11/07/2026) — KHÔNG dùng nữa, GIỮ để tương thích import cũ.
+ *
+ * Đường nạp ca ra bill tự động THẬT giờ là runPosIngest() trong src/posingest.js:
+ * đọc THẲNG Pancake POS API (đơn status=11 đã thu tiền) → enrich MEDi → nối kênh Zalo
+ * → ingestBill(), chạy bằng cron 25,55 phút (index.js). KHÔNG còn đọc Sheet trung gian.
+ * Lý do bỏ Sheet: quầy POS không tách mục thuốc/tiêm nên lọc theo tên hàng là mù —
+ * POS cho SỰ KIỆN (ra bill), MEDi cho NỘI DUNG (bệnh/liệu trình). Xem posingest.js.
+ *
+ * Hàm này chủ động no-op để CA-RA-BILL không còn "TODO gây hiểu lầm engine mù POS".
  */
 export async function ingestFromPosSheet() {
-  if (!process.env.POS_SHEET_CSV_URL && !process.env.POS_SHEET_ID) return 0;
-  // TODO(đấu data): đọc Sheet POS → lọc bill có thuốc/tiêm trong 1 ngày qua → ingestBill mỗi dòng.
-  // Cấu trúc đọc giống src/medi.js (CSV công khai hoặc Sheets API + service account).
-  console.log('[bill] ingestFromPosSheet: nguồn POS đã khai báo nhưng phần đọc chưa đấu (khung).');
+  console.log('[bill] ingestFromPosSheet đã ngừng dùng — nguồn POS đọc qua runPosIngest() (posingest.js).');
   return 0;
 }
