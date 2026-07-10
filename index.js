@@ -703,6 +703,9 @@ app.post('/telegram/booking', (req, res) => {
     if (secret && req.get('X-Telegram-Bot-Api-Secret-Token') !== secret) return;
     // Lọc theo group được phép (env TELEGRAM_BOOKING_CHAT_ID) — chỉ nhận booking từ đúng group đặt lịch.
     const chatId = req.body?.message?.chat?.id || req.body?.channel_post?.chat?.id;
+    const chatTitle = req.body?.message?.chat?.title || req.body?.channel_post?.chat?.title || '';
+    // Ghi lại chat gần nhất (để /admin đọc chat_id lúc setup, khỏi phụ thuộc log)
+    if (chatId) store.setKV('tele_booking_last_chat', JSON.stringify({ id: chatId, title: chatTitle, at: Date.now() }));
     const allow = process.env.TELEGRAM_BOOKING_CHAT_ID;
     if (allow && String(chatId) !== String(allow)) return;
     const msg = req.body?.message || req.body?.channel_post;
@@ -758,6 +761,11 @@ app.get('/admin/booking-webhook', async (req, res) => {
       });
       const data = await resp.json();
       return res.status(200).json({ ok: data?.ok === true, action: 'setWebhook', url, co_secret: !!secret, ket_qua: data });
+    }
+    // đọc chat gần nhất webhook nhận (để lấy chat_id group lúc setup)
+    if (req.query.last_chat === '1') {
+      let last = null; try { last = JSON.parse(store.getKV('tele_booking_last_chat') || 'null'); } catch { /* trống */ }
+      return res.status(200).json({ ok: true, chat_gan_nhat: last });
     }
     const m = (req.query.updates === '1' || req.query.updates === 'true') ? 'getUpdates' : 'getWebhookInfo';
     const data = await (await fetch(api(m))).json();
