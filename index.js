@@ -752,13 +752,15 @@ app.get('/admin/booking-webhook', async (req, res) => {
       const base = process.env.PUBLIC_BASE_URL || 'https://botgeminicheckpage.onrender.com';
       const secret = process.env.TELEGRAM_BOOKING_SECRET || '';
       const url = `${base}/telegram/booking`;
-      const { data } = await axios.post(api('setWebhook'), {
-        url, secret_token: secret || undefined, allowed_updates: ['message', 'channel_post'],
-      }, { timeout: 15000, validateStatus: () => true });
+      const resp = await fetch(api('setWebhook'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, secret_token: secret || undefined, allowed_updates: ['message', 'channel_post'] }),
+      });
+      const data = await resp.json();
       return res.status(200).json({ ok: data?.ok === true, action: 'setWebhook', url, co_secret: !!secret, ket_qua: data });
     }
     const m = (req.query.updates === '1' || req.query.updates === 'true') ? 'getUpdates' : 'getWebhookInfo';
-    const { data } = await axios.get(api(m), { timeout: 15000, validateStatus: () => true });
+    const data = await (await fetch(api(m))).json();
     // với getUpdates: rút gọn để dễ tìm chat_id + text
     if (m === 'getUpdates') {
       const goi = (data?.result || []).map((u) => {
