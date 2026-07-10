@@ -701,6 +701,10 @@ app.post('/telegram/booking', (req, res) => {
   try {
     const secret = process.env.TELEGRAM_BOOKING_SECRET;
     if (secret && req.get('X-Telegram-Bot-Api-Secret-Token') !== secret) return;
+    // Lọc theo group được phép (env TELEGRAM_BOOKING_CHAT_ID) — chỉ nhận booking từ đúng group đặt lịch.
+    const chatId = req.body?.message?.chat?.id || req.body?.channel_post?.chat?.id;
+    const allow = process.env.TELEGRAM_BOOKING_CHAT_ID;
+    if (allow && String(chatId) !== String(allow)) return;
     const msg = req.body?.message || req.body?.channel_post;
     const text = msg?.text || msg?.caption;
     if (!text) return;
@@ -728,6 +732,45 @@ app.get('/admin/xac-nhan-lich', async (req, res) => {
   if (!phone || !gio) return res.status(400).json({ ok: false, error: 'thiếu phone hoặc gio' });
   const r = await sendZnsXacNhanLich(String(phone), { ten: ten ? String(ten) : undefined, gio_hen: chuanGioHen(gio) });
   res.status(r.ok ? 200 : 500).json({ ok: r.ok, ...r });
+});
+
+// Admin: quản webhook Telegram bot ĐẶT LỊCH (token riêng TELEGRAM_BOOKING_TOKEN — TÁCH khỏi bot
+// thông báo để không đá webhook nhau). Bot tự gọi Telegram API, anh KHÔNG cần cầm token.
+// GET /admin/booking-webhook?token=XXX            → xem trạng thái hiện tại (getWebhookInfo)
+// GET /admin/booking-webhook?token=XXX&set=1      → set webhook về BASE/telegram/booking (+secret)
+// GET /admin/booking-webhook?token=XXX&updates=1  → xem tin gần đây (getUpdates) để lấy chat_id group
+app.get('/admin/booking-webhook', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const bt = process.env.TELEGRAM_BOOKING_TOKEN;
+  if (!bt) return res.status(400).json({ ok: false, error: 'chưa đặt env TELEGRAM_BOOKING_TOKEN (token bot đặt lịch riêng)' });
+  const api = (m) => `https://api.telegram.org/bot${bt}/${m}`;
+  try {
+    if (req.query.set === '1' || req.query.set === 'true') {
+      const base = process.env.PUBLIC_BASE_URL || 'https://botgeminicheckpage.onrender.com';
+      const secret = process.env.TELEGRAM_BOOKING_SECRET || '';
+      const url = `${base}/telegram/booking`;
+      const { data } = await axios.post(api('setWebhook'), {
+        url, secret_token: secret || undefined, allowed_updates: ['message', 'channel_post'],
+      }, { timeout: 15000, validateStatus: () => true });
+      return res.status(200).json({ ok: data?.ok === true, action: 'setWebhook', url, co_secret: !!secret, ket_qua: data });
+    }
+    const m = (req.query.updates === '1' || req.query.updates === 'true') ? 'getUpdates' : 'getWebhookInfo';
+    const { data } = await axios.get(api(m), { timeout: 15000, validateStatus: () => true });
+    // với getUpdates: rút gọn để dễ tìm chat_id + text
+    if (m === 'getUpdates') {
+      const goi = (data?.result || []).map((u) => {
+        const g = u.message || u.channel_post || {};
+        return { chat_id: g.chat?.id, chat_ten: g.chat?.title || g.chat?.type, from: g.from?.first_name, text: (g.text || '').slice(0, 60) };
+      });
+      return res.status(200).json({ ok: true, so_tin: goi.length, tin: goi });
+    }
+    res.status(200).json({ ok: true, webhook: data?.result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
 });
 
 // --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---
