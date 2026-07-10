@@ -88,6 +88,7 @@ export function normalizeBillRecord(input) {
     sessions_done: grp.sessions_done ?? null,
     sessions_total: grp.sessions_total ?? null,
     next_session_at: grp.next_session_at ?? null,
+    source: input.source || null, // đo lường: nguồn lead kế thừa vào bill
   };
 }
 

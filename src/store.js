@@ -65,6 +65,8 @@ try {
   if (!cols.includes('bill_cham_done')) db.exec("ALTER TABLE conversations ADD COLUMN bill_cham_done TEXT DEFAULT '[]'");
   if (!cols.includes('chuoi_done'))     db.exec("ALTER TABLE conversations ADD COLUMN chuoi_done TEXT DEFAULT '[]'");
   if (!cols.includes('opt_out'))        db.exec('ALTER TABLE conversations ADD COLUMN opt_out INTEGER DEFAULT 0');
+  // Đo lường end-to-end: nguồn lead (fb_inbox/fb_comment/zalo_ads/qr_quay/salepage/tu_nhien/unknown).
+  if (!cols.includes('source'))         db.exec('ALTER TABLE conversations ADD COLUMN source TEXT');
 } catch (e) {
   console.warn('[store] migration:', e?.message || e);
 }
@@ -106,6 +108,12 @@ db.exec(`
     created_at      INTEGER
   );
 `);
+// Migration bill_care: thêm cột source (đo lường bill theo nguồn). Khối riêng — 1 lỗi ALTER
+// không chặn khởi động. Bill kế thừa source của lead → trả lời "kênh nào ra bill rẻ nhất".
+try {
+  const bcCols = db.prepare("PRAGMA table_info(bill_care)").all().map((c) => c.name);
+  if (!bcCols.includes('source')) db.exec('ALTER TABLE bill_care ADD COLUMN source TEXT');
+} catch (e) { console.warn('[store] migration bill_care.source:', e?.message || e); }
 
 // Hồ sơ BN từ MEDi, ĐẨY TỪ CRON LOCAL (credentials EMR ở local, không lên cloud).
 // Bot tra theo SĐT khi ENRICH (khách nhắn Zalo) + engine đánh thức BN ngủ.
@@ -228,8 +236,39 @@ export function thongKeTuanZalo() {
   const convMoi = db.prepare(
     "SELECT COUNT(*) AS n FROM conversations WHERE channel = 'zalo' AND created_at > ?"
   ).get(tuanTruoc).n;
-  const caCham = db.prepare('SELECT COUNT(*) AS n FROM bill_care').get().n;
-  return { convMoi, caCham };
+  const caCham = db.prepare('SELECT COUNT(*) AS n FROM bill_care').get().n; // GIỮ NGUYÊN (baocao.js đọc)
+
+  // --- Bổ sung đo lường end-to-end (chỉ THÊM field, không đổi field cũ) ---
+  const caChamTuan = db.prepare('SELECT COUNT(*) AS n FROM bill_care WHERE created_at > ?').get(tuanTruoc).n;
+  // Follower→SĐT: conv Zalo mới trong tuần đã có phone
+  const phoneCaptured = db.prepare(
+    "SELECT COUNT(*) AS n FROM conversations WHERE channel = 'zalo' AND created_at > ? AND phone IS NOT NULL AND phone != ''"
+  ).get(tuanTruoc).n;
+  // Lịch qua Zalo: conv Zalo có nhãn đã đặt lịch (booking_notified)
+  let bookingZalo = 0;
+  try {
+    bookingZalo = db.prepare(
+      "SELECT COUNT(*) AS n FROM conversations WHERE channel = 'zalo' AND created_at > ? AND booking_notified = 1"
+    ).get(tuanTruoc).n;
+  } catch { /* cột có thể chưa có ở schema cũ */ }
+  // Bill theo nguồn (tích luỹ từ ngày có cột source) — COALESCE để ca cũ hiện 'unknown'
+  let billTheoNguon = [];
+  try {
+    billTheoNguon = db.prepare(
+      "SELECT COALESCE(source,'unknown') AS nguon, COUNT(*) AS n FROM bill_care GROUP BY COALESCE(source,'unknown') ORDER BY n DESC"
+    ).all();
+  } catch { /* cột source có thể chưa migrate kịp */ }
+  // Unfollow tuần (đếm từ counter kv — key theo tuanKey() dùng chung với handler unfollow)
+  const unfollowTuan = parseInt(getKV(`zalo_unfollow:${tuanKey()}`) || '0', 10);
+
+  return { convMoi, caCham, caChamTuan, phoneCaptured, bookingZalo, billTheoNguon, unfollowTuan };
+}
+
+// Khóa tuần dùng chung cho các counter theo tuần (unfollow...). Định danh ổn định: <năm>-<số ngày//7>.
+export function tuanKey() {
+  const sec = Math.floor(Date.now() / 1000) + 7 * 3600; // giờ VN
+  const ngayTuEpoch = Math.floor(sec / 86400);
+  return `w${Math.floor(ngayTuEpoch / 7)}`; // đổi mỗi 7 ngày, đơn điệu tăng
 }
 
 // B4: các cặp (zalo_user_id, bệnh) đã biết — để backfill gắn tag follower 1 lần sau deploy.
@@ -318,6 +357,37 @@ export function setSummary(conversationId, summary) {
 export function setChannel(conversationId, channel, zaloUserId = null) {
   db.prepare('UPDATE conversations SET channel = COALESCE(?, channel), zalo_user_id = COALESCE(?, zalo_user_id) WHERE conversation_id = ?')
     .run(channel || null, zaloUserId || null, String(conversationId));
+}
+
+// ---------- ĐO LƯỜNG: NGUỒN LEAD (attribution) ----------
+// Suy nguồn chuẩn hoá từ payload thô + kênh. GUARD CỨNG: kênh Zalo KHÔNG BAO GIỜ trả fb_*
+// (payload Zalo có thể lẫn ad_id cũ → gán nhầm làm sai CPA). followRef = tham số ref của link OA.
+export function suyNguon(nguonRaw, channel, followRef = null) {
+  const ch = String(channel || '').toLowerCase();
+  const raw = String(nguonRaw || '').toLowerCase();
+  const ref = String(followRef || '').toLowerCase();
+  if (ch === 'zalo') {
+    // kênh Zalo: chỉ các nguồn hợp lệ của Zalo
+    if (/^lp_/.test(ref) || /salepage|sale_page/.test(ref)) return 'salepage';
+    if (/qr|quay|standee/.test(ref)) return 'qr_quay';
+    if (/ads|quangcao|ad_/.test(ref) || /ads/.test(raw)) return 'zalo_ads';
+    if (ref) return 'tu_nhien'; // có ref nhưng không khớp mẫu → tự nhiên/khác
+    return 'tu_nhien';          // follow OA không ref = tự nhiên (organic)
+  }
+  // kênh FB
+  if (/comment/.test(raw)) return 'fb_comment';
+  if (/ad|adset|campaign|ctwa|paid/.test(raw)) return 'fb_ads';
+  if (raw) return 'fb_inbox';
+  return 'unknown';
+}
+
+// Ghi source cho conv — CHỈ khi cột đang NULL (first-touch, không ghi đè nguồn đầu tiên).
+export function setSource(conversationId, source) {
+  if (!conversationId || !source) return;
+  try {
+    db.prepare('UPDATE conversations SET source = ? WHERE conversation_id = ? AND (source IS NULL OR source = \'\')')
+      .run(String(source).slice(0, 40), String(conversationId));
+  } catch (e) { console.warn('[store] setSource:', e?.message); }
 }
 
 // Tìm hội thoại theo SĐT ở KÊNH KHÁC (vd FB) để NỐI NGỮ CẢNH FB→Zalo.
@@ -527,20 +597,20 @@ export function upsertBillCare(rec) {
   if (existing) {
     db.prepare(`UPDATE bill_care SET phone=?, name=?, zalo_user_id=?, page_id=?, conversation_id=?,
       condition=?, has_medicine=?, has_injection=?, bill_date=?, group_no=?, treatment=?,
-      sessions_done=?, sessions_total=?, next_session_at=?, updated_at=? WHERE id=?`)
+      sessions_done=?, sessions_total=?, next_session_at=?, source=?, updated_at=? WHERE id=?`)
       .run(v('phone'), v('name'), v('zalo_user_id'), v('page_id'), v('conversation_id'),
         v('condition'), bool('has_medicine'), bool('has_injection'), v('bill_date'),
         v('group_no'), v('treatment'), v('sessions_done'), v('sessions_total'),
-        v('next_session_at'), now, id);
+        v('next_session_at'), v('source'), now, id);
   } else {
     db.prepare(`INSERT INTO bill_care (id, phone, name, zalo_user_id, page_id, conversation_id,
       condition, has_medicine, has_injection, bill_date, group_no, treatment,
-      sessions_done, sessions_total, next_session_at, updated_at, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      sessions_done, sessions_total, next_session_at, source, updated_at, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, v('phone'), v('name'), v('zalo_user_id'), v('page_id'), v('conversation_id'),
         v('condition'), bool('has_medicine'), bool('has_injection'), v('bill_date'),
         v('group_no'), v('treatment'), v('sessions_done'), v('sessions_total'),
-        v('next_session_at'), now, now);
+        v('next_session_at'), v('source'), now, now);
   }
   return db.prepare('SELECT * FROM bill_care WHERE id = ?').get(id);
 }

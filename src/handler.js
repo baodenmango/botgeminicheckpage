@@ -215,6 +215,13 @@ export async function handleIncoming(ev) {
       store.setKV(`nguon:${conversationId}`, JSON.stringify(ev.nguon));
       console.log(`[nguon] ${conversationId}: ${JSON.stringify(ev.nguon)}`);
     }
+    // ĐO LƯỜNG: ghi cột source chuẩn hoá (song song kv nguon: trên — kv giữ cho telegram, cột để query).
+    // Suy channel từ pageId (getPageChannel) vì conv.channel chưa set kịp lúc này (set tận ~dòng 422).
+    try {
+      const chSuy = getPageChannel(pageId);
+      const src = store.suyNguon(typeof ev.nguon === 'string' ? ev.nguon : JSON.stringify(ev.nguon || ''), chSuy);
+      if (src && src !== 'unknown') store.setSource(conversationId, src);
+    } catch { /* không chặn luồng chính */ }
 
     // CHỈ handover thật (khiếu nại/đòi gặp người) → bot KHÔNG tự trả lời.
     // NHƯNG nếu khách vẫn nhắn tiếp → NHẮC người thật qua Telegram (đừng bỏ quên khách),

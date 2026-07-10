@@ -100,6 +100,13 @@ export async function runPosIngest() {
         const uid = store.getKV(`phone_zalo:${phone}`);
         if (uid) payload.zalo_user_id = uid;
       }
+      // ĐO LƯỜNG: bill kế thừa nguồn của lead → trả lời "kênh nào ra bill rẻ nhất".
+      // Ưu tiên: source của conv Zalo → conv theo SĐT (kênh FB) → nguồn follow → unknown.
+      const uidNoPrefix = String(payload.zalo_user_id || '').replace(/^zl_/i, '');
+      payload.source = zconv?.source
+        || store.getConversationByPhone(phone)?.source
+        || (uidNoPrefix && store.getKV(`nguon_follow:${uidNoPrefix}`))
+        || 'unknown';
 
       if (ingestBill(payload)) {
         store.setKV(`posingest_seen2:${oid}`, '1');

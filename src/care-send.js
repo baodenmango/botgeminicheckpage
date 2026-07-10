@@ -15,6 +15,28 @@ import { sendTexts, isOpenApiEnabled } from './zalo.js';
 import * as quota from './quota.js';
 import * as store from './store.js';
 
+// Đọc mốc khách nhắn cuối (last_customer_msg_at) để biết tin gửi có trong cửa sổ 48h miễn phí không.
+// Thử 3 đường: conv theo id → conv Zalo suy từ user_id → conv theo SĐT. Đọc-không-được → null (TÍNH PHÍ).
+function docLastCustomerMsgAt({ conversation_id, zalo_user_id, phone }) {
+  try {
+    if (conversation_id) {
+      const c = store.getConversation(conversation_id);
+      if (c?.last_customer_msg_at) return c.last_customer_msg_at;
+    }
+    if (zalo_user_id) {
+      const oaId = process.env.ZALO_OA_ID || '3136814239074246132';
+      const uid = String(zalo_user_id).replace(/^zl_/i, '');
+      const c = store.getConversation(`zl_${oaId}_${uid}`); // khớp convIdPancake ở zalo.js:175
+      if (c?.last_customer_msg_at) return c.last_customer_msg_at;
+    }
+    if (phone) {
+      const zc = store.getZaloConvByPhone(phone);
+      if (zc?.last_customer_msg_at) return zc.last_customer_msg_at;
+    }
+  } catch { /* đọc hụt → null → tính phí, an toàn */ }
+  return null;
+}
+
 export async function sendCareMessages(target, messages, opts = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return false;
   let { conversation_id, page_id, zalo_user_id } = target || {};
@@ -43,8 +65,13 @@ export async function sendCareMessages(target, messages, opts = {}) {
     }
   }
 
-  // Gác cổng ngân sách: chạm thường nhường đạn khi quota cạn tới mức dự trữ.
-  if (!quota.choPhepGui(priority)) {
+  // TÁCH TIN GIAO DỊCH: nếu tin gửi trong cửa sổ 48h kể từ lần khách nhắn cuối → MIỄN PHÍ,
+  // KHÔNG tính vào quota 500 → bỏ luôn gác đạn (tin miễn phí không cần giữ đạn).
+  const lc = docLastCustomerMsgAt({ conversation_id, zalo_user_id, phone: target?.phone });
+  const mienPhi = quota.trongCuaSoMienPhi(lc);
+
+  // Gác cổng ngân sách: CHỈ áp cho tin TÍNH PHÍ (ngoài 48h). Chạm thường nhường đạn khi quota cạn.
+  if (!mienPhi && !quota.choPhepGui(priority)) {
     console.warn(`[care-send] quota tin tư vấn còn ${quota.conLai()} (≤ dự trữ) → hoãn chạm thường${opts.code ? ` ${opts.code}` : ''}`);
     return false;
   }
@@ -64,8 +91,12 @@ export async function sendCareMessages(target, messages, opts = {}) {
   }
 
   if (ok) {
-    quota.ghiTieu(messages.length);
-    quota.canhBaoNeuCan().catch(() => {});
+    if (mienPhi) {
+      quota.ghiMienPhi(messages.length); // trong 48h → không trừ quota, chỉ đếm để đo
+    } else {
+      quota.ghiTieu(messages.length);    // ngoài 48h → trừ quota 500 (đếm theo ô, đếm dư an toàn)
+      quota.canhBaoNeuCan().catch(() => {});
+    }
   }
   return ok;
 }

@@ -120,6 +120,14 @@ export async function handleZaloFollow(body, opts = {}) {
   const userId = stripZaloPrefix(rawUid);
   if (!userId) { console.warn('[follow] event follow thiếu user_id'); return; }
 
+  // ĐO LƯỜNG: ghi ref nguồn follow NGAY (trước guard OpenAPI — nếu OpenAPI tắt, nhánh return
+  // dưới sẽ nuốt mất attribution). ref từ link Quan tâm OA (?ref=lp_...) nếu Zalo đính kèm.
+  try {
+    const ref = body.follower?.ref || body.ref || body.source || '';
+    const src = store.suyNguon('', 'zalo', ref);
+    store.setKV(`nguon_follow:${userId}`, src);
+  } catch { /* không chặn */ }
+
   if (!isOpenApiEnabled()) {
     console.warn(`[follow] khách ${userId} follow OA nhưng ZALO_OPENAPI_ENABLED tắt → chưa gửi tài liệu được (cần OpenAPI để gửi file).`);
     return;
@@ -189,6 +197,11 @@ export async function handleZaloSubmitInfo(body) {
   const conv = store.getConversationByZaloUser(uid);
   if (conv && !conv.phone) {
     store.setPhoneCaptured(conv.conversation_id, phone, info.name || conv.customer_name || null);
+  }
+  // ĐO LƯỜNG: gán source cho conv theo nguồn follow đã ghi lúc bấm Quan tâm (nếu có).
+  if (conv) {
+    const srcFollow = store.getKV(`nguon_follow:${uid}`);
+    if (srcFollow) store.setSource(conv.conversation_id, srcFollow);
   }
 
   console.log(`[submit-info] ✅ ${uid} bấm nút chia sẻ: ${info.name || '(không tên)'} ${phone.slice(0, 4)}***`);
@@ -269,5 +282,21 @@ export async function handleZaloRating(body) {
   dong.push('⚡️ Gọi xin lỗi + xử lý NGAY để khách không đăng review công khai (van xả complain).');
   notifyText(dong.join('\n')).catch(() => {});
   console.log(`[rating] 🚨 ${uid} chấm ${sao}★ → đã réo Telegram (phone ${phone ? phone.slice(0, 4) + '***' : 'chưa có'})`);
+  return true;
+}
+
+// --- UNFOLLOW/BLOCK: đếm để đo sức khỏe OA (tỷ lệ rời bỏ). Handler ĐỘC LẬP (không nhét vào
+// handleZaloFollow — hàm đó return sớm ở event unfollow). Chống trùng theo uid+tuần (Zalo retry).
+export function handleZaloUnfollow(body) {
+  const eventName = body?.event_name || body?.event || '';
+  if (!/unfollow|unsub|block/i.test(eventName)) return false;
+  const uid = stripZaloPrefix(body.follower?.id || body.user_id_by_app || body.user_id || '');
+  const tuan = store.tuanKey();
+  const dkey = `zalo_unfollow_seen:${uid}:${tuan}`;
+  if (uid && store.getKV(dkey)) return true; // đã đếm uid này tuần này
+  if (uid) store.setKV(dkey, '1');
+  const key = `zalo_unfollow:${tuan}`;
+  store.setKV(key, String(parseInt(store.getKV(key) || '0', 10) + 1));
+  console.log(`[unfollow] ${uid || '(ẩn)'} rời OA — đếm tuần ${tuan}`);
   return true;
 }

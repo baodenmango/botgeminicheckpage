@@ -17,6 +17,26 @@ import { notifyText } from './telegram.js';
 const QUOTA_THANG = parseInt(process.env.ZALO_TIN_TUVAN_THANG || '500', 10);
 const RESERVE = parseInt(process.env.ZALO_QUOTA_RESERVE || '100', 10);
 
+// CỬA SỔ MIỄN PHÍ: tin gửi trong vòng 48h kể từ lần KHÁCH tương tác gần nhất KHÔNG tính vào
+// 500 tin tư vấn (gói Tăng trưởng). Chốt 48h = 172800s (khớp thiết kế + comment care-send.js).
+// Đổi bằng ENV nếu tài liệu gói đổi (VD một số gói 7 ngày cho OpenAPI — hiện GIỮ 48h an toàn).
+const CUA_SO_GIAY = parseInt(process.env.ZALO_CUA_SO_GIAY || '172800', 10);
+
+/** Tin gửi bây giờ có nằm trong cửa sổ miễn phí không? Thiếu mốc → false (mặc định TÍNH PHÍ, an toàn). */
+export function trongCuaSoMienPhi(lastCustomerMsgAt) {
+  if (!lastCustomerMsgAt) return false;
+  return (Math.floor(Date.now() / 1000) - Number(lastCustomerMsgAt)) <= CUA_SO_GIAY;
+}
+
+// Đếm tin ĐÃ BỎ TRỪ vì trong cửa sổ 48h (đo lượng quota được giải phóng, cho báo cáo).
+const keyMienPhi = () => `zalo_mienphi_48h:${thangHienTai()}`;
+export function ghiMienPhi(soTin) {
+  store.setKV(keyMienPhi(), String((parseInt(store.getKV(keyMienPhi()) || '0', 10)) + Math.max(1, soTin | 0)));
+}
+export function daMienPhi() {
+  return parseInt(store.getKV(keyMienPhi()) || '0', 10);
+}
+
 // Tháng theo giờ VN (quota Zalo reset theo tháng dương lịch).
 export function thangHienTai() {
   const d = new Date(Date.now() + 7 * 3600 * 1000);
@@ -61,5 +81,8 @@ export async function canhBaoNeuCan() {
 
 /** Số liệu cho /admin/zalo-quota + báo cáo tuần. */
 export function thongKe() {
-  return { thang: thangHienTai(), quota: QUOTA_THANG, da_tieu: daTieu(), con_lai: conLai(), du_tru: RESERVE };
+  return {
+    thang: thangHienTai(), quota: QUOTA_THANG, da_tieu: daTieu(), con_lai: conLai(), du_tru: RESERVE,
+    mien_phi_48h: daMienPhi(), // tin đã KHÔNG trừ quota vì gửi trong cửa sổ 48h
+  };
 }

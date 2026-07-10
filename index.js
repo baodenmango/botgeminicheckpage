@@ -12,7 +12,7 @@ import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
-import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating, zaloWebhookAllowed } from './src/follow.js';
+import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating, handleZaloUnfollow, zaloWebhookAllowed } from './src/follow.js';
 import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './src/zalo.js';
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
@@ -803,6 +803,8 @@ app.post('/zalo/webhook', (req, res) => {
   try { handleZaloSubmitInfo(req.body); } catch (err) { console.error('[zalo-webhook] submit-info lỗi:', err?.message || err); }
   // khách chấm sao form đánh giá → radar: ≤3 sao réo anh gọi cứu (van xả complain)
   try { handleZaloRating(req.body); } catch (err) { console.error('[zalo-webhook] rating lỗi:', err?.message || err); }
+  // khách unfollow/block OA → đếm để đo tỷ lệ rời bỏ (sức khỏe OA)
+  try { handleZaloUnfollow(req.body); } catch (err) { console.error('[zalo-webhook] unfollow lỗi:', err?.message || err); }
 });
 
 // --- Xác thực domain với Zalo (nếu Console đòi) ---
