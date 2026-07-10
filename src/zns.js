@@ -59,11 +59,23 @@ function ngayVN(epoch) {
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
+// Epoch → "HH:mm:ss dd/MM/yyyy" giờ VN — khớp tham số KIỂU "Thời gian" của Mẫu Voucher ZBS
+// (template voucher V2 606424: start_date/expire khai kiểu Thời gian, ví dụ "08:00:00 10/07/2026").
+// Sai kiểu (gửi thiếu giờ cho tham số kiểu Thời gian) → Zalo báo lệch, tin RỚT lúc gửi thật.
+function ngayGioVN(epoch, gio = '08:00:00') {
+  return `${gio} ${ngayVN(epoch)}`;
+}
+
 // Voucher tri ân khách cũ (template ZBS 518980 ĐÃ DUYỆT, loại Voucher 600đ/tin) — anh Trình
 // chốt 09/07: CT1 siêu âm vi điểm + đo cơ mỡ 800k→150k, CT2 gói 1.3tr→300k. Template riêng,
 // KHÔNG dùng chung ZNS_TEMPLATE_NHACLICH. Bật độc lập bằng ZNS_TEMPLATE_VOUCHER.
 const VOUCHER_TEMPLATE = process.env.ZNS_TEMPLATE_VOUCHER || '518980';
 const VOUCHER_HSD_NGAY = parseInt(process.env.ZNS_VOUCHER_HSD_NGAY || '30', 10);
+// V2 = template Mẫu Voucher mới 606424 (soạn 10/07, qua SOP): CHỈ 4 tham số
+// (customer_name, voucher_code, start_date, expire) + start_date/expire KIỂU THỜI GIAN (có giờ).
+// V1 = template cũ 518980 (Mẫu tuỳ chỉnh): 6 tham số, ngày không giờ. Chọn bằng ZNS_VOUCHER_V2=1
+// (bật SAU khi 606424 được duyệt + đổi ZNS_TEMPLATE_VOUCHER=606424). Mặc định V1 để không gãy mẫu đang chạy.
+const VOUCHER_V2 = /^(1|true|yes|on)$/i.test(process.env.ZNS_VOUCHER_V2 || '');
 
 export function isZnsEnabled() {
   return /^(1|true|yes|on)$/i.test(process.env.ZNS_ENABLED || '') && !!process.env.ZNS_TEMPLATE_NHACLICH;
@@ -226,17 +238,27 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
   const ct = chuongTrinh === 'ct2' ? 'ct2' : 'ct1'; // mặc định CT1 (tầm soát 150k)
   const voucher_code = sinhMaVoucher(ct); // ngẫu nhiên thật, không suy ra được từ SĐT
 
+  // Khớp CHÍNH XÁC tham số của template đang dùng (thừa/thiếu khoá → Zalo báo "template_data không khớp" → rớt).
+  const expEpoch = now + VOUCHER_HSD_NGAY * 86400;
+  const template_data = VOUCHER_V2
+    ? { // 606424: 4 tham số, start_date/expire kiểu Thời gian (có giờ)
+        customer_name: (ten || 'Quý khách').slice(0, 30),
+        voucher_code: voucher_code.slice(0, 30),
+        start_date: ngayGioVN(now, '08:00:00'),
+        expire: ngayGioVN(expEpoch, '23:59:59'),
+      }
+    : { // 518980 (cũ): 6 tham số, ngày không giờ
+        customer_name: (ten || 'Quý khách').slice(0, 30),
+        voucher_code: voucher_code.slice(0, 30),
+        record_code: String(maHoSo || `KH-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
+        start_date: ngayVN(now),
+        expire: ngayVN(expEpoch),
+        visit_date: ngayVN(ngayKham || now),
+      };
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
     template_id: VOUCHER_TEMPLATE,
-    template_data: {
-      customer_name: (ten || 'Quý khách').slice(0, 30),
-      voucher_code: voucher_code.slice(0, 30),
-      record_code: String(maHoSo || `KH-${sdt.slice(-5)}`).replace(/[^A-Za-z0-9-]/g, '').slice(0, 30),
-      start_date: ngayVN(now),
-      expire: ngayVN(now + VOUCHER_HSD_NGAY * 86400),
-      visit_date: ngayVN(ngayKham || now),
-    },
+    template_data,
     tracking_id: `voucher-${Date.now()}`,
   }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
 
