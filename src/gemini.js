@@ -61,11 +61,12 @@ const FALLBACK = {
 // Làm sạch & ràng buộc output theo đúng định dạng brief (mục 5, 8).
 function sanitize(obj) {
   const out = { ...FALLBACK, ...(obj || {}) };
-  // messages: mảng 1–4 chuỗi, mỗi ô < 300 ký tự
+  // messages: mảng 1–3 chuỗi, mỗi ô < 300 ký tự.
+  // VÁ 11/07: siết 4→3 cho khớp prompt ("TUYỆT ĐỐI KHÔNG quá 3 bong bóng/lượt", chống dội bom lộ bot).
   let msgs = Array.isArray(out.messages) ? out.messages : [String(out.messages || '')];
   msgs = msgs
     .filter((m) => typeof m === 'string' && m.trim().length > 0)
-    .slice(0, 4)
+    .slice(0, 3)
     .map((m) => (m.length > 300 ? m.slice(0, 297) + '…' : m));
   if (msgs.length === 0) msgs = FALLBACK.messages;
   out.messages = msgs;

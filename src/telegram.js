@@ -133,13 +133,22 @@ function nutChamLead(convId) {
     { text: '❌ Không nghe', callback_data: `c7:${cid}:khongNghe` },
   ]] };
 }
+// Map mốc chạm (ngôn ngữ ENGINE) → LỆNH cho telesale (ngôn ngữ NGƯỜI).
+// Anh Trình chốt 11/07: "telesale nhìn 'Chạm 2/5/7' không hiểu phải làm gì". Số hiệu chỉ có nghĩa
+// với bot; tin cho người phải nói VIỆC + độ gấp, giấu số hiệu máy đi.
+const CALL_TOUCH_LENH = {
+  2: { tieude: '📞 GỌI NGAY — khách vừa cho số', viec: 'Cuộc gọi vàng: gọi trong 5-15 phút đầu, khách đang nóng nhất.' },
+  5: { tieude: '📞 GỌI LẠI — hôm qua chưa chốt', viec: 'Đã hơn 1 ngày chưa chốt được. Gọi lại nhắc lịch, đừng để nguội.' },
+  7: { tieude: '📞 GỌI CHỐT CUỐI — ca sắp nguội', viec: 'Cơ hội cuối trước khi đóng ca. Gọi chốt hoặc xác nhận khách còn nhu cầu.' },
+};
 export async function notifyCallTouch({ touchNo, name, phone, condition, summary, muctieu, pageId, conversationId }) {
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
+  const lenh = CALL_TOUCH_LENH[touchNo] || { tieude: '📞 GỌI KHÁCH', viec: muctieu || '' };
   let text =
-    `📞 <b>CHẠM ${touchNo} — TELESALE GỌI</b>\n` +
+    `${lenh.tieude}\n` +
     `👤 ${escapeHtml(name) || '(chưa rõ)'} · <b>${escapeHtml(phone) || '(?)'}</b>\n` +
     `🩺 Bệnh: ${benh}\n`;
-  if (muctieu) text += `🎯 ${escapeHtml(muctieu)}\n`;
+  if (lenh.viec) text += `👉 ${escapeHtml(lenh.viec)}\n`;
   if (summary) text += `📋 ${escapeHtml(summary)}\n`;
   text += `${await nguonLine(pageId, conversationId)}\n`;
   text += `💬 ${pancakeLink(pageId, conversationId)}`;
