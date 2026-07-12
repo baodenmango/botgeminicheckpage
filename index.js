@@ -1021,8 +1021,9 @@ app.post('/webhook', (req, res) => {
   }
 });
 
-// --- Cron retouch mỗi 15 phút ---
-cron.schedule('*/15 * * * *', async () => {
+// --- Cron retouch mỗi 10 phút ---
+// Nhịp dập "nóng vừa" (im ~24' → dập): cron 10' để độ trễ bám mốc còn ≤10' thay vì ~15'.
+cron.schedule('*/10 * * * *', async () => {
   try {
     const holdHours = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
     const targets = store.findRetouchTargets(config.retouch.minIdleHours, config.retouch.maxCount, holdHours);

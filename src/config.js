@@ -57,8 +57,11 @@ export const config = {
   pancakePages: loadPancakePages(),
 
   retouch: {
-    minIdleHours: parseFloat(process.env.RETOUCH_MIN_IDLE_HOURS || '2'),
-    maxCount: parseInt(process.env.RETOUCH_MAX_COUNT || '2', 10),
+    // Nhịp "NÓNG VỪA" (anh Bảo chốt 11/07): khách chat rồi im ~25' là dập lại để đốn hạ lúc còn
+    // lưỡng lự, tối đa 3 lần. Trước đây 2h/2 lần → lỡ mất lúc khách nóng. Mỗi lần vẫn 1 ô, giữ
+    // giờ vàng 8-22h (handler.js chặn). Chỉnh qua env nếu muốn xoay nhịp mà không sửa code.
+    minIdleHours: parseFloat(process.env.RETOUCH_MIN_IDLE_HOURS || '0.4'),  // ~24 phút
+    maxCount: parseInt(process.env.RETOUCH_MAX_COUNT || '3', 10),
   },
 };
 
