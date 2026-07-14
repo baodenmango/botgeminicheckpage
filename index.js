@@ -22,6 +22,7 @@ import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConf
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
 import { runRescueLead } from './src/rescueLead.js';
+import { guiBienNhan, parseHenEpoch, bookingNhacTick } from './src/bookingsched.js';
 
 checkConfig();
 
@@ -671,8 +672,10 @@ app.get('/admin/medi-unknown', async (req, res) => {
 //  → webhook này parse tên/SĐT/thời gian → gửi ZNS xác nhận 605793 (giảm no-show).
 //  Format telesale gõ (ảnh Viber 10/07): "Booking:\n- tên: X\n- sđt: 09..\n- thời gian: 15h 09/07/2026 tại HL"
 // Trích 1 trường "- nhãn: giá trị" (không phân biệt hoa thường, chịu dấu tiếng Việt).
+// Chịu CẢ 2 format telesale gõ: nhiều dòng (Hana) và 1 DÒNG "Booking: - tên: X - sđt: Y - dịch vụ: Z"
+// (Thắng 14/07) — giá trị dừng trước " - nhãn-kế-tiếp:" thay vì nuốt hết đuôi dòng.
 function trichTruong(text, nhan) {
-  const re = new RegExp(`[-•*]?\\s*${nhan}\\s*[:：]\\s*(.+)`, 'i');
+  const re = new RegExp(`[-•*]?\\s*${nhan}\\s*[:：]\\s*(.+?)(?=\\s+[-•*]\\s*[^:：]{1,25}[:：]|$)`, 'i');
   const m = String(text || '').split('\n').map((l) => l.match(re)).find(Boolean);
   return m ? m[1].trim() : null;
 }
@@ -710,18 +713,46 @@ app.post('/telegram/booking', (req, res) => {
     const chatTitle = req.body?.message?.chat?.title || req.body?.channel_post?.chat?.title || '';
     // Ghi lại chat gần nhất (để /admin đọc chat_id lúc setup, khỏi phụ thuộc log)
     if (chatId) store.setKV('tele_booking_last_chat', JSON.stringify({ id: chatId, title: chatTitle, at: Date.now() }));
-    const allow = process.env.TELEGRAM_BOOKING_CHAT_ID;
-    if (allow && String(chatId) !== String(allow)) return;
     const msg = req.body?.message || req.body?.channel_post;
     const text = msg?.text || msg?.caption;
     if (!text) return;
+    // Cho phép NHIỀU group (phân tách phẩy) — group đặt lịch từng đổi id, env cũ trỏ group chết
+    // là cả luồng câm lặng không ai biết. Giờ: tin CÓ chữ Booking mà bị chặn → ghi KV + log rõ
+    // để /admin/booking-webhook chẩn đoán được ("anh chưa bao giờ nhận biên nhận" 14/07).
+    const allow = (process.env.TELEGRAM_BOOKING_CHAT_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (allow.length && !allow.includes(String(chatId))) {
+      if (/booking/i.test(text)) {
+        store.setKV('tele_booking_dropped', JSON.stringify({ id: chatId, title: chatTitle, at: Date.now() }));
+        console.warn(`[telegram-booking] ⚠️ tin Booking từ chat ${chatId} (${chatTitle}) BỊ CHẶN — TELEGRAM_BOOKING_CHAT_ID=${allow.join(',')} không chứa id này!`);
+      }
+      return;
+    }
     const bk = parseBooking(text);
     if (!bk) return; // không phải block booking đủ dữ liệu → bỏ qua
-    sendZnsXacNhanLich(bk.phone, { ten: bk.ten, gio_hen: bk.gio_hen }).then((r) => {
+    // GHI SỔ HẸN trước (anh duyệt 14/07): để cron nhắc T-1 ngày + T-2 giờ.
+    const henEpoch = parseHenEpoch(bk.gio_hen);
+    const so = store.addBooking({
+      phone: bk.phone, ten: bk.ten, gioHenText: bk.gio_hen,
+      henEpoch, chatId, msgId: msg?.message_id,
+    });
+    sendZnsXacNhanLich(bk.phone, { ten: bk.ten, gio_hen: bk.gio_hen }).then(async (r) => {
+      // Biên nhận REPLY thẳng dưới tin Booking trong group đặt lịch (anh yêu cầu 14/07);
+      // gửi group hụt thì lùi về group thông báo (notifyText) — không được câm.
       if (r.ok) {
-        notifyText(`📅 <b>Đã gửi ZNS xác nhận đặt lịch</b>\n• Khách: ${bk.ten}\n• SĐT: ${bk.phone}\n• Hẹn: ${bk.gio_hen}`).catch(() => {});
+        store.setBookingXacNhan(so.id, 'ok');
+        const nhac = henEpoch
+          ? ' Em sẽ nhắc lại trước 1 ngày và trước 2 giờ.'
+          : ' ⚠️ Không đọc được ngày giờ nên KHÔNG hẹn nhắc lại được — gõ dạng "15h 09/07/2026" giúp em.';
+        const bien = `📅 Đã gửi ZNS xác nhận cho ${bk.ten} (${bk.phone}) — hẹn ${bk.gio_hen}.${nhac}`;
+        if (!(await guiBienNhan(chatId, msg?.message_id, bien))) {
+          notifyText(`📅 <b>Đã gửi ZNS xác nhận đặt lịch</b>\n• Khách: ${bk.ten}\n• SĐT: ${bk.phone}\n• Hẹn: ${bk.gio_hen}`).catch(() => {});
+        }
       } else if (r.ly_do !== 'vua_gui_roi') {
-        notifyText(`⚠️ Xác nhận đặt lịch KHÔNG gửi được (${r.ly_do})\n• ${bk.ten} ${bk.phone} — ${bk.gio_hen}`).catch(() => {});
+        store.setBookingXacNhan(so.id, `loi_${r.ly_do}`);
+        const bien = `⚠️ ZNS xác nhận KHÔNG gửi được (${r.ly_do}) — ${bk.ten} ${bk.phone}, hẹn ${bk.gio_hen}. Nhờ telesale nhắn/gọi tay giúp em ạ.`;
+        if (!(await guiBienNhan(chatId, msg?.message_id, bien))) {
+          notifyText(`⚠️ Xác nhận đặt lịch KHÔNG gửi được (${r.ly_do})\n• ${bk.ten} ${bk.phone} — ${bk.gio_hen}`).catch(() => {});
+        }
       }
     }).catch(() => {});
   } catch (err) {
@@ -781,10 +812,38 @@ app.get('/admin/booking-webhook', async (req, res) => {
       });
       return res.status(200).json({ ok: true, so_tin: goi.length, tin: goi });
     }
-    res.status(200).json({ ok: true, webhook: data?.result });
+    // Kèm chẩn đoán cấu hình: soi ngay được vì sao booking không chạy (filter chặn / thiếu env).
+    let biChan = null; try { biChan = JSON.parse(store.getKV('tele_booking_dropped') || 'null'); } catch { /* trống */ }
+    let lastChat = null; try { lastChat = JSON.parse(store.getKV('tele_booking_last_chat') || 'null'); } catch { /* trống */ }
+    res.status(200).json({
+      ok: true,
+      webhook: data?.result,
+      cau_hinh: {
+        allow_chat_id: process.env.TELEGRAM_BOOKING_CHAT_ID || '(không lọc — nhận mọi group bot ở trong)',
+        co_secret: Boolean(process.env.TELEGRAM_BOOKING_SECRET),
+        chat_gan_nhat: lastChat,
+        booking_bi_chan_gan_nhat: biChan, // ≠ null = có tin Booking bị filter chặn → sửa TELEGRAM_BOOKING_CHAT_ID
+      },
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// Admin: soi SỔ HẸN (booking đã lưu + trạng thái xác nhận/nhắc). GET /admin/so-hen?token=XXX
+app.get('/admin/so-hen', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const rows = store.listBookings(parseInt(req.query.limit || '30', 10)).map((b) => ({
+    id: b.id, ten: b.ten, phone: b.phone, hen: b.gio_hen_text,
+    hen_epoch: b.hen_epoch, xacnhan: b.xacnhan,
+    nhac_truoc_1_ngay: b.nhac1_at ? new Date(b.nhac1_at * 1000).toISOString() : null,
+    nhac_truoc_2_gio: b.nhac2_at ? new Date(b.nhac2_at * 1000).toISOString() : null,
+    tao_luc: b.created_at ? new Date(b.created_at * 1000).toISOString() : null,
+  }));
+  res.status(200).json({ ok: true, so_luong: rows.length, so_hen: rows });
 });
 
 // --- Webhook FOLLOW Zalo OA (bước 7): khách bấm Quan tâm → tự giao PDF + video ---
@@ -1019,6 +1078,12 @@ app.post('/webhook', (req, res) => {
   } catch (err) {
     console.error('[webhook] lỗi parse:', err?.message || err);
   }
+});
+
+// --- Cron NHẮC LỊCH HẸN cho khách (anh duyệt 14/07): T-1 ngày + T-2 giờ, mỗi 10' lệch 3' ---
+cron.schedule('3,13,23,33,43,53 * * * *', async () => {
+  try { await bookingNhacTick(); }
+  catch (err) { console.error('[cron] lỗi nhắc lịch hẹn:', err?.message || err); }
 });
 
 // --- Cron retouch mỗi 10 phút ---

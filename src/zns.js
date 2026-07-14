@@ -153,12 +153,13 @@ const XACNHAN_TEMPLATE = process.env.ZNS_TEMPLATE_XACNHAN || '605793';
  * chỉ chống double-fire vô tình bằng dedup mềm phone+giờ TTL 5 phút.
  * @param {object} p { ten, gio_hen (chuỗi "08:30 15/07/2026"), maDatLich }
  */
-export async function sendZnsXacNhanLich(phone, { ten, gio_hen, maDatLich } = {}) {
+export async function sendZnsXacNhanLich(phone, { ten, gio_hen, maDatLich, loai } = {}) {
   const sdt = phone84(phone);
   if (!sdt || !gio_hen) return { ok: false, ly_do: 'thieu_sdt_hoac_gio' };
   if (!XACNHAN_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };
-  // dedup mềm: cùng SĐT + cùng giờ hẹn trong 5 phút → coi là bấm lặp, bỏ qua
-  const dkey = `zns_xacnhan:${sdt}:${String(gio_hen).replace(/\s+/g, '')}`;
+  // dedup mềm: cùng LOẠI (xác nhận / nhắc T-1 / nhắc T-2h) + SĐT + giờ hẹn trong 5 phút
+  // → coi là bấm lặp, bỏ qua. loai khác nhau KHÔNG chặn nhau (nhắc lại là chủ đích).
+  const dkey = `zns_xacnhan:${loai || 'xacnhan'}:${sdt}:${String(gio_hen).replace(/\s+/g, '')}`;
   if (store.getKV(dkey)) return { ok: false, ly_do: 'vua_gui_roi' };
 
   const goi = async () => axios.post(ZNS_API, {

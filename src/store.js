@@ -689,4 +689,61 @@ export function findGroupTargets(groupNo, timeField, minSec, maxSec, code) {
   return rows.filter((r) => !parseJsonArr(r.group_cham_done).includes(code));
 }
 
+// ============================================================
+//  SỔ HẸN (anh Trình duyệt 14/07): block "Booking" telesale dán vào group Telegram
+//  không chỉ xác nhận 1 lần rồi vứt — lưu lại để cron nhắc T-1 ngày + T-2 giờ.
+// ============================================================
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bookings (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone        TEXT NOT NULL,
+    ten          TEXT,
+    gio_hen_text TEXT,                                  -- chuỗi khách đọc ("09:00 14/07")
+    hen_epoch    INTEGER,                               -- epoch giây; NULL = không đọc được giờ
+    chat_id      TEXT,                                  -- group Telegram nơi đăng booking (để reply biên nhận)
+    msg_id       INTEGER,
+    created_at   INTEGER DEFAULT (strftime('%s','now')),
+    xacnhan      TEXT,                                  -- 'ok' | 'loi_<ly_do>' | NULL (chưa gửi)
+    nhac1_at     INTEGER,                               -- đã nhắc T-1 ngày lúc (epoch)
+    nhac2_at     INTEGER                                -- đã nhắc T-2 giờ lúc (epoch)
+  )
+`);
+
+// Ghi 1 booking vào sổ. Cùng SĐT + cùng giờ hẹn → cập nhật (telesale dán lại), không nhân đôi nhắc.
+export function addBooking({ phone, ten, gioHenText, henEpoch, chatId, msgId }) {
+  const cu = henEpoch
+    ? db.prepare('SELECT id FROM bookings WHERE phone = ? AND hen_epoch = ?').get(String(phone), henEpoch)
+    : null;
+  if (cu) {
+    db.prepare('UPDATE bookings SET ten = ?, gio_hen_text = ?, chat_id = ?, msg_id = ? WHERE id = ?')
+      .run(ten || null, gioHenText || null, String(chatId || ''), msgId || null, cu.id);
+    return { id: cu.id, moi: false };
+  }
+  const r = db.prepare('INSERT INTO bookings (phone, ten, gio_hen_text, hen_epoch, chat_id, msg_id) VALUES (?,?,?,?,?,?)')
+    .run(String(phone), ten || null, gioHenText || null, henEpoch || null, String(chatId || ''), msgId || null);
+  return { id: r.lastInsertRowid, moi: true };
+}
+
+export function setBookingXacNhan(id, kq) {
+  db.prepare('UPDATE bookings SET xacnhan = ? WHERE id = ?').run(String(kq || ''), id);
+}
+
+// Các hẹn trong cửa sổ [-10 phút .. +30 giờ] — đủ cho cả nhắc T-1 ngày lẫn T-2 giờ.
+export function getBookingsSapDenHen(nowS) {
+  return db.prepare(
+    'SELECT * FROM bookings WHERE hen_epoch IS NOT NULL AND hen_epoch > ? AND hen_epoch < ? ORDER BY hen_epoch'
+  ).all(nowS - 600, nowS + 30 * 3600);
+}
+
+// Ghi mốc đã nhắc. cot whitelist cứng — chống SQL injection.
+export function markBookingNhac(id, cot) {
+  if (cot !== 'nhac1' && cot !== 'nhac2') return;
+  db.prepare(`UPDATE bookings SET ${cot}_at = strftime('%s','now') WHERE id = ?`).run(id);
+}
+
+// Danh sách sổ hẹn mới nhất (cho /admin/so-hen soi nhanh).
+export function listBookings(limit = 30) {
+  return db.prepare('SELECT * FROM bookings ORDER BY id DESC LIMIT ?').all(limit);
+}
+
 export default db;
