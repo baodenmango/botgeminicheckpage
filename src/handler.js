@@ -9,6 +9,7 @@ import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFile
 import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS } from './echoguard.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
+import { buildCarePlanTag } from './careplan.js';
 import { SALE_PAGE } from './conditions.js';
 import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
 
@@ -396,6 +397,9 @@ export async function handleIncoming(ev) {
 
     const channel = getPageChannel(pageId);
     let contextTag = null;
+    // Hồ sơ "khách đã khám" tra được ở lượt này (MEDi/POS) — dùng chọn mode aftercare
+    // + gắn quy trình chăm sóc + chặn link sale page (khối chung phía dưới).
+    let daKhamHoSo = null;
 
     // ===== KHÁCH ĐÃ KHÁM theo SĐT — kênh FB (anh Trình chốt 02/07) =====
     // Nhiều ca ĐÃ ĐẾN KHÁM (đơn bắn trên Facebook / có hồ sơ EMR) nhưng hội thoại KHÔNG có nhãn
@@ -410,14 +414,13 @@ export async function handleIncoming(ev) {
           const daKham = await lookupDaKham(phoneKnown);
           if (daKham) {
             isCustomer = true;
+            daKhamHoSo = daKham;
             contextTag = buildDaKhamTag(daKham);
             console.log(`[da-kham] 🧡 ${conversationId} SĐT ${phoneKnown} trùng ${daKham.source.toUpperCase()} (${daKham.name || '?'}) → chuyển CHĂM SÓC SAU KHÁM`);
           }
         } catch { /* fail-open */ }
       }
     }
-
-    const mode = isCustomer ? 'care' : 'reply';
 
     // ===== ENRICH (kênh ZALO) — nạp hồ sơ BN trước khi chăm (thiết kế mục C2) =====
     // Chỉ cho kênh Zalo (OA = chăm sâu, cần biết khách là ai). FB dùng lớp "đã khám" ở trên.
@@ -428,17 +431,30 @@ export async function handleIncoming(ev) {
       const zaloUid = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
       store.setChannel(conversationId, 'zalo', zaloUid);
       const freshZ = store.getConversation(conversationId);
-      // đã tra MEDi rồi (cache) → dùng lại; chưa → tra 1 lần
-      if (freshZ.medi_status) {
-        contextTag = buildContextTag(store.getMediRecord(freshZ), conv.condition || null);
+      // Cache CHỈ tin khi đã ra BN_CŨ. Ra 'moi' thì TRA LẠI mỗi lượt (ca quét OA tại quầy:
+      // khám hôm nay, hồ sơ MEDi/POS mai mới sync — cache 'moi' cứng làm BN bị coi khách lạ mãi).
+      // Tra lại rẻ: cache local SQLite trước, Sheet/POS đã có TTL riêng trong medi.js/pos.js.
+      const cachedCu = freshZ.medi_status === 'cu' ? store.getMediRecord(freshZ) : null;
+      if (cachedCu) {
+        daKhamHoSo = { source: 'medi', ...cachedCu };
+        contextTag = buildContextTag(cachedCu, conv.condition || null);
       } else {
         const phoneForLookup = phoneByRegex || freshZ.phone ||
           extractPhoneFromHistory(freshZ.history);
         if (phoneForLookup) {
-          const record = await lookupMedi(phoneForLookup);
-          store.setMedi(conversationId, record ? 'cu' : 'moi', record);
-          contextTag = buildContextTag(record, conv.condition || null);
-          console.log(`[enrich] ${conversationId} SĐT ${phoneForLookup} → ${record ? 'BN_CŨ (' + (record.name || '?') + ')' : 'BN_MỚI'}`);
+          // MEDi trước (có bệnh án/liệu trình), POS vá lưới (khách lên đơn nhưng chưa vào EMR-sheet).
+          const record = await lookupDaKham(phoneForLookup);
+          if (record?.source === 'medi') store.setMedi(conversationId, 'cu', record);
+          else if (!freshZ.medi_status) store.setMedi(conversationId, 'moi', null);
+          if (record) {
+            daKhamHoSo = record;
+            contextTag = record.source === 'medi'
+              ? buildContextTag(record, conv.condition || null)
+              : buildDaKhamTag(record);
+          } else {
+            contextTag = buildContextTag(null, conv.condition || null);
+          }
+          console.log(`[enrich] ${conversationId} SĐT ${phoneForLookup} → ${record ? `BN_CŨ/${record.source} (${record.name || '?'})` : 'BN_MỚI'}`);
         } else {
           // chưa có số → chưa tra được, coi là BN mới tạm thời (bot Zalo sẽ khéo xin số để tra)
           contextTag = buildContextTag(null, conv.condition || null);
@@ -465,6 +481,19 @@ export async function handleIncoming(ev) {
       }
     }
 
+    // ===== BỘ NÃO CHĂM SÓC SAU KHÁM (anh Trình chốt 14/07) — mọi kênh =====
+    // Có hồ sơ đã khám → gắn [QUY TRÌNH CHĂM SÓC] (hỏi thăm đúng bệnh, dặn đúng điều trị,
+    // chăm theo giai đoạn) + cờ da_kham (thoát chuỗi chạm lead, dispatch chặn link sale page).
+    if (daKhamHoSo) {
+      isCustomer = true;
+      const plan = buildCarePlanTag(daKhamHoSo, conv.condition || null);
+      if (plan) contextTag = (contextTag ? contextTag + '\n' : '') + plan;
+      if (!laConvDaKham(conversationId)) {
+        store.setKV(`da_kham_conv:${conversationId}`, String(Date.now()));
+        console.log(`[careplan] 🩺 ${conversationId} gắn quy trình chăm sóc sau khám (${daKhamHoSo.diagnosis || daKhamHoSo.source})`);
+      }
+    }
+
     // Thẻ ngữ cảnh ĐÃ-KHÁM-TỰ-BÁO: đè lên mọi tag khác — cấm tuyệt đối kịch bản lead.
     if (daKhamTuBao) {
       contextTag = (contextTag ? contextTag + '\n' : '') +
@@ -478,6 +507,10 @@ export async function handleIncoming(ev) {
     if (channel !== 'zalo' && PAGE_AUDIENCE[pageId]) {
       contextTag = contextTag ? `${contextTag}\n${PAGE_AUDIENCE[pageId]}` : PAGE_AUDIENCE[pageId];
     }
+
+    // Chọn mode: khách ĐÃ KHÁM (hồ sơ/tự báo) → aftercare (chăm sau khám, cấm kịch bản lead);
+    // khách đã cho số/có nhãn → care; còn lại → reply (kịch bản lead thường).
+    const mode = (daKhamHoSo || daKhamTuBao) ? 'aftercare' : isCustomer ? 'care' : 'reply';
 
     const history = store.getConversation(conversationId).history;
     const reply = await generateReply(history, mode, customerName || conv.customer_name, null, { channel, contextTag });
@@ -747,7 +780,11 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   }
 
   // ĐẢM BẢO gửi link sale page đúng bệnh (nếu Gemini quên chèn).
-  let outMessages = ensureSalePageLink(reply.messages, knownCondition, conv);
+  // KHÁCH ĐÃ KHÁM (cờ da_kham) → KHÔNG ép link sale page (họ là bệnh nhân rồi, gửi trang bán
+  // hàng là lộ máy + lạc vai chăm sóc — ca Thủy Tiên 14/07 bị dí link daulung sau khi chia sẻ số).
+  let outMessages = laConvDaKham(conversationId)
+    ? [...reply.messages]
+    : ensureSalePageLink(reply.messages, knownCondition, conv);
   const linkWasAdded = outMessages.length !== reply.messages.length ||
     outMessages.some((m, i) => m !== reply.messages[i]);
 

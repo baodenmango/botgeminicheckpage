@@ -154,6 +154,15 @@ export async function generateReply(history, mode = 'reply', customerName = null
       });
     }
 
+    // mode aftercare: BỆNH NHÂN ĐÃ KHÁM (tra ra hồ sơ MEDi/POS hoặc tự báo) — chăm sóc sau khám
+    // theo thẻ [QUY TRÌNH CHĂM SÓC], TUYỆT ĐỐI không đi kịch bản lead.
+    if (mode === 'aftercare') {
+      contents.push({
+        role: 'user',
+        parts: [{ text: 'MODE: AFTERCARE — Đây là BỆNH NHÂN ĐÃ ĐẾN KHÁM tại phòng khám (đọc thẻ [BN_CŨ]/[KHÁCH ĐÃ KHÁM] và làm ĐÚNG theo thẻ [QUY TRÌNH CHĂM SÓC] nếu có). Nhiệm vụ: chăm sóc sau khám — xưng đúng tên, hỏi thăm ĐÚNG triệu chứng bệnh họ điều trị, dặn dò đúng loại điều trị đã làm, dẫn tới mốc kế tiếp (buổi tiếp theo / tái khám) khi hợp ngữ cảnh. CẤM: xin số điện thoại, mời "suất tư vấn miễn phí", gửi link sale page, nói "Trợ lý Bác sĩ sẽ gọi lại trong ít phút" (trừ khi khách CHỦ ĐỘNG xin được gọi). Khách vừa bấm "Chia sẻ thông tin" qua OA → cảm ơn đã kết nối hồ sơ, rồi HỎI THĂM tình trạng, đừng trả lời như vừa nhận số của lead. Đặt phone_captured=false. Mỗi lượt tối đa 2 tin ngắn.' }],
+      });
+    }
+
     // mode recover: VỚT LEAD bị bỏ rơi — đọc lại đúng câu khách hỏi/băn khoăn còn dang dở,
     // trả lời thẳng cái đó, rồi LÌ ĐÒN xin SĐT có duyên (bắt buộc kết bằng xin số).
     if (mode === 'recover') {
