@@ -23,6 +23,7 @@ import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
 import { runRescueLead } from './src/rescueLead.js';
 import { guiBienNhan, parseHenEpoch, bookingNhacTick } from './src/bookingsched.js';
+import { runVoucherFollowup } from './src/voucherfollowup.js';
 
 checkConfig();
 
@@ -446,6 +447,23 @@ app.get('/admin/voucher-medi', async (req, res) => {
     }
     notifyText(`🎁 <b>Voucher MEDi (${esc(benh)}/${ct.toUpperCase()})</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi}. Còn lại ${ungVien.length - lot.length} ứng viên (gọi lại để quét tiếp).`).catch(() => {});
     res.status(200).json({ ok: true, benh, cach_day: cachDay, ct, tong_ung_vien: ungVien.length, da_quet: lot.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi, con_lai: ungVien.length - lot.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: KÍCH cú chạm 2 (nhắc voucher chưa dùng) NGAY — không chờ cron 9h ---
+// GET /admin/voucher-followup?token=XXX[&dry=1]
+//   dry=1 → chỉ xem danh sách sẽ nhắc (không ghi state, không đẩy Telegram).
+app.get('/admin/voucher-followup', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const dry = req.query.dry === '1' || req.query.dry === 'true';
+  try {
+    const r = await runVoucherFollowup({ dry });
+    res.status(200).json(r);
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
@@ -1138,6 +1156,19 @@ cron.schedule('10 * * * *', async () => {
     if (n1 || n2) console.log(`[cron-care] gửi ${n1} chạm bill + ${n2} chạm tái bill`);
   } catch (err) {
     console.error('[cron-care] lỗi engine chăm sóc bill/tái bill:', err?.message || err);
+  }
+});
+
+// --- Cron CÚ CHẠM 2: NHẮC VOUCHER CHƯA DÙNG (anh Trình chốt 15/07) ---
+// Mỗi ngày 09:00 giờ VN (= 02:00 UTC trên Render). Quét sổ voucher, ai nhận ≥N ngày
+// chưa tới dùng → đẩy DANH SÁCH GỌI vào Telegram team để telesale gọi nhắc + đặt lịch.
+// Chỉ đọc sổ + đẩy Telegram nội bộ (reversible). KHÔNG tự nhắn/gọi khách.
+cron.schedule('0 2 * * *', async () => {
+  try {
+    const r = await runVoucherFollowup();
+    if (r.canNhac) console.log(`[cron-voucher-followup] đẩy ${r.canNhac} ca cần gọi nhắc`);
+  } catch (err) {
+    console.error('[cron-voucher-followup] lỗi:', err?.message || err);
   }
 });
 
