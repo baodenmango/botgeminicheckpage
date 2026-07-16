@@ -272,6 +272,7 @@ app.get('/admin/vesi-now', async (req, res) => {
       force: req.query.force === '1',
       dry: req.query.dry === '1',
       unblock: req.query.unblock || null,
+      clearDryChan: req.query.clearDryChan === '1',
     });
     res.status(200).json({ ok: true, ket_qua });
   } catch (err) {

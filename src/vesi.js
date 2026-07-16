@@ -344,7 +344,26 @@ function nowIsoUtc() {
 // ---------- main (port main() py dòng 244-409) ----------
 // runVesi({ dry, force, unblock })
 export async function runVesi(opts = {}) {
-  let { dry = false, force = false, unblock = null } = opts;
+  let { dry = false, force = false, unblock = null, clearDryChan = false } = opts;
+
+  // Dọn state 'chan' bị ghi lỡ lúc chạy DRY (fbBlock trả dry_run, CHƯA chặn thật) — xóa để
+  // lượt LIVE chặn lại thật. Chỉ xóa ca chưa có trong sổ-chặn-thật (vesi:chan:<psid> ok=true).
+  if (clearDryChan) {
+    const chanThat = new Set();
+    for (const row of store.listKVByPrefix('vesi:chan:')) {
+      try { const d = JSON.parse(row.value); if (d && d.ok === true) chanThat.add(String(d.conv)); } catch { /* bỏ */ }
+    }
+    let xoa = 0;
+    for (const row of store.listKVByPrefix('vesi:state:')) {
+      try {
+        const d = JSON.parse(row.value);
+        const cid = row.key.replace('vesi:state:', '');
+        if (d && d.action === 'chan' && !chanThat.has(cid)) { store.delKV(row.key); xoa += 1; }
+      } catch { /* bỏ */ }
+    }
+    log(`clearDryChan: xóa ${xoa} state 'chan' ghi lỡ lúc DRY`);
+    return { clearDryChan: true, da_xoa: xoa };
+  }
 
   // khung giờ 7h–22h giờ VN (cron gọi trong 7-22 nhưng vẫn guard phòng lệch)
   const gioVN = new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
@@ -495,6 +514,11 @@ export async function runVesi(opts = {}) {
         verdict, ok, an_comment: anOk, noi_dung: noiDung.slice(0, 100), resp: r,
         go_chan: `runVesi({ unblock: '${uid}' })`,
       });
+
+      // DRY: fbBlock trả {dry_run} → CHƯA chặn thật ai. TUYỆT ĐỐI KHÔNG lưu state 'chan',
+      // nếu không lượt LIVE sau sẽ bỏ qua ca này (getState+continue) = account ngoại/ảo LỌT,
+      // không bao giờ bị chặn thật. (Cùng lớp lỗi dry-ghi-state như nhánh CAPI.)
+      if (dry) continue; // đề-xuất/test → để lượt LIVE chặn thật + ghi state
 
       // CHỐNG LẶP 16/07 (nguyên văn py 377-390): chặn OK là LƯU STATE NGAY, kể cả ẩn comment
       // còn trục trặc — nếu không sẽ chặn+báo mỗi 30' cho ca đã xử. Ẩn comment hụt tự retry
