@@ -259,6 +259,27 @@ app.get('/admin/rescue-now', async (req, res) => {
   }
 });
 
+// --- Admin: CHẠY TAY VỆ SĨ HỘP THƯ 1 lượt (kiểm env đã nạp + soi kết quả) ---
+// GET /admin/vesi-now?token=XXX[&force=1][&dry=1][&unblock=<psid>]
+//   force=1 → bỏ qua guard khung 7-22h; dry=1 → ép chế-độ-đề-xuất (KHÔNG chặn thật dù VESI_DRY=0).
+app.get('/admin/vesi-now', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const ket_qua = await runVesi({
+      force: req.query.force === '1',
+      dry: req.query.dry === '1',
+      unblock: req.query.unblock || null,
+    });
+    res.status(200).json({ ok: true, ket_qua });
+  } catch (err) {
+    console.error('[admin] vesi-now lỗi:', err?.message || err);
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 // --- Admin: XEM ĐỒNG HỒ QUOTA tin tư vấn Zalo (B3 — ngân sách 500 tin/tháng) ---
 // GET /admin/zalo-quota?token=XXX → { thang, quota, da_tieu, con_lai, du_tru }
 app.get('/admin/zalo-quota', (req, res) => {
