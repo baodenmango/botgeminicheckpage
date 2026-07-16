@@ -24,6 +24,7 @@ import { runSevenTouch } from './src/sevenTouch.js';
 import { runRescueLead } from './src/rescueLead.js';
 import { guiBienNhan, parseHenEpoch, bookingNhacTick } from './src/bookingsched.js';
 import { runVoucherFollowup } from './src/voucherfollowup.js';
+import { runVesi } from './src/vesi.js';
 
 checkConfig();
 
@@ -1245,6 +1246,17 @@ cron.schedule('15 2 * * *', async () => {
     console.error('[cron-wakeup] lỗi engine đánh thức BN ngủ:', err?.message || err);
   }
 });
+
+// --- Cron VỆ SĨ HỘP THƯ (canh account ngoại/ảo/phá hoại page Dr Nhật Trình) ---
+// 30'/lần trong khung 7–22h giờ VN. Mặc định CHỈ-ĐỀ-XUẤT (VESI_DRY≠0 hoặc chưa có VESI_FB_TOKEN):
+// chấm + báo Telegram group CEO, KHÔNG chặn/CAPI. Bật thực chặn: set VESI_FB_TOKEN + VESI_DRY=0.
+cron.schedule('*/30 7-22 * * *', async () => {
+  try {
+    await runVesi({});
+  } catch (err) {
+    console.error('[cron-vesi] lỗi vệ sĩ hộp thư:', err?.message || err);
+  }
+}, { timezone: 'Asia/Ho_Chi_Minh' });
 
 // --- Khởi động ---
 app.listen(config.port, () => {
