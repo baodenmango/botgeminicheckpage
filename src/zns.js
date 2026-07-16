@@ -394,3 +394,40 @@ export async function flushRatingCho() {
   if (n) console.log(`[zns] ⭐ xả hàng đợi: gửi ${n} form đánh giá`);
   return n;
 }
+
+// ============================================================
+//  ĐÒN ② PHỄU TỰ ĐỘNG — MỜI QUAN TÂM OA (anh Trình chốt 15/07).
+//  Bắn KÈM voucher: voucher chỉ gõ cửa, tin này KÉO FOLLOW → khách follow OA
+//  thì rơi vào tầng bot TỰ CHĂM (handleZaloFollow: tự gửi cẩm nang PDF + clip đúng bệnh,
+//  tự xin SĐT, tự nhắc lịch) → giảm phụ thuộc người. Template ZBS "Mẫu tuỳ chỉnh"
+//  nút "Đến trang thông tin OA" (miễn phí). Tham số: customer_name.
+//  Fail-safe: chưa set ZNS_TEMPLATE_QUANTAM_OA → trả false (không gửi), bật bằng ENV.
+const QUANTAM_OA_TEMPLATE = process.env.ZNS_TEMPLATE_QUANTAM_OA || null; // set = 609256 sau khi Zalo duyệt
+export function isQuanTamOAEnabled() {
+  return !!QUANTAM_OA_TEMPLATE && /^(1|true|yes|on)$/i.test(process.env.ZNS_ENABLED || '');
+}
+
+/**
+ * Gửi ZNS MỜI QUAN TÂM OA. Trả true nếu Zalo nhận.
+ * CHỈ nên gọi cho khách CHƯA follow (bên gọi tự lọc kv phone_zalo:<sdt> để khỏi phí tin).
+ * @param {string} phone SĐT
+ * @param {object} p { ten }
+ */
+export async function sendZnsQuanTamOA(phone, { ten } = {}) {
+  if (!isQuanTamOAEnabled()) return false;
+  const sdt = phone84(phone);
+  if (!sdt) return false;
+  const goi = async () => axios.post(ZNS_API, {
+    phone: sdt,
+    template_id: QUANTAM_OA_TEMPLATE,
+    template_data: { customer_name: (ten || 'Quý khách').slice(0, 30) },
+    tracking_id: `quantam-${Date.now()}`,
+  }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
+  try {
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error === 0) { console.log(`[zns] 👋 mời quan tâm OA → ${sdt.slice(0, 5)}***`); return true; }
+    console.warn('[zns] mời quan tâm OA lỗi:', JSON.stringify(r.data).slice(0, 200));
+    return false;
+  } catch (err) { console.warn('[zns] mời quan tâm OA API lỗi:', err?.message); return false; }
+}

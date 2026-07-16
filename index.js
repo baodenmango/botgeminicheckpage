@@ -17,7 +17,7 @@ import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled } from './src/zns.js';
 import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -414,11 +414,22 @@ app.get('/admin/voucher-medi', async (req, res) => {
   const dry = req.query.dry === '1' || req.query.dry === 'true';
   const force = req.query.force === '1' || req.query.force === 'true';
   const phoneTest = req.query.phone ? String(req.query.phone) : null;
+  // ĐÒN ② kéo follow: mặc định BẬT nếu template đã cấu hình. keo_follow=0 để TẮT (nhánh A/B test).
+  const keoFollow = req.query.keo_follow !== '0' && req.query.keo_follow !== 'false' && isQuanTamOAEnabled();
   const nowS = Math.floor(Date.now() / 1000);
+  // Bắn KÈM tin mời quan tâm OA — CHỈ cho khách CHƯA follow (không có map phone_zalo) để khỏi phí tin.
+  const keoFollowNeuChua = async (phone, ten) => {
+    if (!keoFollow) return 'tat';
+    const p10 = String(phone || '').replace(/[^\d]/g, '').replace(/^84/, '0');
+    if (store.getKV(`phone_zalo:${p10}`)) return 'da_follow'; // đã follow → khỏi mời
+    const ok = await sendZnsQuanTamOA(phone, { ten });
+    return ok ? 'da_moi' : 'moi_loi';
+  };
   try {
     if (phoneTest) {
       const r = await sendZnsVoucher(phoneTest, { ten: 'Quý khách', ngayKham: nowS, chuongTrinh: ct });
-      return res.status(200).json({ ok: true, test: phoneTest, ket_qua: r });
+      const moi = r.ok ? await keoFollowNeuChua(phoneTest, 'Quý khách') : 'bo_qua';
+      return res.status(200).json({ ok: true, test: phoneTest, ket_qua: r, keo_follow: moi });
     }
     if (!isMediConfigured()) return res.status(200).json({ ok: false, ly_do: 'medi_chua_cau_hinh', ghi_chu: 'Cần MEDI_SHEET_CSV_URL hoặc đẩy medi_cache trước.' });
     const records = await getAllMediRecords();
@@ -439,14 +450,16 @@ app.get('/admin/voucher-medi', async (req, res) => {
       return res.status(200).json({ ok: false, ly_do: 'ngoai_gio_vang', ghi_chu: 'Chỉ bắn 8h–21h VN. Thêm &force=1 nếu muốn gửi ngay.', se_gui_cho: Math.min(ungVien.length, batch) });
     }
     const lot = ungVien.slice(0, batch);
-    let daGui = 0, boQua = 0, loi = 0;
+    let daGui = 0, boQua = 0, loi = 0, daMoiOA = 0;
     for (const uv of lot) {
       const r = await sendZnsVoucher(uv.phone, { ten: uv.ten, ngayKham: uv.visit, chuongTrinh: ct });
-      if (r.ok) daGui++; else if (r.ly_do === 'da_gui_roi') boQua++; else loi++;
+      if (r.ok) { daGui++; if ((await keoFollowNeuChua(uv.phone, uv.ten)) === 'da_moi') daMoiOA++; }
+      else if (r.ly_do === 'da_gui_roi') boQua++; else loi++;
       await new Promise((s) => setTimeout(s, 300));
     }
-    notifyText(`🎁 <b>Voucher MEDi (${esc(benh)}/${ct.toUpperCase()})</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi}. Còn lại ${ungVien.length - lot.length} ứng viên (gọi lại để quét tiếp).`).catch(() => {});
-    res.status(200).json({ ok: true, benh, cach_day: cachDay, ct, tong_ung_vien: ungVien.length, da_quet: lot.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi, con_lai: ungVien.length - lot.length });
+    const dongMoi = keoFollow ? ` · mời quan tâm OA: ${daMoiOA}` : '';
+    notifyText(`🎁 <b>Voucher MEDi (${esc(benh)}/${ct.toUpperCase()})</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi}${dongMoi}. Còn lại ${ungVien.length - lot.length} ứng viên (gọi lại để quét tiếp).`).catch(() => {});
+    res.status(200).json({ ok: true, benh, cach_day: cachDay, ct, keo_follow: keoFollow, tong_ung_vien: ungVien.length, da_quet: lot.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi, da_moi_quan_tam_oa: daMoiOA, con_lai: ungVien.length - lot.length });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
