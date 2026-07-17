@@ -280,7 +280,9 @@ export async function sendRequestInfo(userId) {
             elements: [{
               title: 'Phòng khám Cơ xương khớp Hiệp Lợi',
               subtitle: 'Mình bấm "Chia sẻ thông tin" để phòng khám nối đúng hồ sơ khám và chăm sóc cho mình nha ạ 🙏',
-              image_url: process.env.ZALO_REQINFO_IMAGE || 'https://s120-ava-talk.zadn.vn/4/d/8/e/2/120/794ff6da5a2b38f62a77c70ddde9e330.jpg',
+              // Ảnh thương hiệu Hiệp Lợi (og:image trang chủ phongkhamhieploi.vn).
+              // TRƯỚC 18/07 fallback là 1 avatar Zalo cá nhân (chân dung "bác sĩ Thọ") → khách thấy card lạ mặt, mất tin.
+              image_url: process.env.ZALO_REQINFO_IMAGE || 'https://phongkhamhieploi.vn/images/banners/banner.png',
             }],
           },
         },
