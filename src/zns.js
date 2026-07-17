@@ -52,6 +52,21 @@ const RATING_COOLDOWN_S = 180 * 86400; // 1 lần/khách/6 tháng — tái khám
 const gioVN = () => new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
 const trongKhungGio = () => gioVN() >= 7 && gioVN() < 21;
 
+// ── QUOTA TAG3 (Hậu mãi) THEO SỐ/THÁNG — chống lỗi Zalo -1472 khi phủ diện rộng (workflow 18/07).
+// Zalo giới hạn ~4 tin Tag3 (Hậu mãi: voucher/rating/mời-quan-tâm-OA)/số/tháng. Gửi tin thứ 5 → -1472.
+// Đếm GỘP mọi loại Tag3 để phủ ~983 MEDi + ~6000 Y Đạo không dội trần hàng loạt (mất phí + tưởng lỗi template).
+const TAG3_TRAN_THANG = parseInt(process.env.ZNS_TAG3_TRAN_THANG || '4', 10);
+const thangVN = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7); // YYYY-MM giờ VN
+const tag3Key = (sdt) => `zns_tag3:${sdt}:${thangVN()}`;
+function tag3ConQuota(sdt) {
+  const n = parseInt(store.getKV(tag3Key(sdt)) || '0', 10);
+  return n < TAG3_TRAN_THANG;
+}
+function tangTag3(sdt) {
+  const n = parseInt(store.getKV(tag3Key(sdt)) || '0', 10);
+  store.setKV(tag3Key(sdt), String(n + 1));
+}
+
 // Epoch giây (hoặc ms) → dd/MM/yyyy giờ VN. Nhận số giây; nếu > 1e12 coi là ms.
 function ngayVN(epoch) {
   const ms = epoch > 1e12 ? epoch : epoch * 1000;
@@ -202,6 +217,7 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
   const key = `zns_rating_sent:${sdt}`;
   const lanTruoc = parseInt(store.getKV(key) || '0', 10);
   if (Math.floor(Date.now() / 1000) - lanTruoc < RATING_COOLDOWN_S) return false;
+  if (!tag3ConQuota(sdt)) return false; // chống -1472: đã đủ 4 tin Tag3/tháng → nhường quota cho voucher/quan-tâm
 
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
@@ -218,10 +234,11 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
     if (r.data?.error === 0) {
       store.setKV(key, String(Math.floor(Date.now() / 1000)));
+      tangTag3(sdt); // rating cũng là Tag3 → đếm gộp chống dội trần 4 tin/số/tháng
       console.log(`[zns] ⭐ gửi form đánh giá tới ${sdt.slice(0, 5)}*** (van xả complain về kênh kín)`);
       return true;
     }
-    console.warn('[zns] gửi rating lỗi:', JSON.stringify(r.data).slice(0, 200));
+    console.warn('[zns] gửi rating lỗi:', JSON.stringify(r.data));
     return false;
   } catch (err) {
     console.warn('[zns] rating gọi API lỗi:', err?.message);
@@ -247,6 +264,8 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
   if (!VOUCHER_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };
   const key = `zns_voucher_sent:${sdt}`;
   if (store.getKV(key)) return { ok: false, ly_do: 'da_gui_roi' };
+  // Chống -1472: số đã nhận đủ 4 tin Tag3/tháng (voucher/rating/quan-tâm) → KHÔNG gửi thêm (khỏi tốn phí + tránh dội trần).
+  if (!tag3ConQuota(sdt)) return { ok: false, ly_do: 'cham_tran_tag3_thang', ghi_chu: `${sdt.slice(0, 5)}*** đã nhận đủ ${TAG3_TRAN_THANG} tin Hậu mãi tháng ${thangVN()}` };
 
   const now = Math.floor(Date.now() / 1000);
   const ct = chuongTrinh === 'ct2' ? 'ct2' : 'ct1'; // mặc định CT1 (tầm soát 150k)
@@ -281,6 +300,7 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
     if (r.data?.error === 0) {
       store.setKV(key, String(now));
+      tangTag3(sdt); // +1 tin Tag3 tháng này (gộp với rating/quan-tâm để chặn dội trần 4 tin/số/tháng)
       // SỔ VOUCHER (anh Trình chốt 09/07): lưu bản ghi để quầy XÁC THỰC + khách xem ưu đãi rõ.
       // Key theo MÃ (quầy tra bằng mã), lưu đủ SĐT/tên/chương trình/HSD/trạng thái dùng.
       store.setKV(`voucher:${voucher_code}`, JSON.stringify({
@@ -291,8 +311,9 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
       console.log(`[zns] 🎁 gửi voucher ${voucher_code} (${ct.toUpperCase()}) tới ${sdt.slice(0, 5)}*** (HSD ${VOUCHER_HSD_NGAY} ngày)`);
       return { ok: true, voucher_code, chuong_trinh: ct };
     }
-    console.warn('[zns] gửi voucher lỗi:', JSON.stringify(r.data).slice(0, 200));
-    return { ok: false, ly_do: `zalo_loi_${r.data?.error}` };
+    // Log ĐẦY ĐỦ error thô (workflow 18/07: .slice(200) cắt mất error_message phân biệt -1472 mức-user vs mức-OA)
+    console.warn('[zns] gửi voucher lỗi:', JSON.stringify(r.data));
+    return { ok: false, ly_do: `zalo_loi_${r.data?.error}`, zalo_raw: r.data };
   } catch (err) {
     console.warn('[zns] voucher gọi API lỗi:', err?.message);
     return { ok: false, ly_do: 'ngoai_le' };
@@ -423,6 +444,7 @@ export async function sendZnsQuanTamOA(phone, { ten } = {}) {
   if (!isQuanTamOAEnabled()) return false;
   const sdt = phone84(phone);
   if (!sdt) return false;
+  if (!tag3ConQuota(sdt)) return false; // chống -1472: đã đủ 4 tin Tag3/tháng
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
     template_id: QUANTAM_OA_TEMPLATE,
@@ -432,8 +454,8 @@ export async function sendZnsQuanTamOA(phone, { ten } = {}) {
   try {
     let r = await goi();
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
-    if (r.data?.error === 0) { console.log(`[zns] 👋 mời quan tâm OA → ${sdt.slice(0, 5)}***`); return true; }
-    console.warn('[zns] mời quan tâm OA lỗi:', JSON.stringify(r.data).slice(0, 200));
+    if (r.data?.error === 0) { tangTag3(sdt); console.log(`[zns] 👋 mời quan tâm OA → ${sdt.slice(0, 5)}***`); return true; }
+    console.warn('[zns] mời quan tâm OA lỗi:', JSON.stringify(r.data));
     return false;
   } catch (err) { console.warn('[zns] mời quan tâm OA API lỗi:', err?.message); return false; }
 }
