@@ -22,7 +22,10 @@ const NHAC_SAU_NGAY = parseInt(process.env.VOUCHER_NHAC_SAU_NGAY || '3', 10);   
 const NHAC_TOI_DA = parseInt(process.env.VOUCHER_NHAC_TOI_DA || '2', 10);        // mỗi voucher nhắc tối đa K lần
 const NHAC_CACH_NGAY = parseInt(process.env.VOUCHER_NHAC_CACH_NGAY || '3', 10);  // 2 lần nhắc cách ≥M ngày
 const SAP_HET_HAN_NGAY = parseInt(process.env.VOUCHER_SAP_HET_HAN || '7', 10);   // ≤7 ngày hết hạn = ưu tiên gấp
-const TRAN_MOI_LUOT = parseInt(process.env.VOUCHER_NHAC_TRAN || '40', 10);       // mỗi lượt cron nhắc tối đa (đọc dễ)
+// TRẦN LIST = NĂNG LỰC GỌI THẬT (GĐ0 chiến dịch 17/07): đẩy nhiều hơn số telesale gọi nổi = list rơi.
+// = số người gọi × 24 cuộc/ngày. 1 người → 24/lượt. Ép bằng CODE, không bằng con số cứng 40.
+const SO_NGUOI_GOI = Math.max(1, parseInt(process.env.SLA_NGUOI_GOI || '1', 10));
+const TRAN_MOI_LUOT = SO_NGUOI_GOI * 24;
 
 const che = (sdt) => (sdt && sdt.length >= 6) ? sdt.slice(0, 4) + '***' + sdt.slice(-3) : sdt;
 const nhan = (ct) => (ct === 'ct2' ? 'Gói khám 300k' : 'Tầm soát 150k');

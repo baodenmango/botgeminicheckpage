@@ -17,7 +17,7 @@ import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive } from './src/zns.js';
 import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -456,6 +456,12 @@ app.get('/admin/voucher-medi', async (req, res) => {
     }
     if (!isMediConfigured()) return res.status(200).json({ ok: false, ly_do: 'medi_chua_cau_hinh', ghi_chu: 'Cần MEDI_SHEET_CSV_URL hoặc đẩy medi_cache trước.' });
     const records = await getAllMediRecords();
+    // TRẦN CỠ LÔ THEO NĂNG LỰC GỌI (GĐ0 chiến dịch 17/07): voucher đẻ ra danh sách telesale phải gọi.
+    // Bơm quá sức gọi = list rơi. Ràng buộc BẰNG CODE: cỡ lô ≤ số người gọi × 24 cuộc/ngày × 2 ngày.
+    const soNguoiGoi = Math.max(1, Number(process.env.SLA_NGUOI_GOI || 1));
+    const tranNangLucGoi = soNguoiGoi * 24 * 2; // 1 người → 48
+    const batchHieuLuc = Math.min(batch, tranNangLucGoi);
+    let optOutLoai = 0;
     const ungVien = [];
     for (const rec of records) {
       if (!rec.phone) continue;
@@ -465,14 +471,19 @@ app.get('/admin/voucher-medi', async (req, res) => {
       if (tuoi < cachDay * 86400) continue;                        // chưa đủ "lâu chưa lại"
       if (cachDayMax > 0 && tuoi > cachDayMax * 86400) continue;   // quá cũ → bỏ (SĐT có thể die)
       if (benh !== 'all' && mapDiagnosis(rec.diagnosis) !== benh) continue;
+      if (store.isPhoneOptedOut(rec.phone)) { optOutLoai++; continue; } // khách đã nhắn "ngừng" → tôn trọng
       ungVien.push({ phone: rec.phone, ten: rec.name, visit });
     }
-    if (dry) return res.status(200).json({ ok: true, dry_run: true, benh, cach_day: cachDay, tong_ung_vien: ungVien.length, se_gui_lot_batch: Math.min(ungVien.length, batch), uoc_phi_dong: Math.min(ungVien.length, batch) * 600 });
+    if (dry) return res.status(200).json({ ok: true, dry_run: true, benh, cach_day: cachDay, tong_ung_vien: ungVien.length, opt_out_loai: optOutLoai, tran_nang_luc_goi: tranNangLucGoi, se_gui_lot_batch: Math.min(ungVien.length, batchHieuLuc), uoc_phi_dong: Math.min(ungVien.length, batchHieuLuc) * (keoFollow ? 700 : 400), voucher_live: isVoucherLive() });
+    // KHOÁ AN TOÀN: voucher chưa bật cờ VOUCHER_LIVE → chặn sớm, khỏi quét vô ích
+    if (!isVoucherLive()) {
+      return res.status(200).json({ ok: false, ly_do: 'voucher_chua_bat', ghi_chu: 'Set VOUCHER_LIVE=1 trên Render để mở khoá gửi voucher thật.', tong_ung_vien: ungVien.length });
+    }
     // GIỜ VÀNG
     if (!force && !trongGioVang()) {
-      return res.status(200).json({ ok: false, ly_do: 'ngoai_gio_vang', ghi_chu: 'Chỉ bắn 8h–21h VN. Thêm &force=1 nếu muốn gửi ngay.', se_gui_cho: Math.min(ungVien.length, batch) });
+      return res.status(200).json({ ok: false, ly_do: 'ngoai_gio_vang', ghi_chu: 'Chỉ bắn 8h–21h VN. Thêm &force=1 nếu muốn gửi ngay.', se_gui_cho: Math.min(ungVien.length, batchHieuLuc) });
     }
-    const lot = ungVien.slice(0, batch);
+    const lot = ungVien.slice(0, batchHieuLuc);
     let daGui = 0, boQua = 0, loi = 0, daMoiOA = 0;
     for (const uv of lot) {
       const r = await sendZnsVoucher(uv.phone, { ten: uv.ten, ngayKham: uv.visit, chuongTrinh: ct });
@@ -482,7 +493,7 @@ app.get('/admin/voucher-medi', async (req, res) => {
     }
     const dongMoi = keoFollow ? ` · mời quan tâm OA: ${daMoiOA}` : '';
     notifyText(`🎁 <b>Voucher MEDi (${esc(benh)}/${ct.toUpperCase()})</b>: gửi ${daGui}, bỏ qua ${boQua} (đã gửi trước), lỗi ${loi}${dongMoi}. Còn lại ${ungVien.length - lot.length} ứng viên (gọi lại để quét tiếp).`).catch(() => {});
-    res.status(200).json({ ok: true, benh, cach_day: cachDay, ct, keo_follow: keoFollow, tong_ung_vien: ungVien.length, da_quet: lot.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi, da_moi_quan_tam_oa: daMoiOA, con_lai: ungVien.length - lot.length });
+    res.status(200).json({ ok: true, benh, cach_day: cachDay, ct, keo_follow: keoFollow, tong_ung_vien: ungVien.length, opt_out_loai: optOutLoai, tran_nang_luc_goi: tranNangLucGoi, da_quet: lot.length, da_gui: daGui, bo_qua_da_gui: boQua, that_bai: loi, da_moi_quan_tam_oa: daMoiOA, con_lai: ungVien.length - lot.length });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }

@@ -235,7 +235,13 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
  * @param {object} p      { ten, maHoSo, ngayKham } — ngayKham là epoch giây (bill_date)
  * @returns {Promise<{ok:boolean, voucher_code?:string, ly_do?:string}>}
  */
+// KHOÁ AN TOÀN voucher (GĐ0 chiến dịch Zalo 17/07): voucher gửi tin THẬT + tốn phí →
+// PHẢI có công tắc riêng, KHÔNG để token+giờ-vàng là lớp chặn duy nhất (1 lệnh ẩu = đốt tiền + phiền khách).
+// VOUCHER_LIVE mặc định TẮT: chưa bật thì token đúng / force=1 vẫn KHÔNG bắn (chỉ trả ly_do để log).
+export function isVoucherLive() { return /^(1|true|yes|on)$/i.test(process.env.VOUCHER_LIVE || ''); }
+
 export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh } = {}) {
+  if (!isVoucherLive()) return { ok: false, ly_do: 'voucher_chua_bat', ghi_chu: 'Set VOUCHER_LIVE=1 trên Render để mở khoá gửi voucher thật.' };
   const sdt = phone84(phone);
   if (!sdt) return { ok: false, ly_do: 'sdt_khong_hop_le' };
   if (!VOUCHER_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };

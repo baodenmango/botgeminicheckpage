@@ -443,6 +443,15 @@ export function getMediRecord(conv) {
 export function setOptOut(conversationId) {
   db.prepare('UPDATE conversations SET opt_out = 1 WHERE conversation_id = ?').run(String(conversationId));
 }
+// Kiểm 1 SĐT có opt-out ở BẤT KỲ kênh nào không (voucher-medi có phone nhưng chưa chắc có conv).
+// Khách đã nhắn "ngừng" ở FB/Zalo → tôn trọng, KHÔNG bắn voucher (chống spam → giữ chất OA).
+export function isPhoneOptedOut(phone) {
+  if (!phone) return false;
+  const p = String(phone).replace(/[^\d]/g, '');
+  if (!p) return false;
+  const row = db.prepare('SELECT 1 FROM conversations WHERE phone = ? AND opt_out = 1 LIMIT 1').get(p);
+  return Boolean(row);
+}
 export function isOptedOut(conv) {
   return Boolean(conv && conv.opt_out);
 }
