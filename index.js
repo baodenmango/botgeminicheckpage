@@ -24,6 +24,7 @@ import { runSevenTouch } from './src/sevenTouch.js';
 import { runRescueLead } from './src/rescueLead.js';
 import { guiBienNhan, parseHenEpoch, bookingNhacTick } from './src/bookingsched.js';
 import { runVoucherFollowup } from './src/voucherfollowup.js';
+import { notifyText } from './src/telegram.js'; // báo Telegram kết quả (voucher-medi/broadcast/booking gọi — trước thiếu import → crash "notifyText is not defined")
 import { runVesi } from './src/vesi.js';
 
 checkConfig();
