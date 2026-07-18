@@ -473,6 +473,12 @@ app.get('/admin/voucher-medi', async (req, res) => {
       if (cachDayMax > 0 && tuoi > cachDayMax * 86400) continue;   // quá cũ → bỏ (SĐT có thể die)
       if (benh !== 'all' && mapDiagnosis(rec.diagnosis) !== benh) continue;
       if (store.isPhoneOptedOut(rec.phone)) { optOutLoai++; continue; } // khách đã nhắn "ngừng" → tôn trọng
+      // LỌC CA ĐÃ GỬI trước khi slice (fix bug 18/07: trước đây slice(0,48) luôn lấy 48 ca ĐẦU đã gửi
+      // rồi → mọi lượt sau bỏ_qua_đã_gửi=48, con_lai kẹt mãi, không bao giờ tới ca 49+). Giờ mỗi lượt
+      // ungVien chỉ chứa ca CHƯA gửi → slice lấy đúng 48 ca mới. Key khớp phone84() của zns.js: 84xxxxxxxxx.
+      let s84 = String(rec.phone || '').replace(/[^\d]/g, '');
+      if (s84.startsWith('0')) s84 = '84' + s84.slice(1);
+      if (store.getKV(`zns_voucher_sent:${s84}`)) continue;
       ungVien.push({ phone: rec.phone, ten: rec.name, visit });
     }
     if (dry) return res.status(200).json({ ok: true, dry_run: true, benh, cach_day: cachDay, tong_ung_vien: ungVien.length, opt_out_loai: optOutLoai, tran_nang_luc_goi: tranNangLucGoi, se_gui_lot_batch: Math.min(ungVien.length, batchHieuLuc), uoc_phi_dong: Math.min(ungVien.length, batchHieuLuc) * (keoFollow ? 700 : 400), voucher_live: isVoucherLive() });
