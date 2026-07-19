@@ -30,6 +30,10 @@ const TRAN_MOI_LUOT = SO_NGUOI_GOI * 24;
 const che = (sdt) => (sdt && sdt.length >= 6) ? sdt.slice(0, 4) + '***' + sdt.slice(-3) : sdt;
 const nhan = (ct) => (ct === 'ct2' ? 'Gói khám 300k' : 'Tầm soát 150k');
 
+// Link Zalo OA chính thức PK (OA_ID thật) — telesale mời khách bấm QUAN TÂM để đưa về OA chăm,
+// KHÔNG xin kết bạn Zalo cá nhân (data đi theo người + không chăm tự động được). Đổi qua env nếu cần.
+const OA_LINK = process.env.ZALO_OA_LINK || 'https://zalo.me/3136814239074246132';
+
 // Đọc + parse an toàn 1 bản ghi voucher.
 function parseRec(value) {
   try { return JSON.parse(value); } catch { return null; }
@@ -96,7 +100,12 @@ export async function runVoucherFollowup({ dry = false } = {}) {
     `📞 <b>DANH SÁCH GỌI NHẮC VOUCHER</b> (${ds.length} ca)\n` +
     `Khách đã nhận voucher ≥${NHAC_SAU_NGAY} ngày chưa tới dùng. Telesale gọi hỏi thăm khớp + nhắc mã còn hạn + đặt lịch.\n` +
     `🔴 = sắp hết hạn (≤${SAP_HET_HAN_NGAY}d), gọi trước.\n\n${dong}\n\n` +
-    `<i>Khách tới rồi → lễ tân bấm dùng mã (tự thoát danh sách). Chốt được lịch = ăn tiền.</i>`;
+    `<i>Khách tới rồi → lễ tân bấm dùng mã (tự thoát danh sách). Chốt được lịch = ăn tiền.</i>\n\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `🟢 <b>CHƯA CHỐT ĐƯỢC LỊCH?</b> ĐỪNG xin kết bạn Zalo cá nhân.\n` +
+    `Mời khách bấm <b>QUAN TÂM</b> Zalo OA phòng khám để mình chăm tiếp (nhắc tái khám + ưu đãi riêng):\n` +
+    `👉 ${OA_LINK}\n` +
+    `<i>Câu mời:</i> «Em gửi anh/chị Zalo chính thức của phòng khám, anh/chị bấm <b>Quan tâm</b> giúp em để nhận lịch tái khám và ưu đãi nhé.»`;
 
   await notifyText(text);
 

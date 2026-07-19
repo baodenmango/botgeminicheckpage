@@ -12,7 +12,7 @@ import * as store from './store.js';
 import { BILL_TOUCHES, buildBillMessages } from './billtouches.js';
 import { sendCareMessages } from './care-send.js';
 import { tagFollowerBenh } from './zalo.js';
-import { sendZnsNhacLich, isZnsEnabled } from './zns.js';
+import { sendZnsNhacLich, isZnsEnabled, sendZnsQuanTamOA, isQuanTamOAEnabled } from './zns.js';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -144,6 +144,23 @@ export async function runBillTouches() {
         const hen = ngayVN(nowSec() + 3 * 86400); // mời tái khám trong ~3 ngày tới
         ok = await sendZnsNhacLich(rec.phone, { ten: rec.name, ngay_hen: hen, maKH: rec.id });
         if (ok) console.log(`[bill] ✅ ZNS nhắc tái khám ${code} (mù kênh OA) cho ca ${rec.id}`);
+      }
+
+      // ĐÒN ① MỞ VAN (anh Trình duyệt 19/07) — ĐẤU sendZnsQuanTamOA vào luồng.
+      // Đo 19/07: cả OA chỉ 83 hội thoại / 10 SĐT, trong khi 246 ca ra bill → 98% ca MÙ
+      // KÊNH, chuỗi chăm 0/1/3/6/7 chạy trên ống rỗng (tỉ lệ nối thật ~1,6%).
+      // Chặn ở chạm SỚM (d0/d1): ca mù kênh + có SĐT → mời khách QUAN TÂM OA. Khách follow
+      // thì rơi vào handleZaloFollow (tự gửi cẩm nang + clip đúng bệnh) và các chạm sau
+      // d3/d6/d7 đi qua OA MIỄN PHÍ thay vì đốt ZNS từng tin.
+      // An toàn: chỉ 1 lần/ca (cờ store), hàm tự chặn quota Tag3 4 tin/tháng, tự fail-safe
+      // trả false khi chưa set ZNS_TEMPLATE_QUANTAM_OA → không gửi bừa.
+      if (!ok && (code === 'd0' || code === 'd1') && rec.phone && isQuanTamOAEnabled()
+          && !store.getKV(`zns_moi_oa:${rec.phone}`)) {
+        const moi = await sendZnsQuanTamOA(rec.phone, { ten: rec.name });
+        if (moi) {
+          store.setKV(`zns_moi_oa:${rec.phone}`, '1');   // 1 lần/SĐT, khỏi làm phiền
+          console.log(`[bill] 👋 ZNS mời quan tâm OA (mù kênh) cho ca ${rec.id}`);
+        }
       }
 
       if (ok) {

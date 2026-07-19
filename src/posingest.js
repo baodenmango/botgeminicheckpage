@@ -62,8 +62,14 @@ export async function runPosIngest() {
       if (!oid || store.getKV(`posingest_seen2:${oid}`)) continue;
       const status = String(o?.status);
       if (HUY.has(status)) { store.setKV(`posingest_seen2:${oid}`, '1'); continue; }
-      if (status !== '11') continue;                      // chỉ nạp ĐƠN ĐÃ THU TIỀN (ra bill);
-                                                          // 0/6/16 chờ tiến triển, soi lại lượt sau
+      // LUẬT 19/07 (anh Trình chốt): "mọi bill CÓ TIỀN đều là bệnh nhân thật".
+      // Trước đây lọc cứng status==='11' → MÙ phần lớn ca thật, vì POScake để trạng thái
+      // loạn: đơn đã thu nằm rải ở 16/6/3 và POS CHẶN đổi 16→11 qua API (đo 19/07:
+      // 0/214 đơn ở status 11, trong khi 90 ngày có 304 đơn có tiền = 1,465 tỷ).
+      // Tín hiệu "đã thu" đáng tin duy nhất là total_price > 0 (cùng luật MCP poscake
+      // + gads_offline_upload + bill-push đang dùng).
+      const tien = Number(o?.total_price || 0);
+      if (!(tien > 0)) continue;                          // total=0 = LEAD chưa thu → chờ lượt sau
       const phone = normPhone(o?.bill_phone_number);
       if (!phone) { store.setKV(`posingest_seen2:${oid}`, '1'); continue; }
 
