@@ -37,10 +37,41 @@ function docLastCustomerMsgAt({ conversation_id, zalo_user_id, phone }) {
   return null;
 }
 
+// ── KHUNG GIỜ GỬI (vá 19/07 — CEO soi log Render): cron chăm sóc chạy '10 * * * *' theo
+// giờ MÁY (Render UTC, env KHÔNG có TZ) → 24/24. Log thật 12–18/07: 7/67 tin rơi ngoài
+// khung, có ca 00:10 và 22:10 giờ VN. Tin chăm sóc rạng sáng phản tác dụng + dễ bị report OA.
+// Gác Ở ĐÂY (chốt chặn chung của cả 3 engine bill/tái bill/wakeup) thay vì chỉ sửa cron,
+// để mọi đường gọi tay/webhook cũng bị chặn. Chỉnh bằng CARE_SEND_HOURS="8-21" (giờ VN).
+// Tắt gác khẩn: CARE_SEND_HOURS=0-23.
+// LƯU Ý: KHÔNG miễn trừ priority='cao' — 'cao' là mức ưu tiên NGÂN SÁCH QUOTA (liệu trình
+// PRP/TBG, xem rebilltouches.js:86), không phải "khẩn cấp"; tin đó gửi lúc 2h sáng cũng
+// phản tác dụng như tin thường. Cron nhắc LỊCH HẸN đi đường bookingsched.js riêng, không qua đây.
+export function gioVN(d = new Date()) {
+  return Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Ho_Chi_Minh', hour: 'numeric', hour12: false,
+  }).format(d));
+}
+
+export function trongKhungGioGui(d = new Date()) {
+  const raw = String(process.env.CARE_SEND_HOURS || '8-21').trim();
+  const m = raw.match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+  if (!m) return true; // cấu hình sai → không chặn oan
+  const tu = Number(m[1]); const den = Number(m[2]);
+  const h = gioVN(d);
+  return tu <= den ? (h >= tu && h <= den) : (h >= tu || h <= den);
+}
+
 export async function sendCareMessages(target, messages, opts = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return false;
   let { conversation_id, page_id, zalo_user_id } = target || {};
   const priority = opts.priority || 'thuong';
+
+  // Gác KHUNG GIỜ trước mọi thứ: hoãn (return false) chứ không đánh dấu đã gửi →
+  // engine chống-trùng giữ nguyên mốc, lượt cron kế trong khung giờ sẽ gửi lại.
+  if (!trongKhungGioGui()) {
+    console.warn(`[care-send] ⏰ ${gioVN()}h giờ VN ngoài khung ${process.env.CARE_SEND_HOURS || '8-21'} → HOÃN chạm${opts.code ? ` ${opts.code}` : ''} (sẽ gửi lượt sau)`);
+    return false;
+  }
 
   // NỐI LẠI KÊNH NGAY LÚC GỬI (08/07 — "chưa ca nào vào được luồng 0-1-3-6-7"):
   // lúc POS ingest ca thường CHƯA có link SĐT↔Zalo, nhưng link hình thành DẦN về sau

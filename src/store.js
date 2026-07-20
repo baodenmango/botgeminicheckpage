@@ -131,11 +131,15 @@ db.exec(`
 `);
 
 // Nhật ký "đánh thức BN ngủ" (bước D) — chống nhắc lại 1 BN quá dày.
+// wake_count = số lần ĐÃ GỬI TIN THẬT (đốt hạn mức, khoá khi >= MAX_COUNT).
+// list_count = số lần chỉ ĐƯA VÀO DANH SÁCH telesale (KHÔNG đốt hạn mức) — xem vá 20/07 bên dưới.
 db.exec(`
   CREATE TABLE IF NOT EXISTS wakeup_log (
     phone       TEXT PRIMARY KEY,
     last_wake_at INTEGER,
-    wake_count   INTEGER DEFAULT 0
+    wake_count   INTEGER DEFAULT 0,
+    last_list_at INTEGER,
+    list_count   INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS kv (
@@ -144,6 +148,14 @@ db.exec(`
     updated_at INTEGER
   );
 `);
+
+// Migration wakeup_log: thêm last_list_at + list_count (vá 20/07 — tách sổ "gửi thật" vs
+// "chỉ liệt kê telesale"). Khối riêng, 1 lỗi ALTER không chặn khởi động.
+try {
+  const wlCols = db.prepare('PRAGMA table_info(wakeup_log)').all().map((c) => c.name);
+  if (!wlCols.includes('last_list_at')) db.exec('ALTER TABLE wakeup_log ADD COLUMN last_list_at INTEGER');
+  if (!wlCols.includes('list_count')) db.exec('ALTER TABLE wakeup_log ADD COLUMN list_count INTEGER DEFAULT 0');
+} catch (e) { console.warn('[store] migration wakeup_log.list:', e?.message || e); }
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -165,18 +177,93 @@ export function setKV(key, value) {
 }
 
 // BN này được phép "đánh thức" lại chưa? (chưa nhắc, hoặc lần cuối cách đây > cooldownDays).
+//
+// ⚠️ VÁ 20/07/2026 — BẪY TỰ KHOÁ TỆP:
+// Trước đây wakeup.js gọi markWokeUp() cho CẢ ca chỉ-mới-đưa-vào-danh-sách-telesale
+// (khách chưa hề nhận tin nào). Sau 3 vòng cron, wake_count chạm maxCount=3 →
+// canWakeup() trả false VĨNH VIỄN → cả tệp câm dù chưa ai được chạm.
+// Nay tách 2 sổ: wake_count = ĐÃ GỬI TIN THẬT (đốt hạn mức) · list_count = chỉ liệt kê
+// cho telesale (KHÔNG đốt hạn mức, chỉ giữ mốc thời gian để cooldown chống đẩy trùng).
 export function canWakeup(phone, cooldownDays = 30, maxCount = 3) {
   if (!phone) return false;
   const row = db.prepare('SELECT * FROM wakeup_log WHERE phone = ?').get(String(phone));
   if (!row) return true;
-  if (row.wake_count >= maxCount) return false;
-  return (nowSec() - (row.last_wake_at || 0)) > cooldownDays * 86400;
+  // CHỈ số lần GỬI THẬT mới khoá theo hạn mức
+  if ((row.wake_count || 0) >= maxCount) return false;
+  // cooldown tính trên lần chạm gần nhất (gửi thật HOẶC liệt kê) để không dội trùng ca
+  const chamCuoi = Math.max(row.last_wake_at || 0, row.last_list_at || 0);
+  return (nowSec() - chamCuoi) > cooldownDays * 86400;
 }
+
+// ĐÃ GỬI TIN THẬT cho BN (qua Zalo OA) — đốt 1 lượt trong hạn mức maxCount.
 export function markWokeUp(phone) {
   if (!phone) return;
   db.prepare(`INSERT INTO wakeup_log (phone, last_wake_at, wake_count) VALUES (?, ?, 1)
     ON CONFLICT(phone) DO UPDATE SET last_wake_at = excluded.last_wake_at, wake_count = wake_count + 1`)
     .run(String(phone), nowSec());
+}
+
+// CHỈ đưa vào danh sách telesale (CHƯA gửi gì cho khách) — KHÔNG đốt hạn mức gửi.
+export function markListed(phone) {
+  if (!phone) return;
+  db.prepare(`INSERT INTO wakeup_log (phone, last_list_at, list_count, wake_count) VALUES (?, ?, 1, 0)
+    ON CONFLICT(phone) DO UPDATE SET last_list_at = excluded.last_list_at,
+      list_count = COALESCE(list_count, 0) + 1`)
+    .run(String(phone), nowSec());
+}
+
+// DS ca NGHI là nạn nhân bug tự-khoá-tệp (bug cũ đốt hạn mức cho ca chỉ-liệt-kê).
+// Tiêu chí THẬN TRỌNG: đang bị đốt lượt (wake_count>0) NHƯNG chưa từng có kênh Zalo
+// → không có kênh thì KHÔNG THỂ đã gửi thật → chắc chắn là nạn nhân.
+// Ca từng có kênh KHÔNG đụng tới (có thể đã nhận tin thật, gỡ khoá sẽ gửi lố cho khách).
+export function dsWakeupNghiNanNhan() {
+  try {
+    return db.prepare(`
+      SELECT w.phone, w.wake_count FROM wakeup_log w
+      WHERE COALESCE(w.wake_count,0) > 0
+        AND NOT EXISTS (
+          -- có hội thoại ZALO khớp SĐT = có kênh gửi được (conversation_id là khoá chính,
+          -- luôn khác NULL → phải lọc theo channel/zalo_user_id mới đúng)
+          SELECT 1 FROM conversations c
+          WHERE c.phone = w.phone
+            AND (c.channel = 'zalo' OR c.zalo_user_id IS NOT NULL)
+        )
+        AND NOT EXISTS (
+          -- hoặc đã từng lưu uid Zalo theo SĐT trong KV
+          SELECT 1 FROM kv k WHERE k.key = 'phone_zalo:' || w.phone
+        )
+    `).all();
+  } catch (e) {
+    console.warn('[store] dsWakeupNghiNanNhan:', e?.message || e);
+    return [];
+  }
+}
+
+// Gỡ khoá: trả wake_count về 0 nhưng GIỮ list_count + mốc thời gian (cooldown vẫn hiệu lực,
+// không để engine bắn dồn ngay lượt cron kế tiếp).
+export function goKhoaWakeup(phones) {
+  if (!Array.isArray(phones) || !phones.length) return 0;
+  const st = db.prepare('UPDATE wakeup_log SET wake_count = 0 WHERE phone = ?');
+  const tx = db.transaction((ds) => {
+    let n = 0;
+    for (const p of ds) n += st.run(String(p)).changes;
+    return n;
+  });
+  return tx(phones);
+}
+
+// Số liệu chỉ-đọc cho giám sát (dùng cho endpoint /admin/wakeup-stats).
+export function wakeupStats(maxCount = 3) {
+  try {
+    return db.prepare(`SELECT
+        COUNT(*) AS tong,
+        SUM(CASE WHEN COALESCE(wake_count,0) > 0 THEN 1 ELSE 0 END) AS da_gui_that,
+        SUM(CASE WHEN COALESCE(wake_count,0) = 0 AND COALESCE(list_count,0) > 0 THEN 1 ELSE 0 END) AS chi_liet_ke,
+        SUM(CASE WHEN COALESCE(wake_count,0) >= ? THEN 1 ELSE 0 END) AS da_khoa_het_luot
+      FROM wakeup_log`).get(maxCount) || {};
+  } catch (e) {
+    return { loi: e?.message || String(e) };
+  }
 }
 
 // ---------- MEDi cache (đẩy từ cron local) ----------

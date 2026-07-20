@@ -596,6 +596,66 @@ app.get('/admin/ma-tran', (req, res) => {
   res.status(200).json({ ok: true, tong: ds.length, co_kenh: ds.filter((x) => x.co_kenh_zalo).length, ds });
 });
 
+// --- Admin (CHỈ ĐỌC): soi engine ĐÁNH THỨC BN NGỦ có gửi được thật không (thêm 20/07) ---
+// Trả lời đúng câu hỏi "engine câm hay sống": bao nhiêu ca ĐÃ NHẬN TIN THẬT vs bao nhiêu
+// mới chỉ được liệt kê cho telesale, và bao nhiêu đã hết hạn mức gửi.
+app.get('/admin/wakeup-stats', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const maxCount = parseInt(process.env.WAKEUP_MAX_COUNT || '3', 10);
+    const st = store.wakeupStats(maxCount);
+    res.status(200).json({
+      ok: true,
+      ...st,
+      cau_hinh: {
+        ngay_ngu_toi_thieu: process.env.WAKEUP_SLEEP_DAYS || '45',
+        ngay_ngu_toi_da: process.env.WAKEUP_MAX_DAYS || '365',
+        cooldown_ngay: process.env.WAKEUP_COOLDOWN_DAYS || '30',
+        max_lan_gui: maxCount,
+        tran_moi_luot: process.env.WAKEUP_BATCH_LIMIT || '40',
+      },
+      giai_thich: 'da_gui_that = số BN ĐÃ NHẬN tin qua Zalo OA. chi_liet_ke = mới đẩy telesale, khách CHƯA nhận gì. da_khoa_het_luot = hết hạn mức gửi.',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin: GỠ KHOÁ các ca là NẠN NHÂN của bug tự-khoá-tệp (thêm 20/07) ---
+// Bug cũ đốt hạn mức gửi cho cả ca chỉ-mới-liệt-kê-telesale → nhiều BN bị khoá vĩnh viễn
+// dù CHƯA NHẬN tin nào. Bản vá chặn bug tái diễn nhưng KHÔNG tự cứu nạn nhân cũ.
+// Endpoint này chỉ reset ca có dấu hiệu là nạn nhân, KHÔNG đụng ca đã gửi thật.
+// Mặc định CHẠY THỬ (dry): xem trước rồi mới thật bằng &that=1.
+app.get('/admin/wakeup-go-khoa', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const that = req.query.that === '1';
+    // NẠN NHÂN = bị khoá (wake_count>0) nhưng KHÔNG có dấu vết gửi thật nào ghi lại được.
+    // Vì bug cũ dùng chung 1 sổ, ta không phân biệt được tuyệt đối → dùng tiêu chí THẬN TRỌNG:
+    // chỉ gỡ ca chưa từng có hội thoại/uid Zalo (không có kênh thì KHÔNG THỂ đã gửi thật).
+    const rows = store.dsWakeupNghiNanNhan();
+    if (!that) {
+      return res.status(200).json({
+        ok: true, che_do: 'CHẠY THỬ (chưa đổi gì)',
+        se_go_khoa: rows.length,
+        vi_du: rows.slice(0, 5).map((r) => ({ sdt: String(r.phone).slice(0, 4) + 'xxxxxx', wake_count: r.wake_count })),
+        chay_that: 'thêm &that=1 vào URL để thực hiện',
+      });
+    }
+    const n = store.goKhoaWakeup(rows.map((r) => r.phone));
+    console.log(`[wakeup-go-khoa] đã gỡ khoá ${n} ca là nạn nhân bug tự-khoá-tệp`);
+    res.status(200).json({ ok: true, che_do: 'ĐÃ THỰC HIỆN', da_go_khoa: n });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 // --- Admin: KÍCH 1 lượt quét POS ngay (B6) — test sau deploy / nạp gấp ---
 app.get('/admin/pos-ingest-now', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
@@ -1201,9 +1261,12 @@ cron.schedule('*/5 * * * *', async () => {
 
 // --- Cron CHUỖI CHẠM CA RA BILL (bước 5) + TÁI BILL theo nhóm (bước 6) ---
 // Chạy mỗi giờ (phút 10). Engine tự lọc theo mốc + chống trùng → an toàn khi chạy lặp.
-// Giờ VN = UTC+7; tin chăm vẫn rơi giờ hợp lý vì engine lọc theo NGÀY, không gửi đêm khuya quá vì
-// cron chạy theo giờ máy (Render UTC) — nếu cần chặn khung giờ, đặt CARE_SEND_HOURS sau.
-cron.schedule('10 * * * *', async () => {
+// VÁ 19/07 (CEO soi log Render): trước đây '10 * * * *' KHÔNG khai timezone → chạy theo giờ
+// MÁY Render (UTC — env service không hề có TZ) = 24/24. Log thật 12–18/07: 7/67 tin chăm rơi
+// ngoài khung, có ca 00:10 và 22:10 giờ VN → phản tác dụng, dễ bị khách report OA.
+// Nay: khoá timezone Asia/Ho_Chi_Minh + chỉ chạy 8–21h VN. Lớp gác THỨ HAI nằm ở
+// care-send.js (trongKhungGioGui / CARE_SEND_HOURS) để chặn cả đường gọi tay/webhook.
+cron.schedule('10 8-21 * * *', async () => {
   try {
     const n1 = await runBillTouches();      // bước 5: ngày 0→7 ca ra bill
     const n2 = await runGroupTouches();     // bước 6: tái bill 4 nhóm + liệu trình
@@ -1211,7 +1274,7 @@ cron.schedule('10 * * * *', async () => {
   } catch (err) {
     console.error('[cron-care] lỗi engine chăm sóc bill/tái bill:', err?.message || err);
   }
-});
+}, { timezone: 'Asia/Ho_Chi_Minh' });
 
 // --- Cron CÚ CHẠM 2: NHẮC VOUCHER CHƯA DÙNG (anh Trình chốt 15/07) ---
 // Mỗi ngày 09:00 giờ VN (= 02:00 UTC trên Render). Quét sổ voucher, ai nhận ≥N ngày

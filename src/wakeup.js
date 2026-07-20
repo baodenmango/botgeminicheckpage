@@ -62,12 +62,25 @@ export async function runWakeup() {
     const condition = mapDiagnosis(rec.diagnosis);
     const benhVi = CONDITION_VI[condition] || CONDITION_VI.unknown;
 
-    // BN đã follow OA (có hội thoại Zalo khớp SĐT) → bot tự gửi.
+    // BN có kênh Zalo → bot tự gửi.
+    // VÁ 20/07 — MỞ CỔNG VÀO: trước đây chỉ đi tiếp khi getZaloConvByPhone() có hội thoại,
+    // nên BN mới quét QR quan tâm OA (có zalo_user_id nhưng CHƯA có hội thoại) bị chặn ngay
+    // ở cổng, dù care-send.js:81-96 thừa sức gửi bằng OpenAPI theo user_id — và còn tự tra
+    // lại kênh theo SĐT (kể cả KV `phone_zalo:<sdt>`) ngay lúc gửi.
+    // Nay: có hội thoại HOẶC có zalo_user_id HOẶC có KV phone_zalo → cho đi tiếp,
+    // để care-send tự nối kênh. Không có gì cả thì mới đẩy telesale.
     const zaloConv = store.getZaloConvByPhone(rec.phone);
-    if (zaloConv && sent < BATCH_LIMIT) {
+    const uidKV = zaloConv ? null : store.getKV(`phone_zalo:${rec.phone}`);
+    const coKenh = !!(zaloConv?.conversation_id || zaloConv?.zalo_user_id || uidKV);
+    if (coKenh && sent < BATCH_LIMIT) {
       try {
         const ok = await sendCareMessages(
-          { conversation_id: zaloConv.conversation_id, page_id: zaloConv.page_id, zalo_user_id: zaloConv.zalo_user_id },
+          {
+            phone: rec.phone,
+            conversation_id: zaloConv?.conversation_id,
+            page_id: zaloConv?.page_id,
+            zalo_user_id: zaloConv?.zalo_user_id || uidKV,
+          },
           wakeMessages(rec, benhVi)
         );
         if (ok) {
@@ -86,8 +99,12 @@ export async function runWakeup() {
 
   if (toTelesale.length) {
     try { await notifyWakeupList(toTelesale); } catch (e) { console.error('[wakeup] báo Telegram lỗi:', e?.message); }
-    // đánh dấu đã đưa vào DS để không spam Telegram cùng ca mỗi lần chạy
-    for (const it of toTelesale) store.markWokeUp(it.phone);
+    // VÁ 20/07 — TRƯỚC ĐÂY GỌI markWokeUp() Ở ĐÂY LÀ BUG TỰ KHOÁ TỆP:
+    // ca mới chỉ được LIỆT KÊ cho telesale (khách chưa nhận tin nào) vẫn bị đốt 1 lượt
+    // trong hạn mức 3 lần → sau 3 vòng cron cả tệp bị khoá VĨNH VIỄN, engine im lặng.
+    // Nay dùng markListed(): chỉ ghi mốc thời gian cho cooldown chống đẩy trùng ca lên
+    // Telegram, KHÔNG đốt hạn mức gửi. Ca vẫn quay lại được khi đã có kênh Zalo.
+    for (const it of toTelesale) store.markListed(it.phone);
   }
   if (sent || toTelesale.length) console.log(`[wakeup] xong: ${sent} tự nhắc OA + ${toTelesale.length} đẩy telesale`);
   return { sent, listed: toTelesale.length };
