@@ -119,7 +119,13 @@ export function laTinDaKham(text) {
   if (n.length > 90) return false; // câu dài là đang kể chuyện/hỏi bệnh → để Gemini xử theo prompt
   if (/ (chua|sap|chuan bi|dinh|muon|can|de|se) (di |den |toi |ghe )?kham/.test(n)) return false; // "chưa/sắp khám" ≠ đã khám
   if (/ khac( |$)/.test(n)) return false; // "đã khám Ở CHỖ/NƠI/BV KHÁC" (ca Hạnh Nguyên 08/07) ≠ đã khám Hiệp Lợi
-  return / (da|vua|moi) (di |den |toi |ghe )?kham | kham (xong|roi) /.test(n);
+  // Ý ĐỊNH TƯƠNG LAI ở BẤT KỲ đâu trong câu ≠ đã khám (ca Lê Hải 20/07: "mình MUỐN biết địa chỉ
+  // phòng khám rồi mình ĐẾN KHÁM đậy đc ko" — khách chưa khám mà bot chào như bệnh nhân cũ).
+  if (/ (muon|dinh|se|sap|chuan bi|chua) /.test(n)) return false;
+  if (/ kham (duoc |dc )?(khong|ko|k)( |$)|^ kham /.test(n)) return false; // câu HỎI về việc khám
+  // "khám rồi/xong" chỉ tính khi đứng CUỐI mệnh đề — "phòng khám RỒI mình đến..." là từ nối,
+  // không phải "đã khám xong" (bẫy 20/07).
+  return / (da|vua|moi) (di |den |toi |ghe )?kham | kham (xong|roi)( |$)(?!.* (den|toi|di|ghe) )/.test(n);
 }
 export function laConvDaKham(conversationId) {
   return Boolean(store.getKV(`da_kham_conv:${conversationId}`));
@@ -309,16 +315,24 @@ export async function handleIncoming(ev) {
     // "Chia sẻ thông tin" để nối hồ sơ (1 nút, không bắt gõ số). KHÔNG đi kịch bản lead.
     if (!store.isCaptured(conv) && !laConvDaKham(conversationId) && laTinDaKham(messageText)) {
       store.setKV(`da_kham_conv:${conversationId}`, String(Date.now()));
-      const msgs = [
-        'Dạ em cảm ơn mình đã tin tưởng ghé khám tại Hiệp Lợi nha ạ 🌿',
-        'Để em nối đúng hồ sơ khám và gửi tài liệu chăm sóc đúng bệnh cho mình, mình bấm giúp em nút "Chia sẻ thông tin" ở thẻ bên dưới nha ạ 🙏',
-      ];
+      // Nút "Chia sẻ thông tin" là THẺ RIÊNG CỦA ZALO OA — Facebook KHÔNG có. Ca Lê Hải 20/07:
+      // bot mời khách FB bấm thẻ không tồn tại → khách đứng hình. FB thì xin số bằng lời.
+      const laZalo = isZaloPage(getPageChannel(pageId));
+      const msgs = laZalo
+        ? [
+            'Dạ em cảm ơn mình đã tin tưởng ghé khám tại Hiệp Lợi nha ạ 🌿',
+            'Để em nối đúng hồ sơ khám và gửi tài liệu chăm sóc đúng bệnh cho mình, mình bấm giúp em nút "Chia sẻ thông tin" ở thẻ bên dưới nha ạ 🙏',
+          ]
+        : [
+            'Dạ em cảm ơn mình đã tin tưởng ghé khám tại Hiệp Lợi nha ạ 🌿',
+            'Mình cho em xin số điện thoại đã đăng ký lúc khám để em nối đúng hồ sơ và gửi tài liệu chăm sóc đúng bệnh cho mình nha ạ 🙏',
+          ];
       msgs.forEach((m) => noteBotSent(conversationId, m));
       noteBotJustSent(conversationId);
       await sendMessages(pageId, conversationId, msgs);
       store.appendHistory(conversationId, 'model', msgs.join('\n'));
       const zuidDK = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
-      if (isZaloPage(getPageChannel(pageId)) && zuidDK) sendRequestInfo(zuidDK).catch(() => {});
+      if (laZalo && zuidDK) sendRequestInfo(zuidDK).catch(() => {});
       console.log(`[da-kham] 🏥 ${conversationId} khách tự báo ĐÃ ĐẾN KHÁM → gắn cờ da_kham + mời bấm nút chia sẻ SĐT`);
       return;
     }
@@ -500,7 +514,11 @@ export async function handleIncoming(ev) {
         '[KHÁCH ĐÃ ĐẾN KHÁM — TỰ XÁC NHẬN] Khách này ĐÃ đến khám tại phòng khám (quầy lễ tân xác nhận). ' +
         'TUYỆT ĐỐI KHÔNG chào như người lạ, KHÔNG mời "suất tư vấn miễn phí", KHÔNG dụ để lại số kiểu chốt lead. ' +
         'Vai của em: chăm sóc sau khám — hỏi thăm nhẹ, dặn theo hướng dẫn Bác sĩ Trình. ' +
-        'Nếu cần nối hồ sơ, mời khách bấm nút "Chia sẻ thông tin" trên thẻ OA đã gửi (KHÔNG bắt gõ số).';
+        // Nút "Chia sẻ thông tin" CHỈ có trên Zalo OA. Nói câu này với khách Facebook =
+        // chỉ khách bấm cái thẻ không tồn tại (ca Lê Hải 20/07).
+        (isZaloPage(getPageChannel(pageId))
+          ? 'Nếu cần nối hồ sơ, mời khách bấm nút "Chia sẻ thông tin" trên thẻ OA đã gửi (KHÔNG bắt gõ số).'
+          : 'Đây là Facebook — KHÔNG có nút "Chia sẻ thông tin"/thẻ OA, TUYỆT ĐỐI không nhắc tới. Cần nối hồ sơ thì xin số điện thoại đã đăng ký lúc khám bằng lời.');
     }
 
     // THẺ TỆP PAGE (anh chốt 04/07): 2 page = 2 tệp khách, prompt mục 1B đọc thẻ này đổi nhịp tư vấn.
