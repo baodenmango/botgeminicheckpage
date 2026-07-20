@@ -109,6 +109,27 @@ export function ingestBill(input) {
 
 const BILL_GRACE_DAYS = parseFloat(process.env.BILL_GRACE_DAYS || '2');
 
+// ── CHỐNG RETRY VÔ ÍCH (vá 19/07/2026, bằng chứng log Render 48h) ──────────────
+// Đo thật: ca pos_10856513783 gửi hụt d1 MỖI GIỜ suốt 14 lượt (01:21→14:11 19/07),
+// và mỗi lượt cron có ~100 ca "gửi hụt … giữ lại thử lần sau" — vì gửi hụt thì KHÔNG
+// markBillChamDone, nên ca nằm lại trong cửa sổ grace và bị thử lại mọi lượt cron.
+// Hệ quả: đốt lượt gọi Zalo/ZNS + log rác; nguy hiểm nhất là nhánh ZNS d6/d7 —
+// nếu ZNS lỗi (quota/-1472) thì mỗi giờ lại bắn lại 1 tin tính phí.
+// Bản vá: đếm số lần thất bại theo (ca, mốc) trong KV. Quá ngưỡng → coi mốc đó là
+// BỎ (markBillChamDone) để ca đi tiếp mốc sau thay vì kẹt. Reversible: đổi env
+// BILL_MAX_FAIL, hoặc xoá key KV bill_fail:* là quay lại hành vi cũ.
+const BILL_MAX_FAIL = parseInt(process.env.BILL_MAX_FAIL || '3', 10);
+const failKey = (id, code) => `bill_fail:${id}:${code}`;
+
+function demThatBai(id, code) {
+  const n = parseInt(store.getKV(failKey(id, code)) || '0', 10) + 1;
+  store.setKV(failKey(id, code), String(n));
+  return n;
+}
+function xoaDemThatBai(id, code) {
+  try { store.delKV(failKey(id, code)); } catch { /* không chặn luồng chính */ }
+}
+
 /**
  * Vòng cron: với mỗi mốc, tìm ca tới hạn & chưa gửi → gửi tin chăm.
  * Mỗi ca 1 lượt cron CHỈ gửi 1 mốc (mốc CAO NHẤT đã tới hạn) — tránh dồn nhiều mốc một lúc.
@@ -127,10 +148,14 @@ export async function runBillTouches() {
   let sent = 0;
   for (const { rec, code } of chon.values()) {
     try {
+      // billAmount: ca vào hàng đợi này ĐỀU đã qua bộ lọc tiền>0 của posingest (dòng 113)
+      // hoặc /admin/bill-ingest, nên bill_date có = có bill thật đã thu. Truyền xuống để
+      // chốt an toàn trong buildBillMessages xét (anh Trình 20/07: "ca nào TIỀN là có tiêm").
       const messages = buildBillMessages(code, {
         condition: rec.condition,
         hasMedicine: !!rec.has_medicine,
         hasInjection: !!rec.has_injection,
+        billAmount: rec.bill_date ? 1 : 0,
         name: rec.name,
       });
       if (!messages) { store.markBillChamDone(rec.id, code); continue; }
@@ -165,6 +190,7 @@ export async function runBillTouches() {
 
       if (ok) {
         store.markBillChamDone(rec.id, code);
+        xoaDemThatBai(rec.id, code);
         // đánh dấu các mốc THẤP hơn còn sót là đã xong (ca nạp muộn, đã quá nhiều mốc → gửi mốc cao nhất)
         for (const t of BILL_TOUCHES) {
           if (t.day < BILL_TOUCHES.find((x) => x.code === code).day) store.markBillChamDone(rec.id, t.code);
@@ -172,10 +198,25 @@ export async function runBillTouches() {
         sent++;
         console.log(`[bill] ✅ gửi chạm ${code} cho ca ${rec.id}`);
       } else {
-        console.warn(`[bill] gửi hụt chạm ${code} ca ${rec.id} (không có kênh / lỗi) → giữ lại thử lần sau`);
+        const n = demThatBai(rec.id, code);
+        if (n >= BILL_MAX_FAIL) {
+          store.markBillChamDone(rec.id, code); // BỎ mốc này, khỏi thử lại vô ích mỗi lượt cron
+          xoaDemThatBai(rec.id, code);
+          console.warn(`[bill] ⛔ bỏ chạm ${code} ca ${rec.id} sau ${n} lần hụt (mù kênh) → đi tiếp mốc sau`);
+        } else {
+          console.warn(`[bill] gửi hụt chạm ${code} ca ${rec.id} lần ${n}/${BILL_MAX_FAIL} → thử lại lượt sau`);
+        }
       }
     } catch (err) {
-      console.error(`[bill] lỗi gửi chạm ${code} ca ${rec.id}:`, err?.message || err);
+      // Lỗi ném ra cũng tính là 1 lần hụt — nếu không, ca lỗi cứng sẽ lặp mãi trong grace.
+      const n = demThatBai(rec.id, code);
+      if (n >= BILL_MAX_FAIL) {
+        store.markBillChamDone(rec.id, code);
+        xoaDemThatBai(rec.id, code);
+        console.error(`[bill] ⛔ bỏ chạm ${code} ca ${rec.id} sau ${n} lần lỗi:`, err?.message || err);
+      } else {
+        console.error(`[bill] lỗi gửi chạm ${code} ca ${rec.id} (lần ${n}/${BILL_MAX_FAIL}):`, err?.message || err);
+      }
     }
   }
   return sent;

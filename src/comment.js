@@ -5,7 +5,7 @@
 // cấu trúc KHÁC tin nhắn (có comment_id / post_id / type='comment'). Parser dưới đọc linh
 // hoạt nhiều biến thể field. Khi comment THẬT đầu tiên về, code in nguyên payload thô
 // (console '[comment] payload thô') để đối chiếu & chỉnh field cho khít nếu cần.
-import { getPageToken, replyComment, sendPrivateReply } from './pancake.js';
+import { getPageToken, getUserToken, replyComment, sendPrivateReply } from './pancake.js';
 import { isPageEnabled } from './pancake.js';
 import * as store from './store.js';
 import { notifyComment } from './telegram.js';
@@ -57,15 +57,37 @@ export function isCommentEvent(body) {
   const data = (body.data && typeof body.data === 'object') ? body.data : body;
   const msg = (data.message && typeof data.message === 'object') ? data.message : data;
   const cm = (data.comment && typeof data.comment === 'object') ? data.comment : null;
+  const conv = (data.conversation && typeof data.conversation === 'object') ? data.conversation : {};
 
+  // VÁ 20/07/2026 (ca "bot bỏ rơi 14 hội thoại", ảnh Pancake 20:05):
+  // Cửa này là cửa DUY NHẤT trong index.js return mà KHÔNG log dòng nào → mọi tin lọt vào đây
+  // biến mất không dấu vết. Đo bằng stub (node -e, không gọi API): một tin INBOX THẬT của khách
+  // mang comment_id PHẲNG (chính là thread do Meta Automation "bình luận → nhắn tin" tạo ra,
+  // và private_reply của Pancake) bị hàm này trả TRUE → index.js return → BOT KHÔNG BAO GIỜ THẤY.
+  // Đây đúng là nhóm khách trên ảnh: vào từ comment bài QC, hỏi giá tiêm, không ai trả lời.
+  //
+  // LUẬT MỚI: chỉ coi là COMMENT khi có bằng chứng DƯƠNG rằng đây là sự kiện bình luận
+  // (type chứa 'comment' HOẶC có object data.comment riêng). comment_id ĐI KÈM tin inbox
+  // KHÔNG còn đủ để loại — vì tin inbox thật vẫn mang comment_id.
+  // Nguyên tắc vàng: thà bot trả lời thừa còn hơn để khách hỏi mà im lặng.
   const typeStr = String(
-    body.type || data.type || msg.type || msg.message_type || msg.event_type || ''
+    body.type || data.type || msg.type || msg.message_type || msg.event_type || conv.type || ''
   ).toLowerCase();
+  // 'comment_inbox' / 'INBOX' = hội thoại INBOX (Pancake gom thread private-reply) → KHÔNG phải comment.
+  if (typeStr.includes('inbox')) return false;
   if (typeStr.includes('comment')) return true;
   if (cm) return true;
-  // Có comment_id (và không phải tin nhắn inbox thuần) → coi là comment.
-  const cid = msg.comment_id || data.comment_id || body.comment_id || (cm && (cm.id || cm.comment_id));
-  if (cid) return true;
+  // Chỉ còn comment_id trơ trọi: coi là comment KHI KHÔNG có dấu hiệu tin nhắn inbox
+  // (không có conversation_id/nội dung tin). Có nội dung tin = khách đang hỏi thật → phải xử.
+  const cid = msg.comment_id || data.comment_id || body.comment_id;
+  if (cid) {
+    const laTinInbox = Boolean(
+      (msg.conversation_id || conv.id || data.conversation_id) &&
+      (msg.message || msg.text || conv.snippet)
+    );
+    if (laTinInbox) return false; // tin khách thật có mang comment_id → ĐỪNG nuốt
+    return true;
+  }
   return false;
 }
 
@@ -130,7 +152,14 @@ export async function handleComment(ev) {
     console.log(`[comment] comment ${commentId} do chính page đăng → bỏ qua`);
     return;
   }
-  if (!getPageToken(pageId)) return;
+  // VÁ 20/07/2026 (vòng 4): KHÔNG chặn sớm theo TOKEN TRANG nữa. Cả 3 page token đang chết
+  // (102/105 — ca log Render 13:36→14:51 UTC: 29 lần "access_token renewed" mà vẫn in 21 dòng ✅
+  // giả), trong khi USER token PANCAKE_API_TOKEN vẫn sống. Chặn ở đây = tự vứt toàn bộ comment
+  // quảng cáo (cửa lead ads) dù replyComment/sendPrivateReply nay tự đổi được sang làn USER token.
+  if (!getPageToken(pageId) && !getUserToken()) {
+    console.warn(`[comment] page ${pageId} KHÔNG có token nào (trang lẫn USER) → bỏ comment ${commentId}.`);
+    return;
+  }
 
   // Chống lặp: Pancake có thể bắn lại cùng comment nhiều lần.
   if (!store.markCommentHandledOnce(commentId, pageId)) {

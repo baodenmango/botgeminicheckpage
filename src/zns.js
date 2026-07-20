@@ -12,6 +12,8 @@ import axios from 'axios';
 import crypto from 'node:crypto';
 import * as store from './store.js';
 import { getAccessTokenNow, refreshAccessToken, zaloAgentV4 } from './zalo.js';
+// VÁ 20/07/2026: ZNS phải ghi sổ chống echo như mọi đường gửi khác — xem ghiSoEchoZns() bên dưới.
+import { noteBotSent, noteBotJustSent } from './echoguard.js';
 
 // Sinh mã voucher NGẪU NHIÊN THẬT + ký tự checksum (bảo mật — vá 10/07: mã cũ tính được từ SĐT).
 // Chỉ [A-Z0-9] (loại "Mã số" của ZNS + để Zalo render QR đúng), độ dài 9: tiền tố theo chương trình
@@ -104,11 +106,71 @@ export function isZnsEnabled() {
 }
 
 // SĐT VN → dạng 84xxxxxxxxx (chuẩn ZNS).
-function phone84(p) {
+function phone84Raw(p) {
   let s = String(p || '').replace(/[^\d]/g, '');
   if (s.startsWith('0')) s = '84' + s.slice(1);
   if (!s.startsWith('84') || s.length !== 11) return null;
   return s;
+}
+
+// ── VÁ 19/07/2026 — CHỐNG QUAY VÔ HẠN LỖI -118 "Zalo account not existed".
+// Đo log Render 18–19/07: cùng vài ca ra bill bắn ZNS lỗi -118 ĐÚNG MỖI GIỜ (13:10→01:10, 13+ lần)
+// vì SĐT đó KHÔNG có tài khoản Zalo → gửi bao nhiêu lần cũng hỏng, mà engine không đếm thất bại.
+// Cách chặn: gặp -118 → ghi cờ KV `zns_no_zalo:<sdt>` (vĩnh viễn tới khi xoá tay) → mọi hàm ZNS
+// bỏ qua SĐT đó ngay từ phone84(), không tốn 1 request nào nữa. Đảo ngược được: xoá key là chạy lại.
+const NO_ZALO_KEY = (sdt) => `zns_no_zalo:${sdt}`;
+export function laSoKhongCoZalo(phone) {
+  const sdt = phone84Raw(phone);
+  return !!sdt && !!store.getKV(NO_ZALO_KEY(sdt));
+}
+// Đánh dấu SĐT không có Zalo (gọi khi Zalo trả -118).
+function danhDauKhongCoZalo(sdt) {
+  if (!sdt || store.getKV(NO_ZALO_KEY(sdt))) return;
+  store.setKV(NO_ZALO_KEY(sdt), String(Math.floor(Date.now() / 1000)));
+  console.warn(`[zns] 🚫 ${sdt.slice(0, 5)}*** KHÔNG có tài khoản Zalo (-118) → ngừng gửi ZNS cho số này`);
+}
+// Soi đáp án Zalo: nếu -118 thì ghi cờ. Trả về true nếu là lỗi "không có Zalo".
+function xuLyLoiZalo(sdt, data) {
+  if (data?.error === -118) { danhDauKhongCoZalo(sdt); return true; }
+  return false;
+}
+
+// ── VÁ 20/07/2026 — BỊT LỖ ZNS ĐÁNH CỜ HUMAN OAN (ca 14 hội thoại CHƯA ĐỌC tối 20/07).
+//
+// GỐC: ZNS là đường gửi DUY NHẤT trong repo không ghi sổ chống echo. 7 hàm sendZns* bắn thẳng
+// theo SĐT, KHÔNG có conversationId trong tay nên không gọi noteBotSent được. Zalo render tin từ
+// template rồi hiện trong hội thoại OA → Pancake dội về webhook thành TIN PAGE. Tin đó:
+//   - dài > HUMAN_MIN_CHARS (văn template tử tế)     → lọt cửa "quá ngắn"
+//   - chưa bao giờ vào sổ echo                        → lọt cửa wasSentByBot
+//   - dội về sau hàng phút (ZNS đi đường khác)        → lọt cửa ECHO_GRACE_MS 30s
+//   - chữ do Zalo render, khác 6 chuỗi CARE_FINGERPRINTS → lọt cả lưới vân tay
+// → lọt HẾT các cửa → markHumanTaken → bot tự khoá mình dù KHÔNG có người nào vào
+// (Pancake ghi "Chưa có người xem"). Đúng ca 19 lần đánh cờ oan trên 13 hội thoại.
+//
+// CHỮA: gửi ZNS thành công → tra ngược SĐT ra hội thoại Zalo (getZaloConvByPhone) rồi ghi sổ echo
+// đúng như mọi đường gửi khác. Không map được thì THÔI (không phá luồng gửi) — lúc đó cờ 2 mức
+// (store.markHumanTaken) vẫn là lưới cuối: cờ tạm nghi tự chết sau 5', khách không bị bỏ rơi.
+function ghiSoEchoZns(phone, noiDung) {
+  try {
+    const conv = store.getZaloConvByPhone(phone) || store.getZaloConvByPhone(phone84Raw(phone));
+    const cid = conv?.conversation_id;
+    if (!cid) return false;
+    for (const m of [].concat(noiDung).filter(Boolean)) noteBotSent(cid, m);
+    noteBotJustSent(cid);
+    return true;
+  } catch (err) {
+    // Sổ echo hỏng KHÔNG được làm chết luồng gửi ZNS (tin đã tới khách rồi).
+    console.warn('[zns] ghi sổ echo lỗi (bỏ qua, không ảnh hưởng tin đã gửi):', err?.message);
+    return false;
+  }
+}
+
+// Cổng chung: SĐT hợp lệ VÀ chưa bị đánh dấu -118. Mọi hàm gửi ZNS đi qua đây.
+function phone84(p) {
+  const sdt = phone84Raw(p);
+  if (!sdt) return null;
+  if (store.getKV(NO_ZALO_KEY(sdt))) return null; // đã biết không có Zalo → khỏi đốt request
+  return sdt;
 }
 
 /**
@@ -118,6 +180,14 @@ function phone84(p) {
  */
 export async function sendZnsNhacLich(phone, { ten, ngay_hen, maKH } = {}) {
   if (!isZnsEnabled()) return false;
+  // VÁ 19/07 (khung giờ): hàm này là FALLBACK khi sendCareMessages hụt kênh OA
+  // (billengine.js d6/d7, rebillengine.js g2_pre*). Gác giờ mới ở care-send.js trả false
+  // ban đêm → nếu ZNS không gác, tin đêm chỉ ĐỔI ĐƯỜNG sang ZNS chứ không bị chặn.
+  // Hoãn (return false) để lượt cron trong khung giờ gửi lại.
+  if (!trongKhungGio()) {
+    console.warn(`[zns] ⏰ ${gioVN()}h giờ VN ngoài khung 7–21 → HOÃN ZNS nhắc lịch`);
+    return false;
+  }
   const sdt = phone84(phone);
   if (!sdt || !ngay_hen) return false;
   // Chọn template bằng ENV ZNS_TEMPLATE_NHACLICH → gửi CẢ HAI khoá mã KH để khớp cả 2 mẫu:
@@ -145,9 +215,11 @@ export async function sendZnsNhacLich(phone, { ten, ngay_hen, maKH } = {}) {
       r = await goi();
     }
     if (r.data?.error === 0) {
+      ghiSoEchoZns(phone, [ten, ngay_hen]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
       console.log(`[zns] ✅ nhắc lịch ${ngay_hen} tới ${sdt.slice(0, 5)}*** (msg_id ${r.data?.data?.msg_id || '?'})`);
       return true;
     }
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] gửi nhắc lịch lỗi:', JSON.stringify(r.data).slice(0, 200));
     return false;
   } catch (err) {
@@ -195,9 +267,11 @@ export async function sendZnsXacNhanLich(phone, { ten, gio_hen, maDatLich, loai 
       store.setKV(dkey, String(Math.floor(Date.now() / 1000)));
       // TTL mềm: xoá key sau 5' để lịch mới (giờ khác) hoặc đặt lại vẫn gửi được
       setTimeout(() => { try { store.delKV(dkey); } catch { /* bỏ qua */ } }, 5 * 60 * 1000);
+      ghiSoEchoZns(phone, [ten, gio_hen]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
       console.log(`[zns] 📅 xác nhận đặt lịch ${gio_hen} tới ${sdt.slice(0, 5)}***`);
       return { ok: true };
     }
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] xác nhận lịch lỗi:', JSON.stringify(r.data).slice(0, 200));
     return { ok: false, ly_do: `zalo_loi_${r.data?.error}` };
   } catch (err) {
@@ -235,9 +309,11 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
     if (r.data?.error === 0) {
       store.setKV(key, String(Math.floor(Date.now() / 1000)));
       tangTag3(sdt); // rating cũng là Tag3 → đếm gộp chống dội trần 4 tin/số/tháng
+      ghiSoEchoZns(phone, [ten]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
       console.log(`[zns] ⭐ gửi form đánh giá tới ${sdt.slice(0, 5)}*** (van xả complain về kênh kín)`);
       return true;
     }
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] gửi rating lỗi:', JSON.stringify(r.data));
     return false;
   } catch (err) {
@@ -308,10 +384,12 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
         phat_luc: now, het_han: now + VOUCHER_HSD_NGAY * 86400,
         da_dung: false, dung_luc: null,
       }));
+      ghiSoEchoZns(phone, [ten, voucher_code]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
       console.log(`[zns] 🎁 gửi voucher ${voucher_code} (${ct.toUpperCase()}) tới ${sdt.slice(0, 5)}*** (HSD ${VOUCHER_HSD_NGAY} ngày)`);
       return { ok: true, voucher_code, chuong_trinh: ct };
     }
     // Log ĐẦY ĐỦ error thô (workflow 18/07: .slice(200) cắt mất error_message phân biệt -1472 mức-user vs mức-OA)
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] gửi voucher lỗi:', JSON.stringify(r.data));
     return { ok: false, ly_do: `zalo_loi_${r.data?.error}`, zalo_raw: r.data };
   } catch (err) {
@@ -353,7 +431,11 @@ export async function sendZnsDanDo(phone, { ten, ma_phieu, ngay_dt } = {}) {
   try {
     let r = await goi();
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
-    if (r.data?.error === 0) { console.log(`[zns] 💊 dặn dò sau điều trị → ${sdt.slice(0, 5)}***`); return true; }
+    if (r.data?.error === 0) {
+      ghiSoEchoZns(phone, [ten, ma_phieu]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
+      console.log(`[zns] 💊 dặn dò sau điều trị → ${sdt.slice(0, 5)}***`); return true;
+    }
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] dặn dò lỗi:', JSON.stringify(r.data).slice(0, 200));
     return false;
   } catch (err) { console.warn('[zns] dặn dò API lỗi:', err?.message); return false; }
@@ -388,7 +470,11 @@ export async function sendZnsKetQua(phone, { ten, ma_ho_so, ma_phieu, ngay_kham 
   try {
     let r = await goi();
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
-    if (r.data?.error === 0) { console.log(`[zns] 📋 báo kết quả đã có → ${sdt.slice(0, 5)}***`); return true; }
+    if (r.data?.error === 0) {
+      ghiSoEchoZns(phone, [ten, ma_ho_so]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
+      console.log(`[zns] 📋 báo kết quả đã có → ${sdt.slice(0, 5)}***`); return true;
+    }
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] kết quả lỗi:', JSON.stringify(r.data).slice(0, 200));
     return false;
   } catch (err) { console.warn('[zns] kết quả API lỗi:', err?.message); return false; }
@@ -442,6 +528,12 @@ export function isQuanTamOAEnabled() {
  */
 export async function sendZnsQuanTamOA(phone, { ten } = {}) {
   if (!isQuanTamOAEnabled()) return false;
+  // VÁ 19/07 (khung giờ): fallback của chạm d0/d1 khi mù kênh OA (billengine.js).
+  // Cùng lý do sendZnsNhacLich — không gác thì tin đêm chỉ đổi đường sang ZNS.
+  if (!trongKhungGio()) {
+    console.warn(`[zns] ⏰ ${gioVN()}h giờ VN ngoài khung 7–21 → HOÃN ZNS mời quan tâm OA`);
+    return false;
+  }
   const sdt = phone84(phone);
   if (!sdt) return false;
   if (!tag3ConQuota(sdt)) return false; // chống -1472: đã đủ 4 tin Tag3/tháng
@@ -454,7 +546,12 @@ export async function sendZnsQuanTamOA(phone, { ten } = {}) {
   try {
     let r = await goi();
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
-    if (r.data?.error === 0) { tangTag3(sdt); console.log(`[zns] 👋 mời quan tâm OA → ${sdt.slice(0, 5)}***`); return true; }
+    if (r.data?.error === 0) {
+      tangTag3(sdt);
+      ghiSoEchoZns(phone, [ten]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
+      console.log(`[zns] 👋 mời quan tâm OA → ${sdt.slice(0, 5)}***`); return true;
+    }
+    xuLyLoiZalo(sdt, r.data); // -118 → ghi cờ no_zalo, ngừng quay vô hạn
     console.warn('[zns] mời quan tâm OA lỗi:', JSON.stringify(r.data));
     return false;
   } catch (err) { console.warn('[zns] mời quan tâm OA API lỗi:', err?.message); return false; }

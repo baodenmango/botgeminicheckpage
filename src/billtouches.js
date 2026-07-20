@@ -114,9 +114,30 @@ export const BILL_TOUCHES = [
  * @param {object} bill  { condition, hasMedicine, hasInjection, name }
  * @returns {string[]|null}
  */
+// CHỐT AN TOÀN Y KHOA 20/07/2026 (ca chị Kim Thiền, Zalo OA 18:10):
+// khách ĐANG ĐẶT LỊCH khám 22/7 (chưa đến khám, chưa tiêm gì) mà engine bắn chạm d1
+// "sau tiêm 1-2 hôm vùng tiêm hơi sưng tức..." — lời dặn HẬU THỦ THUẬT cho người chưa
+// làm thủ thuật. Gốc: cờ hasInjection tới từ suy đoán MEDi (posingest.js:134
+// treatment ~ prp_khop|sinh_hoc), KHÔNG phải xác nhận đã tiêm thật.
+// Anh Trình chốt 20/07: "ca nào TIỀN là có tiêm" → tín hiệu đáng tin = bill CÓ TIỀN
+// (billAmount>0, cùng luật posingest.js:113 total_price>0), không phải suy từ chẩn đoán.
+// Thiếu bằng chứng tiền → HẠ CẤP về lời dặn trung tính, TUYỆT ĐỐI không nói "sau tiêm".
+function coBangChungDaTiem(bill) {
+  if (!bill?.hasInjection) return false;
+  const tien = Number(bill.billAmount ?? bill.total_price ?? bill.tien ?? 0);
+  return tien > 0;
+}
+
 export function buildBillMessages(code, bill) {
   const t = BILL_TOUCHES.find((x) => x.code === code);
   if (!t) return null;
-  const msgs = t.build(bill || {});
+  const b = { ...(bill || {}) };
+  // Hạ cờ tiêm khi chưa có bill tiền chứng minh → cham0/cham1 tự rẽ nhánh lời dặn thuốc/trung tính.
+  if (b.hasInjection && !coBangChungDaTiem(b)) {
+    console.warn(`[billtouches] ⛔ chặn lời dặn SAU TIÊM cho ca chưa có bill tiền `
+      + `(chạm ${code}, bệnh ${b.condition || '?'}, tiền ${b.billAmount ?? 'null'}) → hạ cờ hasInjection`);
+    b.hasInjection = false;
+  }
+  const msgs = t.build(b);
   return Array.isArray(msgs) && msgs.length ? msgs.slice(0, 4) : null;
 }

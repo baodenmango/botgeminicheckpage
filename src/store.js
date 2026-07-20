@@ -57,6 +57,11 @@ try {
   if (!cols.includes('booking_notified')) {
     db.exec('ALTER TABLE conversations ADD COLUMN booking_notified INTEGER DEFAULT 0');
   }
+  // VÁ 20/07/2026 — cột XÁC NHẬN người thật (xem markHumanTaken/isHumanActive bên dưới).
+  // Cờ human giờ có 2 mức: TẠM NGHI (mới đánh, hold ngắn) và ĐÃ XÁC NHẬN (có tin page thứ 2 → hold dài).
+  if (!cols.includes('human_confirmed_at')) {
+    db.exec('ALTER TABLE conversations ADD COLUMN human_confirmed_at INTEGER');
+  }
   // Cột cho hệ chăm sóc Zalo OA (bước 2–7).
   if (!cols.includes('channel'))        db.exec('ALTER TABLE conversations ADD COLUMN channel TEXT');
   if (!cols.includes('zalo_user_id'))   db.exec('ALTER TABLE conversations ADD COLUMN zalo_user_id TEXT');
@@ -544,21 +549,56 @@ export function isOptedOut(conv) {
 }
 
 // Đánh dấu NGƯỜI THẬT (telesale) vừa gõ tay vào hội thoại này.
+//
+// === VÁ 20/07/2026 — CỜ HUMAN 2 MỨC (ca 14 hội thoại chưa đọc tối 20/07) ===
+// Ca lỗi thật: 19 lần "[handler] 👤 ... telesale gõ tay → bot LUI" trên 13 hội thoại trong 85',
+// NHƯNG giao diện Pancake ghi "Chưa có người xem" = KHÔNG CÓ NGƯỜI NÀO CẢ. Khách hỏi đúng ý định
+// mua (Hiên Thi Vu 20:03 "tiêm về bao nhiêu tiền", Nguyễn Oanh 20:02 "bn tiền 1 mũi tiêm",
+// Rose Rose 20:02 "60 tuổi thoái hóa khớp gối") mà bot đã tự khoá mình → không ai trả lời.
+//
+// GỐC: handlePageMessage là chuỗi cửa MIỄN TRỪ, nhánh cuối là "không chứng minh được là bot ⇒ là
+// người". Tập "tin page không chứng minh được là bot" là tập MỞ (ZNS, sendFileByUrl, đường gửi mới
+// thêm sau này...) → thêm cửa miễn trừ thứ 8, 9, 10 là đuổi theo tập vô hạn, không bao giờ hết.
+//
+// CHỮA: cờ human không còn là khoá cứng 1 mức. Nó chia 2 mức:
+//   - TẠM NGHI (human_taken_at, chưa confirmed): mới thấy 1 tin page lạ → hold RẤT NGẮN
+//     (HUMAN_PROBATION_MIN, mặc định 5' khớp SLA lead ≤5'). Cờ oan tự chết sau 5', KHÔNG cần
+//     chờ rescue, KHÔNG cần vân tay nào bắt đúng.
+//   - ĐÃ XÁC NHẬN (human_confirmed_at): thấy tin page LẠ THỨ HAI trong cùng hội thoại → gần như
+//     chắc chắn người thật (người gõ tay hầu như luôn gõ >1 tin; echo tin chăm chỉ dội 1 lần/tin).
+//     Lúc này mới hold đủ dài (HUMAN_HOLD_HOURS) để không chen ngang telesale.
+// Thà bot trả lời thừa 1 lượt còn hơn bỏ rơi lead đã trả tiền quảng cáo.
 export function markHumanTaken(conversationId) {
-  db.prepare('UPDATE conversations SET human_taken_at = ? WHERE conversation_id = ?')
-    .run(nowSec(), String(conversationId));
+  const cid = String(conversationId);
+  const now = nowSec();
+  const row = db.prepare('SELECT human_taken_at, human_confirmed_at FROM conversations WHERE conversation_id = ?').get(cid);
+  // Tin page lạ THỨ HAI trong khi cờ tạm nghi còn hiệu lực → nâng lên ĐÃ XÁC NHẬN.
+  // (Cờ cũ đã hết hạn tạm nghi thì coi như lượt mới, quay lại mức tạm nghi.)
+  const conNghi = row && row.human_taken_at && row.human_taken_at > now - Math.floor(probationSec() * 2);
+  const len2 = Boolean(conNghi);
+  db.prepare('UPDATE conversations SET human_taken_at = ?, human_confirmed_at = ? WHERE conversation_id = ?')
+    .run(now, len2 ? now : (row?.human_confirmed_at || null), cid);
+  return { confirmed: len2 };
+}
+
+// Cửa sổ "tạm nghi" (giây). Mặc định 5 phút — khớp SLA gọi lead ≤5' của phòng khám:
+// khách hỏi mà không ai trả lời quá 5' là KHÔNG chấp nhận được.
+function probationSec() {
+  return Math.max(60, parseFloat(process.env.HUMAN_PROBATION_MIN || '5') * 60);
 }
 
 // Gỡ cờ "người giữ" cho 1 hội thoại (bot được tiếp quản lại ngay). Dùng khi cờ bị đánh nhầm.
 export function clearHumanTaken(conversationId) {
-  const r = db.prepare('UPDATE conversations SET human_taken_at = NULL WHERE conversation_id = ?')
+  // VÁ 20/07: xoá CẢ human_confirmed_at — nếu chỉ xoá human_taken_at thì lần đánh cờ sau
+  // (dù là echo oan) sẽ thấy conv vẫn "đã xác nhận" và khoá thẳng holdHours, không qua tạm nghi.
+  const r = db.prepare('UPDATE conversations SET human_taken_at = NULL, human_confirmed_at = NULL WHERE conversation_id = ?')
     .run(String(conversationId));
   return r.changes;
 }
 
 // Gỡ cờ "người giữ" cho TẤT CẢ hội thoại (dọn sạch cờ kẹt do bug). Trả về số dòng đổi.
 export function clearAllHumanTaken() {
-  const r = db.prepare('UPDATE conversations SET human_taken_at = NULL WHERE human_taken_at IS NOT NULL').run();
+  const r = db.prepare('UPDATE conversations SET human_taken_at = NULL, human_confirmed_at = NULL WHERE human_taken_at IS NOT NULL').run();
   return r.changes;
 }
 
@@ -570,11 +610,23 @@ export function clearHandover(conversationId) {
   return r.changes;
 }
 
-// Telesale có đang "giữ" hội thoại không? (đã gõ tay trong vòng holdHours giờ)
-// → true thì bot IM, để người thật xử. Quá holdHours không gõ thêm → bot được tiếp quản lại.
+// Telesale có đang "giữ" hội thoại không?
+// → true thì bot IM, để người thật xử.
+//
+// VÁ 20/07/2026 (ca 14 hội thoại chưa đọc, khách hỏi giá tiêm 19:47–20:05 không ai rep):
+// hiệu lực cờ phụ thuộc MỨC (xem markHumanTaken):
+//   - chưa xác nhận (tạm nghi, chỉ mới 1 tin page lạ) → chỉ giữ HUMAN_PROBATION_MIN phút (mặc định 5').
+//   - đã xác nhận (2 tin page lạ) → giữ đủ holdHours như cũ.
+// Mặc định holdHours đổi 6 → 2 để KHỚP với handler.js:130 (trước đây store mặc định 6, handler
+// truyền 2, rescue/index truyền 6 → ba giá trị chạy song song, cùng một cờ mà hết hạn ba lúc khác nhau).
 export function isHumanActive(conv, holdHours) {
   if (!conv || !conv.human_taken_at) return false;
-  const cutoff = nowSec() - Math.floor((holdHours || 6) * 3600);
+  const now = nowSec();
+  if (!conv.human_confirmed_at) {
+    // TẠM NGHI: cờ oan tự chết sau vài phút, khách nhắn lượt sau là bot trả lời lại ngay.
+    return conv.human_taken_at > now - Math.floor(probationSec());
+  }
+  const cutoff = now - Math.floor((holdHours || 2) * 3600);
   return conv.human_taken_at > cutoff;
 }
 
@@ -619,9 +671,12 @@ export function markTouchDone(conversationId, touchNo) {
  * @param {number} graceHours  trễ tối đa cho phép sau mốc (tránh gửi chạm quá muộn)
  * @param {number} windowHours cửa sổ tổng (mặc định 48h)
  */
-export function findTouchTargets(touchNo, hours, holdHours = 6, graceHours = 6, windowHours = 48) {
+export function findTouchTargets(touchNo, hours, holdHours = 2, graceHours = 6, windowHours = 48) {
   const now = nowSec();
   const humanCutoff = now - Math.floor(holdHours * 3600);
+  // VÁ 20/07: cờ TẠM NGHI (chưa xác nhận) chỉ chặn vài phút, không chặn cả holdHours — nếu không,
+  // 1 echo tin chăm oan là khoá luôn cả chuỗi 7 chạm hàng giờ. Xem markHumanTaken/isHumanActive.
+  const probationCutoff = now - Math.floor(probationSec());
   const earliest = now - Math.floor((hours + graceHours) * 3600); // vào sớm nhất (đã quá mốc nhưng chưa quá grace)
   const latest = now - Math.floor(hours * 3600);                   // vào muộn nhất (vừa tới mốc)
   const windowEarliest = now - Math.floor(windowHours * 3600);     // không chạm lead cũ hơn cửa sổ
@@ -632,8 +687,18 @@ export function findTouchTargets(touchNo, hours, holdHours = 6, graceHours = 6, 
       AND created_at >= ?              -- còn trong cửa sổ 48h
       AND created_at <= ?              -- đã qua mốc T+hours
       AND created_at >= ?              -- chưa quá mốc + grace (đừng gửi quá muộn)
-      AND (human_taken_at IS NULL OR human_taken_at <= ?)
-  `).all(windowEarliest, latest, earliest, humanCutoff);
+      -- VÁ 20/07/2026 — SQL PHẢI KHỚP isHumanActive(), nếu không cờ 2 mức chỉ đúng nửa hệ:
+      --   cờ ĐÃ XÁC NHẬN (human_confirmed_at có) → chặn đủ holdHours (người thật đang xử, đừng chen).
+      --   cờ TẠM NGHI    (human_confirmed_at NULL) → CHỈ chặn probationSec (mặc định 5').
+      -- Trước vá: mọi cờ đều bị đo bằng humanCutoff → 1 echo tin chăm oan khoá cả chuỗi 7 chạm
+      -- suốt holdHours, đúng ca 19 lần đánh cờ oan/13 hội thoại tối 20/07 (Pancake ghi "Chưa có
+      -- người xem" = không có người nào cả).
+      AND (
+        human_taken_at IS NULL
+        OR (human_confirmed_at IS NOT NULL AND human_taken_at <= ?)
+        OR (human_confirmed_at IS NULL     AND human_taken_at <= ?)
+      )
+  `).all(windowEarliest, latest, earliest, humanCutoff, probationCutoff);
   // lọc chạm đã gửi ở tầng JS (touch_done là JSON, khó query SQL)
   return rows
     .map((r) => ({ ...r, history: JSON.parse(r.history || '[]') }))
@@ -660,17 +725,28 @@ export function isHandled(conv) {
  * chưa có SĐT, chưa handover, khách im >= minIdleHours, retouch_count < maxCount,
  * VÀ không đang có người thật giữ (telesale gõ tay / chốt lịch trong holdHours qua).
  */
-export function findRetouchTargets(minIdleHours, maxCount, holdHours = 6) {
-  const cutoff = nowSec() - Math.floor(minIdleHours * 3600);
-  const humanCutoff = nowSec() - Math.floor(holdHours * 3600);
+// VÁ 20/07/2026: mặc định holdHours 6 → 2 (khớp handler.js:130, index.js cron retouch,
+// rescueLead.js, .env.example). Ba giá trị chạy song song là cùng một cờ mà hết hạn ba lúc khác nhau.
+export function findRetouchTargets(minIdleHours, maxCount, holdHours = 2) {
+  const now = nowSec();
+  const cutoff = now - Math.floor(minIdleHours * 3600);
+  const humanCutoff = now - Math.floor(holdHours * 3600);
+  // Cờ TẠM NGHI chỉ chặn vài phút — xem findTouchTargets/isHumanActive.
+  const probationCutoff = now - Math.floor(probationSec());
   const rows = db.prepare(`
     SELECT * FROM conversations
     WHERE status = 'active' AND phone_captured = 0
       AND last_customer_msg_at IS NOT NULL
       AND last_customer_msg_at <= ?
       AND retouch_count < ?
-      AND (human_taken_at IS NULL OR human_taken_at <= ?)
-  `).all(cutoff, maxCount, humanCutoff);
+      -- VÁ 20/07/2026 — khớp isHumanActive (2 mức). Đây là đường chạm lại lead CHƯA CÓ SĐT:
+      -- để nguyên 1 mức thì echo tin chăm oan = lead nóng nằm im hết holdHours, không ai vớt.
+      AND (
+        human_taken_at IS NULL
+        OR (human_confirmed_at IS NOT NULL AND human_taken_at <= ?)
+        OR (human_confirmed_at IS NULL     AND human_taken_at <= ?)
+      )
+  `).all(cutoff, maxCount, humanCutoff, probationCutoff);
   return rows.map((r) => ({ ...r, history: JSON.parse(r.history || '[]') }));
 }
 

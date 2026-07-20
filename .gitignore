@@ -16,3 +16,8 @@ data/
 npm-debug.log*
 *.log
 .bak/
+
+# Script chạy trên MÁY MAC, chứa ADMIN_TOKEN thật — KHÔNG đẩy lên GitHub (chốt 20/07)
+scripts/phu-voucher-hang-ngay.sh
+logs/
+scripts/.pancake-stub.mjs

@@ -108,7 +108,12 @@ export async function runSevenTouch() {
   let botSent = 0;   // riêng số tin BOT tự gửi — áp cap cold-start
   const pageIds = Object.keys(config.pancakePages);
   for (const pageId of pageIds) {
-    if (!isPageEnabled(pageId)) continue;
+    // VÁ 20/07/2026: trước đây `continue` IM LẶNG → page rụng token thì cả engine 7 CHẠM bỏ qua
+    // page đó mà không một dòng log (lead nóng nằm chết, không ai đo được). Nay kêu rõ.
+    if (!isPageEnabled(pageId)) {
+      console.error(`[7cham] ⛔ BỎ page ${pageId}: chưa bật bot/thiếu token → lead của page này KHÔNG được chạm.`);
+      continue;
+    }
     const leads = await getLeads(pageId);
     for (const c of leads) {
       const convId = c.id;

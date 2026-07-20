@@ -6,8 +6,11 @@ import cron from 'node-cron';
 
 import { config, checkConfig } from './src/config.js';
 import { handleIncoming, handleRetouch, handlePageMessage } from './src/handler.js';
-import { isPageEnabled, getLastCustomerMessage } from './src/pancake.js';
-import { isCommentEvent } from './src/comment.js'; // chỉ để NHẬN DIỆN comment và bỏ qua (Meta lo rep comment)
+// tuCuuPageThieuToken: tự xin lại token cho page rụng token (vá 20/07 — cửa webhook vứt tin khách).
+import { isPageEnabled, getLastCustomerMessage, tuCuuPageThieuToken } from './src/pancake.js';
+// NHẬN DIỆN comment để bỏ qua (Meta lo rep) + parseComment/handleComment làm ĐƯỜNG DỰ PHÒNG
+// bật bằng env COMMENT_BOT_ENABLED=1 khi Automation Meta chết (vá 20/07 — xem /webhook).
+import { isCommentEvent, parseComment, handleComment } from './src/comment.js';
 import * as store from './src/store.js';
 import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
@@ -1176,27 +1179,87 @@ app.post('/webhook', (req, res) => {
   res.status(200).json({ received: true });
 
   try {
-    // COMMENT dưới bài → BỎ QUA HẲN. Việc rep comment + kéo vào inbox đã do
-    // META BUSINESS SUITE (Automation "Bình luận để nhắn tin") lo. Bot Gemini KHÔNG đụng
-    // comment nữa để tránh TRÙNG + tránh lỗi sai tham số Pancake (action private_replies /
-    // thiếu message_id — đã thấy hụt trong log 29/06). comment.js giữ lại làm dự phòng,
-    // chỉ KHÔNG gọi. Vẫn phải nhận diện để comment không rơi xuống parse như tin inbox.
+    // COMMENT dưới bài → mặc định vẫn để META BUSINESS SUITE (Automation "Bình luận để nhắn
+    // tin") lo phần rep, bot Gemini chỉ xử inbox (tránh TRÙNG + tránh lỗi tham số Pancake
+    // action private_replies đã thấy hụt trong log 29/06).
+    //
+    // VÁ 20/07/2026 — CỬA MÙ NGUY HIỂM NHẤT: trước đây chỗ này `return` KHÔNG log dòng nào.
+    // Nếu Automation Meta bị tắt/hỏng/hết quota, TOÀN BỘ luồng comment chết mà không ai đo được,
+    // và không có một dòng log nào để lần ra. Nay: LUÔN LOG mọi event bị bỏ (kèm page + trích
+    // nội dung) để soi log Render đếm được ngay "hôm nay bỏ bao nhiêu comment".
     if (isCommentEvent(req.body)) {
-      return; // Meta lo comment; bot chỉ xử inbox
+      let cmt = null;
+      try { cmt = parseComment(req.body); } catch {}
+      const trich = String(cmt?.commentText || '').slice(0, 60);
+      if (cmt?.fromPage) {
+        console.log(`[comment] ↩︎ bỏ qua comment do CHÍNH PAGE đăng (page ${cmt.pageId})`);
+        return;
+      }
+      // Công tắc CHẠY LẠI luồng comment của bot khi Automation Meta chết (mặc định TẮT = giữ
+      // nguyên hành vi hiện tại, không tự dưng rep song song với Meta gây trùng).
+      // Bật bằng env COMMENT_BOT_ENABLED=1 sau khi anh Bảo xác nhận đã tắt Automation bên Meta.
+      if (process.env.COMMENT_BOT_ENABLED === '1' && cmt) {
+        console.log(`[comment] 🔛 COMMENT_BOT_ENABLED=1 → bot tự xử comment ${cmt.commentId} (page ${cmt.pageId}): "${trich}"`);
+        handleComment(cmt); // không await — chạy nền, tự idempotent qua handled_comments
+        return;
+      }
+      console.log(`[comment] ⏭️  BỎ QUA comment (Meta Automation lo rep) — page=${cmt?.pageId || '?'}`
+        + ` comment=${cmt?.commentId || '?'} conv=${cmt?.conversationId || '?'}`
+        + ` khách="${cmt?.customerName || '?'}" nội dung="${trich}"`);
+      return;
     }
 
     const ev = parsePancakeWebhook(req.body);
     if (!ev) {
-      // DEBUG tạm (gỡ sau khi đấu xong Zalo): log gọn payload không parse được để bắt format Zalo.
+      // VÁ 20/07/2026 (ca 14 hội thoại chưa đọc, khách hỏi giá tiêm 19:47–20:05 không ai rep):
+      // Cửa này TỪNG câm một nửa — log cũ chỉ in KHI `pid` có giá trị. Nghĩa là đúng ca đáng sợ
+      // nhất (Pancake đổi tên trường page_id, hoặc payload kênh lạ) thì tin khách bốc hơi KHÔNG
+      // một dòng log — soi log Render cả buổi cũng không thấy gì, y hệt triệu chứng anh Trình báo.
+      // Nay LUÔN log, và nói rõ THIẾU TRƯỜNG NÀO (parsePancakeWebhook:1141 return null vì 1 trong
+      // 3: conversationId / pageId / messageText) để lần sau nhìn 1 dòng là biết vá chỗ nào.
       try {
         const b = req.body?.data || req.body || {};
-        const pid = b.message?.page_id || b.page_id || b.conversation?.page_id;
-        if (pid) console.log(`[webhook][raw] không parse được — page_id=${pid} keys=${Object.keys(b).join(',')}`);
-      } catch {}
+        const m = (b.message && typeof b.message === 'object') ? b.message : b;
+        const c = (b.conversation && typeof b.conversation === 'object') ? b.conversation : {};
+        const pid = m.page_id || b.page_id || c.page_id || null;
+        const cid = m.conversation_id || c.id || b.conversation_id || null;
+        const coChu = Boolean(m.message || m.text || c.snippet);
+        const thieu = [!cid && 'conversationId', !pid && 'pageId', !coChu && 'nội dung tin']
+          .filter(Boolean).join(' + ') || 'không rõ (đủ trường mà vẫn null)';
+        // Có conv + có chữ mà vẫn rớt = KHÁCH THẬT đang bị vứt → mức ERROR để lọc log nhanh.
+        const mucError = Boolean(cid && coChu);
+        const dong = `[webhook][raw] ⛔ KHÔNG PARSE ĐƯỢC → BỎ TIN — thiếu: ${thieu}`
+          + ` | page=${pid || '?'} conv=${cid || '?'} keys=${Object.keys(b).join(',')}`;
+        if (mucError) console.error(dong + ' 🔴 NGHI TIN KHÁCH THẬT BỊ VỨT');
+        else console.log(dong);
+      } catch (e) {
+        console.error('[webhook][raw] ⛔ bỏ tin, và log chẩn đoán cũng lỗi:', e?.message || e);
+      }
       return; // payload không đủ → bỏ qua
     }
+    // VÁ 20/07/2026 — ĐÂY LÀ CỬA TIN KHÁCH CHẾT TỐI 20/07 (ảnh Pancake 20:05: 14 hội thoại CHƯA
+    // ĐỌC, khách hỏi giá tiêm khớp gối 19:47→20:05 mà "Chưa có người xem"). Page thiếu token lúc
+    // boot → isPageEnabled=false → MỌI tin của page rơi vào đây, cũ chỉ in console.log mức
+    // thường, KHÔNG chuông, KHÔNG tự cứu → im lặng cả buổi tối.
+    // Nay: log mức ERROR kèm tên khách + trích tin (soi log Render đếm được ai rơi), rồi THỬ TỰ
+    // CỨU page bằng USER token; cứu được thì XỬ LUÔN tin này, khách chỉ chờ thêm vài giây thay vì
+    // mất trắng. Không cứu được thì tin vẫn còn lưới rescue 5' vớt (đã kêu đỏ ở đó).
     if (!isPageEnabled(ev.pageId)) {
-      console.log(`[webhook] page ${ev.pageId} chưa bật bot → bỏ qua`);
+      console.error(`[webhook] ⛔ page ${ev.pageId} chưa bật bot/THIẾU TOKEN → tin khách đang bị vứt. `
+        + `conv=${ev.conversationId} khách="${ev.customerName || ev.customerId || '?'}" `
+        + `tin="${String(ev.messageText || '').slice(0, 60)}" → thử tự cứu page…`);
+      tuCuuPageThieuToken()
+        .then(({ cuuDuoc }) => {
+          if (!isPageEnabled(ev.pageId)) {
+            console.error(`[webhook] ❌ KHÔNG cứu được page ${ev.pageId} → conv ${ev.conversationId} CHƯA ĐƯỢC TRẢ LỜI. `
+              + `Nạp token ngay: POST /admin/set-token?page=${ev.pageId} (cron rescue 5' sẽ vớt lại sau khi có token).`);
+            return;
+          }
+          console.log(`[webhook] ✅ đã cứu page ${ev.pageId} (${cuuDuoc.join(', ')}) → xử tiếp tin của conv ${ev.conversationId} ngay.`);
+          if (ev.fromPage) handlePageMessage(ev);
+          else handleIncoming(ev);
+        })
+        .catch((err) => console.error('[webhook] lỗi khi tự cứu page:', err?.message || err));
       return;
     }
     // Tin TỪ PAGE: nếu là telesale gõ tay → đánh dấu "người tiếp quản" (bot lui).
@@ -1222,13 +1285,20 @@ cron.schedule('3,13,23,33,43,53 * * * *', async () => {
 // Nhịp dập "nóng vừa" (im ~24' → dập): cron 10' để độ trễ bám mốc còn ≤10' thay vì ~15'.
 cron.schedule('*/10 * * * *', async () => {
   try {
-    const holdHours = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+    // VÁ 20/07/2026 — ĐỒNG BỘ MẶC ĐỊNH 6 → 2 (khớp handler.js:130 + .env.example:91 + rescueLead.js).
+    // Còn để '6' thì khi env Render thiếu HUMAN_HOLD_HOURS, findRetouchTargets loại hội thoại có cờ
+    // human suốt 6h trong khi handler đã coi cờ chết từ 2h → khách im 4h KHÔNG được chạm lại lần nào.
+    const holdHours = parseFloat(process.env.HUMAN_HOLD_HOURS || '2');
     const targets = store.findRetouchTargets(config.retouch.minIdleHours, config.retouch.maxCount, holdHours);
     if (targets.length === 0) return;
     console.log(`[cron] ${targets.length} hội thoại cần chạm lại`);
     for (const conv of targets) {
       // chỉ chạm lại trang đang bật bot
-      if (!isPageEnabled(conv.page_id)) continue;
+      // VÁ 20/07/2026: `continue` câm ở đây = lead nguội bị bỏ chạm mà không ai biết. Log rõ.
+      if (!isPageEnabled(conv.page_id)) {
+        console.warn(`[cron] ⛔ BỎ chạm lại conv ${conv.conversation_id}: page ${conv.page_id} chưa bật bot/thiếu token.`);
+        continue;
+      }
       await handleRetouch(conv);
     }
   } catch (err) {

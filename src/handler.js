@@ -103,8 +103,31 @@ function isAutoReplyMessage(text) {
   return AUTO_REPLY_EXACT.includes(bare);
 }
 
+// VÂN TAY BOT (vá 20/07 — ca 13 hội thoại cờ human oan trong 85' log Render): lưới an toàn TẦNG 2
+// sau khi bịt lỗ sổ echo ở care-send.js. Tin page mang dấu hiệu CHỈ BOT MỚI CÓ thì tuyệt đối không
+// đánh cờ human, kể cả sổ echo trượt (restart mất RAM + kv chưa kịp ghi, Pancake đổi text...).
+// Giữ danh sách HẸP: telesale thật cũng có thể dán link sale page khi tư vấn tay → chặn nhầm chỉ
+// làm bot chạy song song người (thừa tin), còn đánh cờ oan là khách bị bỏ rơi 6h. Thà thừa còn hơn bỏ rơi.
+// Chỉnh qua env CARE_FINGERPRINTS (phân tách |, so sau khi bỏ dấu + thường hoá).
+// (dùng ||, và env để RỖNG thì rơi về mặc định — .env.example có dòng CARE_FINGERPRINTS= trống,
+//  nếu tôn trọng chuỗi rỗng sẽ vô hiệu hoá lưới an toàn mà không ai biết.)
+const CARE_FINGERPRINTS = ((process.env.CARE_FINGERPRINTS || '').trim() ||
+  'phongkhamhieploi.vn|bac si trinh gui anh/chi|phong kham co xuong khop hiep loi xin chao' +
+  '|em ben phong kham hiep loi|nhac lich tai kham|sau buoi dieu tri hom'
+).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
+function laVanTayBot(text) {
+  const n = String(text || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
+    .toLowerCase();
+  if (!n.trim()) return false;
+  return CARE_FINGERPRINTS.some((m) => n.includes(m));
+}
+
 // Số giờ telesale "giữ" hội thoại sau khi gõ tay (quá thì bot tiếp quản lại).
-const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '6');
+// VÁ 20/07: hạ mặc định 6h → 2h. Cờ human oan khoá luôn cả retouch (handler.js ~650) + 2 truy vấn
+// engine chạm (store.js) → 1 cờ sai = 6h khách bị bỏ rơi. Telesale thật gõ tay thường xử dứt ≤2h;
+// ca đã gắn nhãn "đã đặt lịch/telesale xử" vẫn bị chặn độc lập ở hasStopLabel nên không bị chen ngang.
+const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '2');
 
 // --- KHÁCH TỰ BÁO "ĐÃ ĐẾN KHÁM" (ca Loan Le 07/07) ---
 // SOP quầy: nhân viên cầm máy bệnh nhân bấm Quan tâm OA + nhắn "Tôi đã đến khám".
@@ -137,7 +160,12 @@ export function laConvDaKham(conversationId) {
 export async function handlePageMessage(ev) {
   const { conversationId, pageId, messageText, aiGenerated } = ev;
   if (!conversationId || !pageId) return;
-  if (!isPageEnabled(pageId)) return;
+  // VÁ 20/07/2026: `return` trần ở đây là cửa MÙ — page rụng khỏi config (thiếu token) thì
+  // KHÔNG một dòng log nào ghi lại việc bỏ tin. Luôn log kèm convId để đếm được trên log Render.
+  if (!isPageEnabled(pageId)) {
+    console.warn(`[handler] ⛔ BỎ tin PAGE conv ${conversationId}: page ${pageId} chưa bật bot / thiếu token (xem [config] 🔴).`);
+    return;
+  }
   if (aiGenerated) return; // tin AI/hệ thống (Meta transfer...) — bỏ qua
   // Tin page CHỈ CÓ ẢNH/TỆP (không chữ): là card ảnh của Meta automation/Botcake gửi kèm câu chào.
   // ĐỪNG đánh cờ human — placeholder '[khách vừa gửi một hình ảnh/tệp]' dài 29 ký tự từng vượt
@@ -171,10 +199,19 @@ export async function handlePageMessage(ev) {
     console.log(`[handler] ${conversationId}: tin page quá ngắn ("${messageText.slice(0,20)}") → KHÔNG coi là telesale gõ tay`);
     return;
   }
+  // LỚP 4 (vá 20/07 — ca 13 hội thoại cờ human oan): tin page mang VÂN TAY chuỗi chăm/bot
+  // → không bao giờ đánh cờ, kể cả khi sổ echo trượt (restart mất RAM, Pancake đổi text).
+  // Lưới an toàn tầng 2, KHÔNG thay việc care-send phải ghi sổ echo.
+  if (laVanTayBot(messageText)) {
+    console.log(`[handler] ${conversationId}: tin page mang VÂN TAY chuỗi chăm/bot → bỏ qua, KHÔNG đánh telesale | trích: "${String(messageText).slice(0, 40)}"`);
+    return;
+  }
   // Còn lại = TELESALE GÕ TAY THẬT → đánh dấu người tiếp quản, bot lui.
+  // LOG LÝ DO + TRÍCH 40 KÝ TỰ (vá 20/07): trước đây log chỉ ghi "telesale gõ tay" nên soi log
+  // Render không biết tin nào đã đánh cờ → mất 85' mới lần ra thủ phạm là echo tin chăm.
   store.ensureConversation(conversationId, pageId, null);
   store.markHumanTaken(conversationId);
-  console.log(`[handler] 👤 ${conversationId}: telesale gõ tay → bot LUI (giữ ${HUMAN_HOLD_HOURS}h)`);
+  console.log(`[handler] 👤 ${conversationId}: telesale gõ tay → bot LUI (giữ ${HUMAN_HOLD_HOURS}h) | LÝ DO: lọt cả 6 cửa lọc (không aiGenerated / không attachment / không auto-reply / không khớp sổ echo / ngoài ${ECHO_GRACE_MS}ms echo-grace / dài ${cleaned.length}≥${HUMAN_MIN_CHARS} ký tự / không vân tay bot) | trích: "${String(messageText).slice(0, 40)}"`);
 }
 // Ngưỡng ký tự tối thiểu để coi tin page là "telesale gõ tay thật" (lọc mẩu cụt/echo).
 const HUMAN_MIN_CHARS = parseInt(process.env.HUMAN_MIN_CHARS || '12', 10);
@@ -204,8 +241,25 @@ function ensureSalePageLink(messages, condition, conv) {
 export async function handleIncoming(ev) {
   const { conversationId, pageId, customerName, messageText } = ev;
   if (!conversationId || !pageId) return;
-  if (!isPageEnabled(pageId)) return; // trang chưa bật bot → bỏ qua
-  if (!messageText || !messageText.trim()) return;
+  // VÁ 20/07/2026 — CỬA MÙ CHẾT NGƯỜI: đây là nơi TIN KHÁCH bị vứt. Ca thật 20:05 ngày 20/07:
+  // 14 hội thoại chưa đọc, khách hỏi giá tiêm khớp gối 19:47→20:05 mà "Chưa có người xem".
+  // Nếu page rụng khỏi config vì thiếu token thì mọi tin đi qua đây bốc hơi KHÔNG DẤU VẾT.
+  // Log ở mức ERROR + kèm tên khách & trích tin để soi log Render đếm được ngay khách nào rơi.
+  if (!isPageEnabled(pageId)) {
+    console.error(`[handler] ⛔ VỨT TIN KHÁCH — page ${pageId} chưa bật bot/thiếu token. conv=${conversationId} `
+      + `khách="${customerName || '?'}" tin="${String(messageText || '').slice(0, 60)}" `
+      + '→ nạp token: POST /admin/set-token?page=' + pageId);
+    return;
+  }
+  // VÁ 20/07/2026: cửa này cũng từng câm. Tin khách RỖNG chữ đáng lẽ đã được
+  // parsePancakeWebhook đổi thành placeholder ('[khách vừa gửi một hình ảnh/tệp]'), nên rơi
+  // xuống đây = có đường gọi khác (rescue/cron) đẩy vào thiếu nội dung → phải thấy được, vì
+  // mỗi ca là 1 khách im lặng không ai biết. Log WARN kèm convId để đếm trên log Render.
+  if (!messageText || !messageText.trim()) {
+    console.warn(`[handler] ⛔ BỎ tin RỖNG chữ — conv=${conversationId} page=${pageId} `
+      + `khách="${customerName || '?'}" (nguồn gọi không phải webhook? xem parsePancakeWebhook)`);
+    return;
+  }
 
   if (lockHeld(conversationId)) {
     console.log(`[handler] ${conversationId} đang xử lý → XẾP HÀNG tin mới (không vứt)`);
@@ -256,7 +310,12 @@ export async function handleIncoming(ev) {
       console.log(`[handler] ${conversationId} có nhãn chốt lịch/telesale xử → bot IM (khách vừa nhắn)`);
       store.appendHistory(conversationId, 'user', messageText);
       store.markCustomerMessaged(conversationId);
-      store.markHumanTaken(conversationId); // chặn luôn retouch về sau, khỏi gọi lại API mỗi lượt
+      // VÁ 20/07 — KHÔNG markHumanTaken ở đây nữa.
+      // Trước: mỗi tin khách nhắn lại LÀM MỚI human_taken_at → khách càng hỏi càng tự gia hạn sự im lặng
+      // của chính mình; rescue có gỡ cờ (rescueLead.js:195) thì lượt tin sau lại đóng lại = KẸT VĨNH VIỄN,
+      // và cờ human còn khoá luôn retouch + 7 chạm + engine chăm. Nhãn đã là cờ chặn ĐỘC LẬP, đọc lại
+      // mỗi lượt (có cache 15s ở getLabelNames) nên KHÔNG cần đóng thêm cờ human để "đỡ gọi API".
+      // Gỡ nhãn trên Pancake là bot tiếp quản lại NGAY, không phải chờ hết HUMAN_HOLD_HOURS.
       return;
     }
 
@@ -329,7 +388,12 @@ export async function handleIncoming(ev) {
           ];
       msgs.forEach((m) => noteBotSent(conversationId, m));
       noteBotJustSent(conversationId);
-      await sendMessages(pageId, conversationId, msgs);
+      // VÁ 20/07/2026: chỉ ghi lịch sử khi tin THẬT SỰ đi (token Pancake xoay vòng → gửi hụt).
+      const okDK = await sendMessages(pageId, conversationId, msgs);
+      if (!okDK) {
+        console.error(`[da-kham] ❌ GỬI HỤT cho ${conversationId} → không ghi lịch sử, lượt sau mời lại`);
+        return;
+      }
       store.appendHistory(conversationId, 'model', msgs.join('\n'));
       const zuidDK = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
       if (laZalo && zuidDK) sendRequestInfo(zuidDK).catch(() => {});
@@ -388,7 +452,12 @@ export async function handleIncoming(ev) {
       ];
       askAgain.forEach((m) => noteBotSent(conversationId, m));
       noteBotJustSent(conversationId); // chống race: đánh dấu bot vừa gửi (echo sắp về)
-      await sendMessages(pageId, conversationId, askAgain);
+      // VÁ 20/07/2026: gửi hụt thì đừng ghi lịch sử (tránh tưởng đã xin lại số mà khách chưa nhận).
+      const okXinLai = await sendMessages(pageId, conversationId, askAgain);
+      if (!okXinLai) {
+        console.error(`[handler] ❌ GỬI HỤT ô xin lại SĐT cho ${conversationId} → không ghi lịch sử`);
+        return;
+      }
       store.appendHistory(conversationId, 'model', `Xin khách gửi lại SĐT (lý do: ${badPhoneReason}).`);
       return;
     }
@@ -584,7 +653,13 @@ async function giaoCamNang(conversationId, pageId, cond, opts = {}) {
   }
   msgs.forEach((m) => noteBotSent(conversationId, m));
   noteBotJustSent(conversationId);
-  await sendMessages(pageId, conversationId, msgs);
+  // VÁ 20/07/2026: gửi hụt (token xoay) thì GIỮ cờ doc_wanted để lượt sau giao lại cẩm nang,
+  // đừng delKV/appendHistory cho tin chưa rời máy.
+  const okDoc = await sendMessages(pageId, conversationId, msgs);
+  if (!okDoc) {
+    console.error(`[doc] ❌ GỬI HỤT cẩm nang ${cond} cho ${conversationId} → giữ cờ doc_wanted, lượt sau giao lại`);
+    return false;
+  }
   if (guiFileThat) {
     // sendFileByUrl tự lùi về gửi link khi upload/gửi file hụt → không cần phao thêm
     await sendFileByUrl(zuid, pdf, `${ten}.pdf`).catch(() => {});
@@ -639,7 +714,11 @@ export async function handleRetouch(conv) {
  */
 export async function handleBotTouch(conv, touchNo) {
   const { conversation_id: conversationId, page_id: pageId } = conv;
-  if (!isPageEnabled(pageId)) return;
+  // VÁ 20/07/2026: log thay vì `return` câm — chạm 7-bước bị bỏ mà không ai biết thì lead nguội chết lặng.
+  if (!isPageEnabled(pageId)) {
+    console.warn(`[handler] ⛔ BỎ chạm ${touchNo} conv ${conversationId}: page ${pageId} chưa bật bot/thiếu token.`);
+    return;
+  }
   if (lockHeld(conversationId)) return;
   lockAcquire(conversationId);
   try {
@@ -684,7 +763,13 @@ export async function handleBotTouch(conv, touchNo) {
           const chot = [loiMoiZaloOA(tenCN, daCoSo, false)];
           chot.forEach((m) => noteBotSent(conversationId, m));
           noteBotJustSent(conversationId);
-          await sendMessages(pageId, conversationId, chot);
+          // VÁ 20/07/2026: gửi hụt thì KHÔNG ghi lịch sử và KHÔNG khoá cả chuỗi chạm 2–7 bên dưới
+          // (trước đây markTouchDone chạy vô điều kiện → ô chốt mời OA mất trắng vĩnh viễn).
+          const okChot = await sendMessages(pageId, conversationId, chot);
+          if (!okChot) {
+            console.error(`[cham${touchNo}] ❌ GỬI HỤT ô chốt mời OA cho ${conversationId} → KHÔNG khoá chuỗi, cron sau thử lại`);
+            return;
+          }
           store.appendHistory(conversationId, 'model', '[CHẠM-CHỐT-OA] ' + chot.join('\n'));
           console.log(`[cham${touchNo}] ${conversationId} khách im 2 chạm → gửi 1 ô chốt mời OA rồi DỪNG chuỗi`);
         } else {
@@ -745,7 +830,14 @@ export async function handleBotTouch(conv, touchNo) {
 
     messages.forEach((m) => noteBotSent(conversationId, m));
     noteBotJustSent(conversationId); // chống race echo
-    await sendMessages(pageId, conversationId, messages);
+    // VÁ 20/07/2026 (ca log Render 11:10→12:35 UTC): 9× Pancake "access_token renewed" → tin KHÔNG
+    // tới khách mà ở đây vẫn markTouchDone → chạm đóng dấu vĩnh viễn, mất trắng, không tự khỏi.
+    // Nay: gửi hụt thì KHÔNG ghi lịch sử, KHÔNG markTouchDone → cron sau chạm lại.
+    const guiOk = await sendMessages(pageId, conversationId, messages);
+    if (!guiOk) {
+      console.error(`[cham${touchNo}] ❌ GỬI HỤT (token/kênh) cho ${conversationId} → KHÔNG đánh dấu xong, cron sau chạm lại`);
+      return;
+    }
     store.appendHistory(conversationId, 'model', `[CHẠM ${touchNo}] ` + messages.join('\n'));
     // Cập nhật SỔ "suất tư vấn" (dùng chung dispatch) — cộng số ô mời thực gửi ở chạm này.
     {
@@ -818,6 +910,16 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     if (outMessages.length < truoc) {
       console.log(`[dispatch] ${conversationId} bỏ ${truoc - outMessages.length} ô trùng nguyên văn tin bot đã gửi`);
     }
+    // PHAO CỨU SINH (VÁ 20/07/2026 — ca 14 hội thoại CHƯA ĐỌC, ảnh Pancake 20:05):
+    // Đây là cửa lọc DUY NHẤT trong 3 cửa của dispatch KHÔNG có phao (cửa gỡ link có phao ở ~910,
+    // cửa chống lặp "suất tư vấn" có phao ở ~943). Hậu quả thật: Gemini 429/503 → câu treo suy giảm
+    // 35 ký tự (>25) đã nằm trong history → cửa này xoá SẠCH → rơi nhánh else "không gửi gì" → BOT IM HẲN.
+    // Khách hỏi giá tiêm 19:47–20:05 (Hiên Thi Vu, Nguyễn Oanh, Rose Rose, Đặng Sáng, Cu Tủn, Xuân Ngọc)
+    // đúng vì cái này. THÀ THỪA 1 CÂU TRUNG TÍNH CÒN HƠN IM — im là mất lead đã trả tiền quảng cáo.
+    if (outMessages.length === 0 && truoc > 0) {
+      outMessages = [CAU_CHOT_TRUNG_TINH];
+      console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
+    }
   }
 
   // ===== VIỆC #2 — KỶ LUẬT LINK (audit 09/07: loạt CÓ link khách nhắn tiếp 30% vs KHÔNG link 57%) =====
@@ -884,18 +986,61 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     // Gửi các ô thoại về khách qua Pancake
     outMessages.forEach((m) => noteBotSent(conversationId, m)); // đánh dấu bot gửi (để khỏi nhầm là người gõ)
     noteBotJustSent(conversationId); // chống race: đánh dấu thời điểm bot gửi (echo sắp dội về)
-    await sendMessages(pageId, conversationId, outMessages);
-    // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
-    store.appendHistory(conversationId, 'model', outMessages.join('\n'));
-    // Đánh dấu đã gửi link để không lặp lại mỗi lượt
-    if (linkWasAdded && SALE_PAGE[knownCondition]) {
-      store.markSaleLinkSent(conversationId);
-    }
-    // Cập nhật SỔ "suất tư vấn": cộng số ô mời THỰC GỬI (audit 09/07 — 17%→7%, 54% hội thoại).
-    const soOMoi = outMessages.filter((m) => demSuatTuVan(m)).length;
-    if (soOMoi > 0) {
-      const truoc = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
-      store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
+    // VÁ 20/07/2026: gửi hụt (token xoay / #551) thì KHÔNG ghi lịch sử, KHÔNG cắm cờ đã-gửi-link
+    // — trước đây markSaleLinkSent chạy cho tin chưa hề rời máy → khách không bao giờ nhận link.
+    const guiOk = await sendMessages(pageId, conversationId, outMessages);
+    if (!guiOk) {
+      // KHÔNG return ở đây: phần dưới còn bắt SĐT + báo lead telesale — mất tin bot thì càng
+      // phải để người gọi khách. Chỉ bỏ các bước "coi như đã gửi".
+      console.error(`[dispatch] ❌ GỬI HỤT cho ${conversationId} → không ghi lịch sử, không cắm cờ đã gửi link/suất tư vấn`);
+    } else if (reply.degraded) {
+      // VÁ 20/07/2026 — CÂU TREO SUY GIẢM (Gemini 429/503): tin ĐÃ GỬI cho khách (không im),
+      // nhưng TUYỆT ĐỐI KHÔNG ghi vào history role=model. Lý do: ghi vào là lượt sau cửa lọc
+      // chống-lặp (~883) bắt đúng nó rồi xoá sạch → bot im hẳn. Câu treo tự khoá chính nó.
+      // Không ghi history còn giúp Gemini lúc hồi quota không "học" theo câu treo vô nghĩa.
+      console.warn(`[dispatch] ⚠️ ${conversationId} Gemini SUY GIẢM → đã gửi câu treo giữ khách, KHÔNG ghi history, KHÔNG cắm cờ link/suất tư vấn`);
+      // (1) MỞ LẠI CỬA VỚT: lượt này chưa trả lời được khách câu nào có nghĩa → đừng để rescueLead
+      //     coi là "đã thử xong" rồi khoá ca lại. Xoá dấu để cron 5' sau vớt lại khi quota hồi.
+      //     Import động: rescueLead đã import handler → import tĩnh ngược lại sẽ thành vòng.
+      try {
+        const { clearRescueAttempt } = await import('./rescueLead.js');
+        clearRescueAttempt(conversationId);
+      } catch (e) {
+        console.warn(`[dispatch] ${conversationId} không xoá được dấu rescue: ${e?.message || e}`);
+      }
+      // (2) BÁO NGƯỜI (nguyên tắc vàng: bot không trả lời được thì NGƯỜI phải biết ngay, SLA ≤5').
+      //     Ca thật 20/07: Gemini chết đúng lúc khách hỏi giá tiêm → reply.booking_intent bị ép
+      //     false nên telesale KHÔNG hề biết có lead nóng. Bot im MÀ người cũng không được báo.
+      //     Chặn spam Telegram: 1 lần / hội thoại / 1 giờ (KV có mốc thời gian, tự hết hạn mềm).
+      const kDeg = `degraded_notified:${conversationId}`;
+      const lanTruoc = parseInt(store.getKV(kDeg) || '0', 10) || 0;
+      if (Date.now() - lanTruoc > 3600 * 1000) {
+        store.setKV(kDeg, String(Date.now()));
+        await notifyHandover({
+          name: reply.name || customerName,
+          reason: 'Gemini chết (429/503) — khách hỏi mà bot chỉ trả được câu treo. VÀO REP TAY GẤP.',
+          condition: knownCondition,
+          summary: knownSummary,
+          pageId,
+          conversationId,
+        }).catch((e) => console.error(`[dispatch] ${conversationId} báo Telegram suy giảm hụt: ${e?.message || e}`));
+        console.warn(`[dispatch] 📣 ${conversationId} đã BÁO NGƯỜI (Gemini suy giảm) — telesale vào rep tay`);
+      } else {
+        console.log(`[dispatch] ${conversationId} Gemini suy giảm nhưng đã báo người trong 1h → không báo lại (chống spam)`);
+      }
+    } else {
+      // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
+      store.appendHistory(conversationId, 'model', outMessages.join('\n'));
+      // Đánh dấu đã gửi link để không lặp lại mỗi lượt
+      if (linkWasAdded && SALE_PAGE[knownCondition]) {
+        store.markSaleLinkSent(conversationId);
+      }
+      // Cập nhật SỔ "suất tư vấn": cộng số ô mời THỰC GỬI (audit 09/07 — 17%→7%, 54% hội thoại).
+      const soOMoi = outMessages.filter((m) => demSuatTuVan(m)).length;
+      if (soOMoi > 0) {
+        const truoc = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
+        store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
+      }
     }
   } else {
     console.log(`[dispatch] ${conversationId} mọi ô đều trùng tin cũ → không gửi gì (tránh lộ bot)`);

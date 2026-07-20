@@ -30,6 +30,43 @@ const HUY = new Set(['7', '8', '9']);  // hủy/xóa → đánh dấu seen luôn
 // POS_DEFAULT_HAS_MEDICINE=0 nếu sau này quầy tách mục thuốc riêng trong POS.
 const DEFAULT_HAS_MEDICINE = !/^(0|false|no|off)$/i.test(process.env.POS_DEFAULT_HAS_MEDICINE || '1');
 
+// ⚠️ VÁ 19/07 (đo thật, không đoán): POS API trả total_pages=25 / 1.470 đơn; trang 1
+// (page_size=60) chỉ phủ tới ~3 ngày gần nhất. Đơn nào trượt 1 lượt (POS 500/timeout,
+// hoặc lúc quét total_price=0 rồi mới thu tiền sau) sẽ RƠI KHỎI TRANG 1 VĨNH VIỄN.
+// Đo 19/07: trang 1 có 9 đơn có tiền, trang 2+3 có thêm 39 đơn — tức quét 1 trang là mù
+// phần lớn ca. Quét 3 trang = cửa sổ ~2 tuần, idempotent kv posingest_seen2 nên quét lại
+// đơn cũ KHÔNG tạo chạm trùng. Chỉnh bằng POS_INGEST_PAGES.
+const PAGES = Math.max(1, Math.min(10, Number(process.env.POS_INGEST_PAGES || 3)));
+const PAGE_SIZE = Math.max(10, Math.min(100, Number(process.env.POS_INGEST_PAGE_SIZE || 60)));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Đọc 1 trang đơn POS có RETRY (bài học 16/07 vá 2 engine medi: rớt mạng thoáng /
+// POS 500 mà bỏ luôn lượt = mất ca thật). Retry 2 lần, backoff 2s→5s, chỉ thử lại với
+// lỗi ĐÁNG thử lại (timeout/mạng/5xx/429); lỗi 401/403 (token hỏng) thì dừng ngay.
+async function layTrangDon(page) {
+  const DELAYS = [2000, 5000];
+  let lastErr = null;
+  for (let lan = 0; lan <= DELAYS.length; lan++) {
+    try {
+      const { data } = await axios.get(`${POS_BASE}/shops/${POS_SHOP_ID}/orders`, {
+        params: { access_token: POS_TOKEN, page_size: PAGE_SIZE, page_number: page },
+        timeout: 20000,
+      });
+      return Array.isArray(data?.data) ? data.data : [];
+    } catch (e) {
+      lastErr = e;
+      const st = e?.response?.status;
+      const thuLaiDuoc = !st || st >= 500 || st === 429;
+      if (!thuLaiDuoc || lan === DELAYS.length) break;
+      console.warn(`[pos-ingest] trang ${page} lỗi (${st || e?.code || e?.message}) — thử lại lần ${lan + 1}/${DELAYS.length}`);
+      await sleep(DELAYS[lan]);
+    }
+  }
+  console.warn(`[pos-ingest] trang ${page} BỎ sau retry:`, lastErr?.response?.status || lastErr?.message);
+  return null; // null = lỗi thật (phân biệt với [] = trang rỗng hợp lệ)
+}
+
 // SĐT về 10 số (bỏ +84/84 → 0) — cùng chuẩn pos.js/medi.js.
 function normPhone(p) {
   let s = String(p || '').replace(/[^\d]/g, '');
@@ -41,15 +78,19 @@ function normPhone(p) {
 /** Quét 1 lượt đơn POS → nạp ca đủ điều kiện. Trả về số ca đã nạp. */
 export async function runPosIngest() {
   if (!ENABLED || !POS_TOKEN) return 0;
-  let orders = [];
-  try {
-    const { data } = await axios.get(`${POS_BASE}/shops/${POS_SHOP_ID}/orders`, {
-      params: { access_token: POS_TOKEN, page_size: 60, page_number: 1 },
-      timeout: 20000,
-    });
-    orders = Array.isArray(data?.data) ? data.data : [];
-  } catch (e) {
-    console.warn('[pos-ingest] đọc đơn POS lỗi:', e?.response?.status || e?.message);
+  // Quét nhiều trang (mới → cũ). Trang lỗi sau retry thì BỎ RIÊNG trang đó và vẫn xử
+  // các trang lấy được (fail-open từng phần), thay vì bỏ cả lượt như trước.
+  const orders = [];
+  let trangLoi = 0;
+  for (let p = 1; p <= PAGES; p++) {
+    const rows = await layTrangDon(p);
+    if (rows === null) { trangLoi++; continue; }
+    if (!rows.length) break;      // hết đơn → khỏi gọi thừa các trang sau
+    orders.push(...rows);
+    if (rows.length < PAGE_SIZE) break; // trang cuối
+  }
+  if (!orders.length) {
+    if (trangLoi) console.warn(`[pos-ingest] không đọc được đơn nào (${trangLoi} trang lỗi) — bỏ lượt`);
     return 0;
   }
 

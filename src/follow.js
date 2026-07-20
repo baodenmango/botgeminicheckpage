@@ -135,18 +135,35 @@ export async function handleZaloFollow(body, opts = {}) {
 
   const { condition } = await resolveCondition(userId);
 
-  // Chào cảm ơn follow (luôn gửi).
-  await sendTexts(userId, [
+  // VÁ 20/07/2026 — XOÁ BÁO ✅ GIẢ (ca thật: log Render srv-d8v9896gvqtc73bvme80 13:36→14:51 UTC,
+  // 29× "gửi HỤT ... access_token renewed" nhưng vẫn in 21 dòng ✅ "đã gửi"). follow.js là chỗ CUỐI
+  // trong repo còn giữ tật đó: 5 lệnh `await sendTexts(...)` VỨT BOOLEAN, rồi cuối hàm in thẳng
+  // "✅ đã giao PDF + N clip". Khách follow OA lúc token chết = không nhận gì, mà log báo giao đủ →
+  // không ai biết để giao lại. sendTexts (zalo.js:182) TRẢ boolean sẵn, chỉ là không ai nhận.
+  // Nay: nhận kết quả thật, hụt thì log ❌ kèm lý do + uid và THOÁT SỚM (đừng bắn tiếp các ô sau
+  // vào khoảng không), chỉ in ✅ khi tin thật sự rời máy.
+
+  // Chào cảm ơn follow (luôn gửi). Ô này hụt = kênh đang chết → mọi ô sau cũng hụt, dừng luôn.
+  const okChao = await sendTexts(userId, [
     'Dạ em chào mình, cảm ơn mình đã quan tâm Zalo Phòng khám Cơ Xương Khớp Hiệp Lợi nha 🌿',
   ]);
+  if (!okChao) {
+    console.error(`[follow] ❌ GỬI HỤT câu chào cho uid ${userId} (kênh Zalo OpenAPI trả lỗi) → `
+      + 'KHÔNG gửi tiếp, KHÔNG tính là đã chăm. Khách này chưa nhận gì cả.');
+    return;
+  }
 
   if (!condition) {
     // chưa biết bệnh → hỏi nhẹ để chăm đúng (KHÔNG gửi tài liệu sai bệnh)
-    await sendTexts(userId, [
+    const okHoi = await sendTexts(userId, [
       'Mình đang gặp vấn đề xương khớp ở vùng nào để em gửi đúng tài liệu chăm sóc cho mình ạ? 😊',
     ]);
     // card "Chia sẻ thông tin": khách bấm 1 nút là nối SĐT ↔ Zalo (không cần gõ tin)
     sendRequestInfo(userId).catch(() => {});
+    if (!okHoi) {
+      console.error(`[follow] ❌ GỬI HỤT câu hỏi vùng đau cho uid ${userId} → mới chào được, chưa hỏi được.`);
+      return;
+    }
     console.log(`[follow] ${userId} follow OA (chưa rõ bệnh) → đã chào + hỏi vùng đau + card xin thông tin`);
     return;
   }
@@ -157,14 +174,36 @@ export async function handleZaloFollow(body, opts = {}) {
   const clips = (CLIP_THEO_BENH[condition] || []).filter(Boolean).slice(0, 2);
   const tenCN = TEN_CAM_NANG_PUBLIC?.[condition] || 'Cẩm nang chăm sóc tại nhà';
 
-  await sendTexts(userId, [`Như đã hẹn, em gửi mình trọn bộ "${tenCN}" + video bài tập nha ạ 🎁`]);
-  if (pdf) await sendFileByUrl(userId, pdf);
-  for (const c of clips) await sendTexts(userId, [c]);
-  await sendTexts(userId, [
+  // Câu "hứa" — hụt ở đây thì đừng bắn PDF/clip vào khoảng không nữa.
+  const okHua = await sendTexts(userId, [`Như đã hẹn, em gửi mình trọn bộ "${tenCN}" + video bài tập nha ạ 🎁`]);
+  if (!okHua) {
+    console.error(`[follow] ❌ GỬI HỤT câu hứa giao tài liệu cho uid ${userId} (bệnh ${condition}) → `
+      + 'DỪNG, không giao PDF/clip. Khách đã hứa mà chưa nhận được gì.');
+    return;
+  }
+  // Đếm ĐÚNG cái tới nơi, không đếm cái ĐỊNH gửi: trước vá log in `${clips.length}` = số clip
+  // TRONG KHO, kể cả khi 0 clip nào rời máy.
+  const pdfOk = pdf ? await sendFileByUrl(userId, pdf) : null;   // null = bệnh này không có PDF
+  if (pdf && !pdfOk) console.error(`[follow] ❌ GỬI HỤT PDF cẩm nang cho uid ${userId} (bệnh ${condition})`);
+  let clipOk = 0;
+  for (const c of clips) {
+    if (await sendTexts(userId, [c])) clipOk++;
+    else { console.error(`[follow] ❌ GỬI HỤT 1 clip cho uid ${userId} (bệnh ${condition}) → bỏ các clip còn lại`); break; }
+  }
+  const okDan = await sendTexts(userId, [
     'Mình xem rồi áp dụng dần nha ạ. Có gì thắc mắc cứ nhắn em, hoặc để lại số em nhờ Bác sĩ Trình gọi tư vấn kỹ giúp mình ạ 🙏',
   ]);
   sendRequestInfo(userId).catch(() => {});
-  console.log(`[follow] ✅ ${userId} follow OA (bệnh ${condition}) → đã giao PDF + ${clips.length} clip + card xin thông tin`);
+  // ✅ CHỈ khi giao đủ thứ đã hứa: PDF (nếu bệnh có) + toàn bộ clip + câu dặn cuối. Thiếu bất kỳ
+  // mảnh nào → dòng ⚠️ ghi rõ giao được bao nhiêu, để người đọc log biết còn nợ khách cái gì.
+  const duBo = (pdf ? pdfOk : true) && clipOk === clips.length && okDan;
+  if (duBo) {
+    console.log(`[follow] ✅ ${userId} follow OA (bệnh ${condition}) → đã giao PDF + ${clipOk} clip + card xin thông tin`);
+  } else {
+    console.error(`[follow] ⚠️ ${userId} follow OA (bệnh ${condition}) GIAO THIẾU: `
+      + `PDF ${pdf ? (pdfOk ? 'OK' : 'HỤT') : 'không có'}, clip ${clipOk}/${clips.length}, câu dặn ${okDan ? 'OK' : 'HỤT'} `
+      + '→ khách chưa nhận đủ bộ đã hứa.');
+  }
 }
 
 // SĐT về dạng 10 số (bỏ +84/84 → 0) — cùng chuẩn medi.js/pos.js.

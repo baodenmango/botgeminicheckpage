@@ -12,6 +12,7 @@
 //  (trong cửa sổ 48h, miễn phí) đi đường handler/pancake, KHÔNG qua đây, không bị đếm.
 import { sendMessages, isPageEnabled } from './pancake.js';
 import { sendTexts, isOpenApiEnabled } from './zalo.js';
+import { noteBotSent, noteBotJustSent } from './echoguard.js';
 import * as quota from './quota.js';
 import * as store from './store.js';
 
@@ -111,13 +112,35 @@ export async function sendCareMessages(target, messages, opts = {}) {
 
   // 1) Zalo nối Pancake (kênh chính, không kẹt gói OpenAPI).
   if (conversation_id && page_id && isPageEnabled(page_id)) {
-    await sendMessages(page_id, conversation_id, messages);
-    ok = true;
+    // VÁ 20/07 (ca 13 hội thoại cờ human oan, log Render 11:10–12:35 UTC): GHI SỔ ECHO TRƯỚC KHI GỬI.
+    // Trước vá, nhánh Pancake của care-send là call site DUY NHẤT trong repo gọi sendMessages mà
+    // KHÔNG ghi noteBotSent/noteBotJustSent (6 call site handler.js + zalo.js:167 đều có ghi).
+    // Hệ quả: Pancake dội echo tin chăm về webhook → tin là văn tư vấn dài, tử tế nên lọt HẾT 5 cửa
+    // lọc ở handlePageMessage → handler tưởng telesale gõ tay → markHumanTaken → bot tự khoá mình 6h
+    // dù giao diện Pancake ghi "Chưa có người xem". Nạn nhân: billengine/rebillengine/wakeup.
+    // (Vá 07/07 nêu ở echoguard.js:8 chỉ đụng đường Zalo OpenAPI, KHÔNG đụng nhánh Pancake này.)
+    // Ghi TRƯỚC chứ không sau: echo Pancake có thể dội về trước khi ghi xong → lại đánh cờ oan.
+    messages.forEach((m) => noteBotSent(conversation_id, m));
+    noteBotJustSent(conversation_id);
+    // VÁ 20/07/2026 (ca log Render 11:10→12:35 UTC): trước đây HARDCODE ok = true sau lệnh gửi →
+    // Pancake trả "access_token renewed" (tin không tới khách) mà vẫn ghiTieu() TRỪ QUOTA 500 tin
+    // tư vấn Zalo. Vừa mất tin vừa mất đạn. Nay lấy đúng kết quả thật của sendMessages.
+    ok = await sendMessages(page_id, conversation_id, messages);
+    if (!ok) console.error(`[care-send] ❌ GỬI HỤT conv ${conversation_id}${opts.code ? ` (${opts.code})` : ''} → KHÔNG trừ quota, không tính là đã chăm`);
   } else if (zalo_user_id && isOpenApiEnabled()) {
     // 2) Zalo OpenAPI trực tiếp (gửi theo user_id) — khi gói cước đã có OpenAPI.
     ok = await sendTexts(zalo_user_id, messages);
   } else {
-    console.warn('[care-send] không có kênh gửi (thiếu conversation_id/page_id và Zalo OpenAPI tắt) → bỏ qua');
+    // VÁ 20/07/2026: dòng cũ gộp 2 ca khác hẳn nhau vào 1 câu mơ hồ. Ca "có đủ conv+page nhưng
+    // page BỊ TẮT/thiếu token" là lỗi CẤU HÌNH chữa được trong 1 phút (POST /admin/set-token),
+    // còn "thiếu conv/page" là dữ liệu khách chưa có kênh. Tách ra để đọc log biết ngay phải làm gì.
+    if (conversation_id && page_id && !isPageEnabled(page_id)) {
+      console.error(`[care-send] ⛔ BỎ chăm conv ${conversation_id}${opts.code ? ` (${opts.code})` : ''}: `
+        + `page ${page_id} chưa bật bot/THIẾU TOKEN → nạp ngay POST /admin/set-token?page=${page_id}`);
+    } else {
+      console.warn(`[care-send] không có kênh gửi (conv=${conversation_id || '?'} page=${page_id || '?'}, `
+        + 'Zalo OpenAPI tắt / thiếu zalo_user_id) → bỏ qua');
+    }
     return false;
   }
 

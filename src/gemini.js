@@ -43,8 +43,34 @@ function pickFallbackModel(channel) {
   return String(channel || '').toLowerCase() === 'zalo' ? modelZalo2 : modelFb2;
 }
 
+// --- VÁ 20/07/2026 (ca 14 hội thoại CHƯA ĐỌC, ảnh Pancake 20:05 — khách hỏi giá tiêm 19:47–20:05
+//     không ai rep: Hiên Thi Vu, Nguyễn Oanh, Rose Rose, Đặng Sáng, Cu Tủn, Xuân Ngọc) ---
+// Câu treo suy giảm XOAY VÒNG thay vì 1 hằng số duy nhất.
+// GỐC BỆNH: FALLBACK cũ luôn là ĐÚNG MỘT câu 35 ký tự. Lượt 1 Gemini chết → gửi câu đó + ghi vào
+// history role=model. Lượt 2 Gemini vẫn chết → vẫn câu đó → cửa lọc chống-lặp-nguyên-văn
+// (handler.js:883, chỉ soi ô >25 ký tự) thấy TRÙNG y hệt → xoá sạch → outMessages rỗng → bot IM HẲN.
+// Khách hỏi "tiêm bao nhiêu tiền một mũi" mà im = mất lead đã trả tiền quảng cáo.
+// Nay: xoay 4 biến thể theo phút → 2 lượt liên tiếp KHÔNG BAO GIỜ trùng nguyên văn, tự thoát cửa lọc.
+// (Đây là lưới TẦNG 1. Tầng 2 là phao CAU_CHOT_TRUNG_TINH vừa cắm ở handler.js:883.)
+const CAU_TREO_SUY_GIAM = [
+  'Dạ anh/chị chờ em chút xíu nha ạ 😊',
+  'Dạ em đang xem kỹ tình trạng của mình, em trả lời ngay ạ 🙏',
+  'Dạ mình chờ em một chút nha, em kiểm tra rồi báo mình liền ạ',
+  'Dạ em ghi nhận câu hỏi của mình rồi ạ, em phản hồi mình ngay đây 😊',
+];
+// Xoay theo PHÚT (không theo ms) để 3 ô trong CÙNG một lượt vẫn ổn định, nhưng 2 lượt cách nhau
+// vài chục giây/vài phút thì khác câu. Retry Gemini mất ~1.2–3.6s nên cùng lượt luôn cùng phút.
+function cauTreoXoay() {
+  const i = Math.floor(Date.now() / 60000) % CAU_TREO_SUY_GIAM.length;
+  return [CAU_TREO_SUY_GIAM[i]];
+}
+
 // Phản hồi an toàn khi Gemini lỗi/timeout — không crash, không im lặng.
+// `degraded: true` = CỜ SUY GIẢM: đây KHÔNG phải câu trả lời thật, chỉ là câu treo giữ khách.
+// handler.js đọc cờ này để (a) KHÔNG ghi vào history model (khỏi tự khoá chính mình ở lượt sau)
+// và (b) BÁO NGƯỜI qua Telegram — bot không trả lời được thì telesale phải biết ngay (SLA ≤5').
 const FALLBACK = {
+  degraded: true,
   messages: ['Dạ anh/chị chờ em chút xíu nha ạ 😊'],
   name: null,
   phone: null,
@@ -61,6 +87,10 @@ const FALLBACK = {
 // Làm sạch & ràng buộc output theo đúng định dạng brief (mục 5, 8).
 function sanitize(obj) {
   const out = { ...FALLBACK, ...(obj || {}) };
+  // VÁ 20/07/2026: `{...FALLBACK}` bơm degraded:true vào MỌI reply → phải dập lại ngay,
+  // không thì reply THẬT cũng bị coi là suy giảm (không ghi history + spam Telegram).
+  // Reply thật đi qua đây; hai lối thoát trả nguyên FALLBACK (JSON fail / catch) thì KHÔNG.
+  out.degraded = false;
   // messages: mảng 1–3 chuỗi, mỗi ô < 300 ký tự.
   // VÁ 11/07: siết 4→3 cho khớp prompt ("TUYỆT ĐỐI KHÔNG quá 3 bong bóng/lượt", chống dội bom lộ bot).
   let msgs = Array.isArray(out.messages) ? out.messages : [String(out.messages || '')];
@@ -68,7 +98,13 @@ function sanitize(obj) {
     .filter((m) => typeof m === 'string' && m.trim().length > 0)
     .slice(0, 3)
     .map((m) => (m.length > 300 ? m.slice(0, 297) + '…' : m));
-  if (msgs.length === 0) msgs = FALLBACK.messages;
+  // VÁ 20/07/2026: model trả mảng RỖNG cũng là suy giảm (bot không nói được gì thật) →
+  // dùng câu treo XOAY VÒNG + bật lại cờ degraded, đừng lặng lẽ nhét hằng số cũ rồi coi là reply thật.
+  if (msgs.length === 0) {
+    msgs = cauTreoXoay();
+    out.degraded = true;
+    console.warn('[gemini] model trả mảng messages RỖNG → dùng câu treo suy giảm (xoay vòng)');
+  }
   out.messages = msgs;
   out.phone_captured = Boolean(out.phone_captured);
   out.booking_intent = Boolean(out.booking_intent);
@@ -208,11 +244,16 @@ export async function generateReply(history, mode = 'reply', customerName = null
     }
     if (!parsed) {
       console.error('[gemini] JSON parse fail. Raw:', text?.slice(0, 200));
-      return FALLBACK;
+      // VÁ 20/07/2026: trả FALLBACK có câu treo XOAY VÒNG (đừng trả hằng số → lượt sau bị lọc → bot im).
+      return { ...FALLBACK, messages: cauTreoXoay(), degraded: true };
     }
     return sanitize(parsed);
   } catch (err) {
-    console.error('[gemini] lỗi gọi API:', err?.message || err);
-    return FALLBACK;
+    // Lối thoát HAY GẶP NHẤT: 429 quota/phút, 503 quá tải, hết 3 lần retry ở vòng trên.
+    // Đúng khung 19:54–20:05 ngày 20/07 khách hỏi giá tiêm dồn dập thì key đụng trần rate-limit.
+    // Log rõ mã lỗi + kênh để soi Render biết bot "chết vì gì", không im lặng nuốt lỗi.
+    const ma = err?.status || err?.code || (err?.message || '').match(/\b(429|500|503)\b/)?.[1] || '?';
+    console.error(`[gemini] ❌ CHẾT (mã=${ma}, kênh=${channel}, mode=${mode}) → trả CÂU TREO SUY GIẢM, handler sẽ báo người:`, err?.message || err);
+    return { ...FALLBACK, messages: cauTreoXoay(), degraded: true };
   }
 }
