@@ -138,13 +138,44 @@ async function getConvs(pageId) {
   return [...out.values()];
 }
 
+// TIN CUỐI LÀ AUTO-MESSAGE PANCAKE/BOTCAKE — KHÔNG PHẢI "đã có người rep".
+//
+// VÁ 23/07/2026 (ca Hồ Tuyết 18:08: khách hỏi "1 mũi bao nhiêu tiền vậy bác", 23 PHÚT sau
+// Pancake auto bắn lại ĐÚNG câu chào mẫu "vui lòng mô tả càng chi tiết càng tốt" — không trả lời
+// câu hỏi, nhưng ĐỦ để khachNhanCuoi() thấy tin cuối mang id page → coi như đã rep → LOẠI ca này
+// khỏi danh sách vớt. Khách hỏi GIÁ mà bị auto-message đè lên là rơi thẳng vào vùng mù, rescue
+// chạy mỗi 5' cũng không bao giờ chạm tới).
+//
+// Nhận diện qua last_sent_by.admin_name (đo thật trên list Pancake 23/07):
+//   "Botcake"     → auto-message thuần, KHÔNG hề trả lời khách  → phải vớt
+//   "Public API"  → bot Gemini gửi qua API                      → ĐÃ rep thật, KHÔNG vớt
+//   tên người     → telesale gõ tay ("Phan Nhật Trình"...)      → ĐÃ rep thật, KHÔNG vớt
+//
+// ⚠️ CỐ Ý KHÔNG nới cho "Public API": đó cũng chính là danh nghĩa bot Gemini dùng để gửi. Coi nó
+// là "chưa rep" thì bot đọc lại tin mình vừa gửi → tự trả lời chính mình LẶP VÔ HẠN (đúng bẫy đã
+// ghi ở khachNhanCuoi bản cũ + luồng comment). Thà bỏ sót ca Public API còn hơn mở vòng lặp.
+const AUTO_ADMIN_NAMES = ((process.env.RESCUE_AUTO_ADMIN_NAMES || '').trim() || 'botcake')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+function laTinAutoPancake(lsb) {
+  const ten = String(lsb?.admin_name || '').trim().toLowerCase();
+  if (!ten) return false;
+  return AUTO_ADMIN_NAMES.includes(ten);
+}
+
 // Người gửi CUỐI có phải KHÁCH không (không phải page/bot). true = khách nhắn cuối → cần vớt.
 // So theo phần lõi (bỏ tiền tố zl_/ttm_...): Zalo lúc "zl_3136..." lúc "3136..." tùy endpoint —
 // so khít sẽ coi tin của chính OA là tin khách → bot tự trả lời chính mình lặp vô hạn.
 function khachNhanCuoi(c, pageId) {
   const lsb = c.last_sent_by;
   if (!lsb) return false;
-  return stripChannelPrefix(lsb.id) !== stripChannelPrefix(pageId);
+  if (stripChannelPrefix(lsb.id) !== stripChannelPrefix(pageId)) return true;
+  // Tin cuối mang id PAGE nhưng là auto-message Botcake → khách VẪN đang chờ câu trả lời thật.
+  if (laTinAutoPancake(lsb)) {
+    console.log(`[rescue] 🔎 ${c.id}: tin cuối là auto-message "${lsb.admin_name}" (không trả lời khách) → vẫn coi là CHƯA REP, đưa vào diện vớt`);
+    return true;
+  }
+  return false;
 }
 
 /**

@@ -94,13 +94,33 @@ const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
 const AUTO_REPLY_EXACT = (process.env.AUTO_REPLY_EXACT ||
   'phong kham co xuong khop hiep loi|phong kham hiep loi'
 ).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
+// TIN HỆ THỐNG FACEBOOK/PANCAKE — mẫu CÓ KÈM TÊN KHÁCH nên không so khít cả câu được.
+//
+// VÁ 23/07/2026 — LỖI ĐẮT NHẤT ĐO ĐƯỢC TRONG NGÀY (log Render 24h): "X đã trả lời một quảng cáo."
+// là tin HỆ THỐNG Facebook bắn kèm mỗi lead vào từ quảng cáo. Nó dài 33 ký tự, không attachment,
+// không vân tay bot, không khớp sổ echo → LỌT CẢ 6 CỬA LỌC của handlePageMessage → bot chấm là
+// "telesale gõ tay" và TỰ CÂM 2 GIỜ. Đo thật: 46 HỘI THOẠI bị câm trong 24h, 100% cùng câu này —
+// toàn bộ là lead ĐÃ TRẢ TIỀN QUẢNG CÁO (ca Hồ Tuyết hỏi "1 mũi bao nhiêu tiền" là một trong số đó).
+//
+// Vì sao KHÔNG nhét vào AUTO_REPLY_MARKERS: chuỗi con "da tra loi mot quang cao" thì được, nhưng
+// mẫu này còn nhiều biến thể kèm tên (link Facebook, "đã để lại bình luận"...) và tên khách nằm ở
+// ĐẦU câu → dùng regex neo cuối câu an toàn hơn includes, tránh chặn nhầm telesale thật lỡ nhắc
+// tới chữ "quảng cáo" giữa câu tư vấn.
+// Chỉnh qua env AUTO_REPLY_PATTERNS (phân tách |, cú pháp regex, so trên chuỗi ĐÃ bỏ dấu).
+const AUTO_REPLY_PATTERNS = ((process.env.AUTO_REPLY_PATTERNS || '').trim() ||
+  'da tra loi mot quang cao\\.?$|da tra loi quang cao\\.?$|ban dang phan hoi binh luan cua nguoi dung'
+).split('|').map((s) => { try { return new RegExp(s.trim(), 'i'); } catch { return null; } }).filter(Boolean);
+
 function isAutoReplyMessage(text) {
   const n = String(text || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
     .toLowerCase();
   if (AUTO_REPLY_MARKERS.some((m) => n.includes(m))) return true;
   const bare = n.replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-  return AUTO_REPLY_EXACT.includes(bare);
+  if (AUTO_REPLY_EXACT.includes(bare)) return true;
+  // Tin hệ thống kèm tên khách → so bằng regex trên câu đã chuẩn hoá (giữ dấu chấm cuối).
+  const cauSach = n.replace(/\s+/g, ' ').trim();
+  return AUTO_REPLY_PATTERNS.some((re) => re.test(cauSach));
 }
 
 // VÂN TAY BOT (vá 20/07 — ca 13 hội thoại cờ human oan trong 85' log Render): lưới an toàn TẦNG 2
