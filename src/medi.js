@@ -276,23 +276,31 @@ export function parseVisitDate(s) {
 // Map text chẩn đoán MEDi → mã bệnh nội bộ (dùng chung — engine đánh thức + follow).
 export function mapDiagnosis(text) {
   const t = String(text || '').toLowerCase();
-  if (/chóp xoay|chop xoay|rotator/.test(t)) return 'chopxoay';
+  // Vai / chóp xoay — "bao gân xoay" là cách MEDi ghi khác của chóp xoay (16 ca đo 27/07).
+  if (/chóp xoay|chop xoay|rotator|bao gân xoay|bao gan xoay/.test(t)) return 'chopxoay';
   if (/ngón tay lò xo|ngon tay lo xo|bao gân gấp|cò súng|trigger finger/.test(t)) return 'ngontay';
   if (/de quervain|dequervain|gân duỗi ngón cái|quervain/.test(t)) return 'dequervain';
   if (/ống cổ tay|ong co tay|carpal|chèn ép thần kinh giữa|tê tay/.test(t)) return 'ongcotay';
-  if (/khuỷu tay tennis|tennis elbow|viêm điểm bám gân khuỷu|mỏm trên lồi cầu/.test(t)) return 'tenniselbow';
+  // Tennis elbow — MEDi ghi ICD "viêm điểm bám gân lồi cầu ngoài xương cánh tay" (12 ca).
+  if (/khuỷu tay tennis|tennis elbow|viêm điểm bám gân khuỷu|mỏm trên lồi cầu|lồi cầu ngoài xương cánh tay|lồi cầu ngoài/.test(t)) return 'tenniselbow';
   if (/cân gan chân|can gan chan|gai gót|gai got|viêm cân gan|đau gót/.test(t)) return 'gangotchan';
+  // Gân gót Achilles — 4 ca (ICD "tổn thương gân gót", "viêm gân Achille").
+  if (/achille|achilles|gân gót/.test(t)) return 'gangotchan';
   if (/loãng xương|loang xuong|osteoporosis|mật độ xương|loãng x/.test(t)) return 'loangxuong';
   if (/lật sơ mi|lat so mi|bong gân cổ chân|bong gan co chan|cổ chân|co chan/.test(t)) return 'cochan';
-  if (/hoại tử chỏm|hoai tu chom|chỏm xương đùi|chom xuong dui|avn/.test(t)) return 'chomdui';
+  if (/hoại tử chỏm|hoai tu chom|chỏm xương đùi|chom xuong dui|avn|hoại tử vô mạch/.test(t)) return 'chomdui';
   if (/khớp háng|khop hang|thoái hóa háng/.test(t)) return 'hang';
   if (/cột sống cổ|cot song co|đốt sống cổ|thoái hóa cổ/.test(t)) return 'csc';
-  if (/thần kinh tọa|thoát vị|đĩa đệm/.test(t)) return 'tvdd';
-  if (/cổ vai gáy|cổ - vai/.test(t)) return 'covaigay';
-  if (/gối|thoái hóa gối/.test(t)) return 'goi';
+  // Thoát vị / chèn ép rễ thần kinh vùng lưng — ICD "chèn ép rễ và đám rối thần kinh..." (nhiều ca).
+  if (/thần kinh tọa|thoát vị|đĩa đệm|chèn ép rễ.*(lưng|thắt lưng|m4|thoái hóa đốt sống)|thoái hóa đốt sống/.test(t)) return 'tvdd';
+  if (/cổ vai gáy|cổ - vai|đau vùng cổ gáy|cổ gáy/.test(t)) return 'covaigay';
+  if (/gối|thoái hóa gối|sụn chêm/.test(t)) return 'goi';
   if (/gút|gout|acid uric/.test(t)) return 'gut';
-  if (/quanh khớp vai|đau vai|khớp vai/.test(t)) return 'vai';
-  if (/cột sống thắt lưng|thắt lưng|đau lưng/.test(t)) return 'lung';
+  // Vai — thêm ICD "hội chứng bao gân" chung + đau/khớp vai. (Đặt SAU chóp xoay để chóp xoay ưu tiên.)
+  if (/quanh khớp vai|đau vai|khớp vai|viêm quanh khớp vai/.test(t)) return 'vai';
+  if (/cột sống thắt lưng|thắt lưng|đau lưng|đau vùng lưng/.test(t)) return 'lung';
+  // LƯU Ý: các chẩn đoán KHÔNG thuộc cơ xương khớp (sỏi thận, bao quy đầu, áp xe da, dãn tĩnh mạch...)
+  // CỐ TÌNH để 'unknown' — bot KHÔNG được chăm sai chuyên khoa (chốt an toàn y khoa billtouches).
   return 'unknown';
 }
 
