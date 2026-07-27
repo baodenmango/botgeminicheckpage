@@ -285,6 +285,30 @@ export function upsertMedi(rec){
       rec.visits||null, rec.raw?JSON.stringify(rec.raw):null, nowSec());
   return true;
 }
+// Ghi bệnh khách TỰ KHAI qua chat (vd "tôi đau gối") vào cache MEDi để chuỗi chăm sau bán dùng.
+// AN TOÀN Y KHOA (anh Trình chốt 27/07):
+//   - KHÔNG ghi đè hồ sơ đã có chẩn đoán BÁC SĨ (diagnosis khác rỗng và nguồn != tu_khai).
+//     Chẩn đoán bác sĩ trong Sheet luôn thắng lời khách tự đoán.
+//   - Đánh dấu raw.nguon='tu_khai' để phân biệt; bác sĩ khám sau (cron đẩy Sheet) ghi đè bình thường.
+// @param rec { phone, name?, diagnosis }  diagnosis = tên bệnh tiếng Việt bot nhận ra
+export function upsertMediTuKhai(rec){
+  const phone=normPhone10(rec?.phone); if(!phone||phone.length<9) return false;
+  if(!rec?.diagnosis) return false;
+  const cu = db.prepare('SELECT diagnosis, raw FROM medi_cache WHERE phone = ?').get(phone);
+  if(cu && cu.diagnosis){
+    // đã có chẩn đoán — chỉ cho ghi đè NẾU bản cũ cũng là tự khai (khách khai lại rõ hơn)
+    let nguonCu=''; try{ nguonCu=JSON.parse(cu.raw||'{}').nguon||''; }catch{}
+    if(nguonCu!=='tu_khai') return false; // hồ sơ bác sĩ → giữ nguyên, không đè
+  }
+  db.prepare(`INSERT INTO medi_cache (phone,name,diagnosis,raw,updated_at)
+    VALUES (?,?,?,?,?)
+    ON CONFLICT(phone) DO UPDATE SET
+      name=COALESCE(excluded.name, medi_cache.name),
+      diagnosis=excluded.diagnosis, raw=excluded.raw, updated_at=excluded.updated_at`)
+    .run(phone, rec.name||null, rec.diagnosis,
+      JSON.stringify({nguon:'tu_khai', luc:nowSec()}), nowSec());
+  return true;
+}
 export function getMediByPhone(phone){
   const p=normPhone10(phone); if(!p) return null;
   return db.prepare('SELECT * FROM medi_cache WHERE phone = ?').get(p) || null;

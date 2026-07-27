@@ -887,6 +887,20 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   // để KHÔNG ghi đè condition đã biết ở lượt trước bằng 'unknown' của lượt cuối.
   if (reply.condition && reply.condition !== 'unknown') {
     store.setCondition(conversationId, reply.condition);
+
+    // GIỮ THÔNG TIN KHÁCH (anh Trình chốt 27/07) — bot nhận ra bệnh + có SĐT → ghi ngược
+    // vào cache MEDi theo SĐT, để CHUỖI CHĂM SAU BÁN (billengine tra theo SĐT) hết unknown.
+    // Trước đây bot chỉ lưu condition vào bảng conversations (theo hội thoại) → chuỗi chăm
+    // sau bán không thấy → 718 ca ống rỗng. upsertMediTuKhai gắn cờ nguon='tu_khai', KHÔNG
+    // đè chẩn đoán bác sĩ đã có trong Sheet (an toàn y khoa).
+    try {
+      const sdt = phoneByRegex || conv?.phone || extractPhoneFromHistory(conv?.history);
+      const tenBenh = reply.condition_text || reply.summary || reply.condition;
+      if (sdt && tenBenh) {
+        const ghi = store.upsertMediTuKhai({ phone: sdt, name: customerName || conv?.customer_name, diagnosis: String(tenBenh).slice(0, 200) });
+        if (ghi) console.log(`[dispatch] 💾 lưu bệnh tự-khai "${reply.condition}" cho SĐT ${String(sdt).slice(0, 5)}*** → chuỗi chăm dùng lại được`);
+      }
+    } catch (e) { console.warn('[dispatch] lưu bệnh tự-khai lỗi (bỏ qua, không chặn):', e?.message); }
   }
 
   // Lưu summary (tóm tắt bệnh/thông tin giá trị) khi Gemini có sinh ra.

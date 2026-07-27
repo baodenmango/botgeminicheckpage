@@ -154,9 +154,13 @@ export async function handleZaloFollow(body, opts = {}) {
   }
 
   if (!condition) {
-    // chưa biết bệnh → hỏi nhẹ để chăm đúng (KHÔNG gửi tài liệu sai bệnh)
+    // chưa biết bệnh → hỏi nhẹ để chăm đúng (KHÔNG gửi tài liệu sai bệnh).
+    // Gợi ý các vùng thường gặp để khách trả lời gọn 1 chữ → bot map bệnh & LƯU (upsertMediTuKhai
+    // ở handler khi khách nhắn lại) → chuỗi chăm sau bán dùng lại được. Đây là đường "giữ thông
+    // tin khách" cho 718 ca ô-chẩn-đoán-trống (anh Trình chốt 27/07).
     const okHoi = await sendTexts(userId, [
-      'Mình đang gặp vấn đề xương khớp ở vùng nào để em gửi đúng tài liệu chăm sóc cho mình ạ? 😊',
+      'Để em gửi đúng bài tập và cẩm nang cho mình, mình đang đau nhiều ở vùng nào ạ? 😊\n' +
+      'Ví dụ: vai · gối · lưng · cổ - vai - gáy · cổ tay · gót chân · gout... — mình cứ nhắn vùng đau cho em nha.',
     ]);
     // card "Chia sẻ thông tin": khách bấm 1 nút là nối SĐT ↔ Zalo (không cần gõ tin)
     sendRequestInfo(userId).catch(() => {});

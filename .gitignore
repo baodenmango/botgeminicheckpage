@@ -22,3 +22,4 @@ scripts/phu-voucher-hang-ngay.sh
 logs/
 scripts/.pancake-stub.mjs
 scripts/canh-mau-zbs.mjs
+scripts/canh-keo-follow.mjs
