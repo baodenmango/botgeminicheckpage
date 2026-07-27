@@ -702,6 +702,25 @@ app.post('/admin/zns-test', async (req, res) => {
   res.status(ok ? 200 : 500).json({ ok });
 });
 
+// --- Admin: BẮN THỬ mẫu MỜI QUAN TÂM OA (609256) tới 1 SĐT bất kỳ, KHÔNG qua lọc follow ---
+// Dùng để verify template 609256 hết -127 sau khi Zalo duyệt production (van Đòn 4).
+// Đường voucher-medi chỉ mời khách CHƯA follow → không test được số admin đã follow. Route này gọi thẳng.
+// GET /admin/test-quantam-oa?token=XXX&phone=09xxxxxxxx[&ten=Ten]
+app.get('/admin/test-quantam-oa', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const phone = req.query.phone ? String(req.query.phone) : null;
+  if (!phone) return res.status(400).json({ ok: false, error: 'thiếu phone' });
+  if (!isQuanTamOAEnabled()) {
+    return res.status(400).json({ ok: false, error: 'engine mời OA chưa bật (cần ZNS_TEMPLATE_QUANTAM_OA + ZNS_ENABLED=1)' });
+  }
+  const ok = await sendZnsQuanTamOA(phone, { ten: req.query.ten || 'Quý khách' });
+  // ok=false có thể do -127 (template test), -118 (số không có Zalo), -1472 (hết quota Tag3), ngoài khung giờ...
+  res.status(200).json({ ok, phone, ghi_chu: ok ? 'Zalo nhận (error:0) — template THÔNG' : 'Zalo KHÔNG nhận — soi log để biết mã lỗi (-127 test / -118 no zalo / -1472 quota / ngoài giờ)' });
+});
+
 // --- Admin: NẠP TOKEN PANCAKE lúc chạy (không cần sửa env Render + redeploy) ---
 // Token trang Zalo bị Pancake xoay vòng (error 105) → chết lặng lẽ, bot mù kênh Zalo (06/07).
 // POST /admin/set-token?token=XXX  body: { page_id: 'zl_31368...', value: '<token trang mới>' }
