@@ -165,13 +165,16 @@ async function geminiCham(name, snippet, laComment = false) {
     + 'người Việt trong nước). Cho tên tài khoản Facebook và '
     + (laComment ? 'nội dung BÌNH LUẬN công khai của người đó' : 'câu nhắn gần nhất trong hội thoại')
     + ', hãy trả về DUY NHẤT một JSON: {"ngoai": true/false, "pha_hoai": true/false, '
-    + '"ly_do": "<ngắn gọn tiếng Việt>"}.\n'
+    + '"chac": <0-100>, "ly_do": "<ngắn gọn tiếng Việt>"}.\n'
     + '- "ngoai" = true nếu tên KHÔNG phải tên người Việt (tên Ấn Độ, Khmer, Philippines, '
     + 'tên rác vô nghĩa, cụm ký tự ngẫu nhiên, tên bot/clone farm).\n'
     + '- "pha_hoai" = true nếu nội dung anti phòng khám/bác sĩ: chửi bới xúc phạm, tố lừa '
     + 'đảo vô căn cứ, kêu người khác đừng đến khám, phá rối, spam link, seeding cho đối thủ.\n'
+    + '- "chac" = độ CHẮC CHẮN của phán đoán (0-100). CHỈ ghi ≥95 khi CỰC KỲ rõ ràng, không '
+    + 'còn chút nghi ngờ nào (chửi thề tục tĩu, tố lừa đảo trắng trợn, tên rác hiển nhiên). '
+    + 'Còn mập mờ, mỉa mai, cộc lốc, tiếng lóng vùng miền → để chac THẤP (dưới 80).\n'
     + '- QUAN TRỌNG: khách THẬT phàn nàn về trải nghiệm (chờ lâu, giá cao, hỏi lại kết quả '
-    + "điều trị...) KHÔNG phải phá hoại → pha_hoai=false, ly_do ghi 'khách phàn nàn'.\n"
+    + "điều trị, chửi thề vì BỨC XÚC do không ai bắt máy...) KHÔNG phải phá hoại → pha_hoai=false, ly_do ghi 'khách phàn nàn'.\n"
     + '- QUAN TRỌNG: nếu nội dung là tin do PHÒNG KHÁM/bot của phòng khám gửi (mở đầu '
     + "'[Botcake]', xưng 'em'/'Dạ', mời để lại SĐT...) thì đó KHÔNG phải lời của khách → "
     + "pha_hoai=false, chỉ chấm 'ngoai' theo TÊN.\n"
@@ -182,13 +185,15 @@ async function geminiCham(name, snippet, laComment = false) {
     const txt = res?.response?.text() || '';
     const m = txt.match(/\{[\s\S]*\}/);
     const v = JSON.parse(m ? m[0] : txt);
+    let chac = Number.isFinite(+v.chac) ? Math.max(0, Math.min(100, +v.chac)) : 0;
     return {
       ngoai: Boolean(v.ngoai),
       pha_hoai: Boolean(v.pha_hoai),
+      chac,
       ly_do: String(v.ly_do || '').slice(0, 120),
     };
   } catch (e) {
-    return { ngoai: null, pha_hoai: false, ly_do: `Gemini lỗi: ${e?.message || e}` };
+    return { ngoai: null, pha_hoai: false, chac: 0, ly_do: `Gemini lỗi: ${e?.message || e}` };
   }
 }
 
@@ -414,6 +419,19 @@ export async function runVesi(opts = {}) {
     log('thiếu page token FB → tự lùi CHẾ ĐỘ ĐỀ-XUẤT (không block/CAPI)');
   }
 
+  // ─── TÁCH 2 NẤC (anh Trình chốt 26/07): ẨN comment ≠ CHẶN user ───
+  //   ẨN comment  = ĐẢO NGƯỢC ĐƯỢC (gỡ ẩn 1 lệnh) → cho AUTO khi Gemini chắc cao.
+  //   CHẶN user + report FB = KHÔNG đảo ngược (mất khách vĩnh viễn + FB phạt Page nếu report bừa)
+  //                          → mặc định CHỜ ANH DUYỆT trên Telegram, KHÔNG tự chặn.
+  // Bài học: chặn nhầm khách bức xúc chính đáng / người nhà = mất khách thật (cùng gia đình
+  // lỗi 46 lead bot tự câm 23/07, nhưng chặn thì KHÔNG cứu lại được).
+  //   VESI_AN_AUTO=1   → tự ẩn comment phá hoại khi chac ≥ VESI_AN_NGUONG (mặc định BẬT khi có token)
+  //   VESI_CHAN_AUTO=1 → tự chặn user (mặc định TẮT — gom đề xuất chờ anh bấm)
+  //   VESI_AN_NGUONG   → ngưỡng độ-chắc để auto ẩn (mặc định 95)
+  const AN_AUTO = process.env.VESI_AN_AUTO !== '0';        // mặc định BẬT (ẩn reversible)
+  const CHAN_AUTO = process.env.VESI_CHAN_AUTO === '1';    // mặc định TẮT (chặn chờ duyệt)
+  const AN_NGUONG = parseInt(process.env.VESI_AN_NGUONG || '95', 10);
+
   const chan = [];      // [name, uid, verdict, ok, resp]
   const deXuat = [];    // [name, verdict, cid]  (chế độ đề-xuất khi dry vì thiếu token)
   const leadMoi = [];   // [cid, name, uid, updated_at]
@@ -459,6 +477,7 @@ export async function runVesi(opts = {}) {
     const loai = phanLoaiTen(name);
     let verdict = loai;
     let action = 'bo_qua';
+    let chacCham = 0; // độ chắc Gemini chấm (0 = không qua Gemini, vd NGOAI_CHAC theo bảng chữ)
 
     // Khách có SĐT = lead thật → khai báo cho FB học (KHÔNG BAO GIỜ chặn)
     if (hasPhone) {
@@ -477,8 +496,8 @@ export async function runVesi(opts = {}) {
     } else if (uid && (loai === 'NGHI_NGOAI' || kieu === 'COMMENT')) {
       // tên Latin lạ, hoặc COMMENT đọc được nội dung thật (soi anti/phá hoại)
       const g = await geminiCham(name, noiDung, kieu === 'COMMENT');
-      if (g.ngoai === true) { verdict = `NGOAI_GEMINI(${g.ly_do})`; action = 'chan'; }
-      else if (g.pha_hoai) { verdict = `PHA_HOAI(${g.ly_do})`; action = 'chan'; } // lệnh anh Trình 14/07
+      if (g.ngoai === true) { verdict = `NGOAI_GEMINI(${g.ly_do})`; action = 'chan'; chacCham = g.chac; }
+      else if (g.pha_hoai) { verdict = `PHA_HOAI(${g.ly_do})`; action = 'chan'; chacCham = g.chac; } // lệnh anh Trình 14/07
       else if (loai === 'NGHI_NGOAI') { verdict = `NGHI_NGOAI_THA(${g.ly_do})`; action = 'bo_qua'; }
     }
 
@@ -489,17 +508,46 @@ export async function runVesi(opts = {}) {
         continue; // không lưu state → lượt sau (có token) xử thật
       }
       const pt = await layPt();
-      const r = pt ? await fbBlock(pt, uid, dry, kind) : { __err__: 'no page token' };
-      const ok = !('__err__' in r);
       const nhan = verdict.startsWith('PHA_HOAI') ? '🚫 PHÁ HOẠI' : '🚫 NGOẠI-ẢO';
 
-      // ẩn comment phá hoại/ngoại (an_ok=true nếu ẩn được HOẶC đã ẩn sẵn từ lượt trước)
+      // ── NẤC 1: ẨN comment — ĐẢO NGƯỢC ĐƯỢC → cho AUTO khi chắc cao ──
+      // NGOAI_CHAC (chấm theo bảng chữ, không qua Gemini) coi như đủ chắc. Qua Gemini thì
+      // đòi chac ≥ AN_NGUONG (mặc định 95). dry chung (thiếu token / --dry) vẫn chặn ẩn thật.
+      const duChacDeAn = chacCham === 0 ? true : chacCham >= AN_NGUONG;
+      const anThat = AN_AUTO && !dry && kieu === 'COMMENT' && duChacDeAn;
       let anOk = null;
       if (kieu === 'COMMENT') {
-        const ra = pt ? await fbAnComment(pt, cid, dry) : { __err__: 'no page token' };
+        const ra = anThat ? await fbAnComment(pt, cid, false) : { dry_run: true };
         anOk = !('__err__' in ra);
-        if (anOk && !dry && !ra.already_hidden) anCmt.push([name, noiDung.slice(0, 60)]);
+        if (anThat && anOk && !ra.already_hidden) anCmt.push([name, noiDung.slice(0, 60)]);
+        else if (kieu === 'COMMENT' && !anThat && !dry) {
+          // đủ điều kiện chặn nhưng CHƯA đủ chắc để tự ẩn → đưa vào đề xuất cho anh xem
+          deXuat.push([name, `${verdict} · chắc ${chacCham}% (dưới ${AN_NGUONG}, chưa tự ẩn)`, cid]);
+        }
       }
+
+      // ── NẤC 2: CHẶN user + report — KHÔNG đảo ngược → mặc định CHỜ ANH DUYỆT ──
+      // Chỉ tự chặn khi CHAN_AUTO=1. Mặc định: gom đề xuất, KHÔNG gọi fbBlock.
+      const chanThat = CHAN_AUTO && !dry;
+      if (!chanThat) {
+        // chưa tự chặn → đề xuất cho anh bấm (tránh trùng dòng đề xuất "chưa tự ẩn" ở trên)
+        if (!(kieu === 'COMMENT' && AN_AUTO && !dry && !duChacDeAn)) {
+          deXuat.push([name, `${verdict}${chacCham ? ` · chắc ${chacCham}%` : ''} → CHỜ DUYỆT CHẶN`, cid]);
+        }
+        // vẫn ghi sổ để biết đã ẩn (nếu có), nhưng KHÔNG ghi state 'chan' → lượt sau anh còn xử được
+        if (anThat && anOk) {
+          ghiSoChan(uid, {
+            ts: new Date().toISOString(), psid: uid, name, conv: cid, type: kieu,
+            verdict, ok: false, an_comment: anOk, chac: chacCham, noi_dung: noiDung.slice(0, 100),
+            resp: { chi_an_chua_chan: true }, go_chan: `runVesi({ unblock: '${uid}' })`,
+          });
+        }
+        continue;
+      }
+
+      // CHAN_AUTO=1 → chặn thật
+      const r = await fbBlock(pt, uid, false, kind);
+      const ok = !('__err__' in r);
 
       if (!daBaoLoi.has(uid)) { // lần đầu → gắn nhãn + đưa vào báo cáo
         await pkGanNhan(pkToken, cid, ok ? `${nhan} ĐÃ CHẶN` : `${nhan} (chặn lỗi)`);
@@ -511,14 +559,9 @@ export async function runVesi(opts = {}) {
 
       ghiSoChan(uid, {
         ts: new Date().toISOString(), psid: uid, name, conv: cid, type: kieu,
-        verdict, ok, an_comment: anOk, noi_dung: noiDung.slice(0, 100), resp: r,
+        verdict, ok, an_comment: anOk, chac: chacCham, noi_dung: noiDung.slice(0, 100), resp: r,
         go_chan: `runVesi({ unblock: '${uid}' })`,
       });
-
-      // DRY: fbBlock trả {dry_run} → CHƯA chặn thật ai. TUYỆT ĐỐI KHÔNG lưu state 'chan',
-      // nếu không lượt LIVE sau sẽ bỏ qua ca này (getState+continue) = account ngoại/ảo LỌT,
-      // không bao giờ bị chặn thật. (Cùng lớp lỗi dry-ghi-state như nhánh CAPI.)
-      if (dry) continue; // đề-xuất/test → để lượt LIVE chặn thật + ghi state
 
       // CHỐNG LẶP 16/07 (nguyên văn py 377-390): chặn OK là LƯU STATE NGAY, kể cả ẩn comment
       // còn trục trặc — nếu không sẽ chặn+báo mỗi 30' cho ca đã xử. Ẩn comment hụt tự retry
