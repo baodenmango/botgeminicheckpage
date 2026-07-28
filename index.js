@@ -45,6 +45,55 @@ const BOOTED_AT = new Date().toISOString();
 const GIT_COMMIT = (process.env.RENDER_GIT_COMMIT || 'dev').slice(0, 7);
 app.get('/health', (_req, res) =>
   res.status(200).json({ ok: true, ts: Date.now(), commit: GIT_COMMIT, bootedAt: BOOTED_AT }));
+// --- LANDING TẶNG CẨM NANG: nhận lead từ trang "Nhận cẩm nang chăm khớp miễn phí" ---
+// POST /landing/lead {ho_ten, so_dien_thoai, benh?, gclid?, utm_source?, utm_campaign?}
+//   1) chuẩn hoá SĐT, chống trùng theo ngày; 2) LƯU lead + báo Telegram team; 3) nếu ZNS mời OA
+//      đang BẬT (isQuanTamOAEnabled) → bắn mời khách QUAN TÂM OA để rơi vào chuỗi chăm tự động.
+//   Cờ TẮT (mặc định) = chỉ lưu + báo team, KHÔNG tự gửi tin khách — chờ anh Trình duyệt bật.
+app.post('/landing/lead', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ten = String(b.ho_ten || '').trim().slice(0, 120) || null;
+    const sdtRaw = String(b.so_dien_thoai || '').replace(/[^0-9]/g, '');
+    // chuẩn về 0xxxxxxxxx (10 số) — chấp cả 84xxxxxxxxx
+    let sdt = sdtRaw;
+    if (/^84[0-9]{9}$/.test(sdt)) sdt = '0' + sdt.slice(2);
+    if (!/^0[0-9]{9}$/.test(sdt)) {
+      return res.status(400).json({ ok: false, error: 'so_dien_thoai_khong_hop_le' });
+    }
+    const benh = b.benh ? String(b.benh).slice(0, 40) : null;
+    // chống trùng: 1 SĐT/ngày chỉ ghi 1 lead landing
+    const ngay = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+    const lkey = `landing_lead:${sdt}:${ngay}`;
+    const trung = Boolean(store.getKV(lkey));
+    store.setKV(lkey, JSON.stringify({
+      ten, benh, gclid: b.gclid || null, utm_source: b.utm_source || null,
+      utm_campaign: b.utm_campaign || null, luc: Math.floor(Date.now() / 1000),
+    }));
+    // báo team Telegram (chỉ lần đầu trong ngày, khỏi spam)
+    if (!trung) {
+      notifyText(
+        `🎯 <b>LEAD LANDING — tặng cẩm nang</b>\n` +
+        `👤 ${ten || '(chưa rõ tên)'}\n📞 <b>${sdt}</b>\n` +
+        `🩹 Vùng đau: ${benh || '(chưa chọn)'}\n` +
+        (b.utm_campaign ? `📣 Camp: ${b.utm_campaign}\n` : '') +
+        `→ Gọi tư vấn + đặt lịch trong giờ vàng.`
+      ).catch(() => {});
+    }
+    // xếp gửi ZNS mời QUAN TÂM OA (kéo vào chuỗi chăm) — CHỈ khi cờ bật, không tự bắn khi tắt
+    let da_moi_oa = false;
+    if (isQuanTamOAEnabled() && !store.getKV(`zns_moi_oa:${sdt}`)) {
+      try {
+        const r = await sendZnsQuanTamOA(sdt, { ten });
+        if (r && r.ok !== false) { store.setKV(`zns_moi_oa:${sdt}`, '1'); da_moi_oa = true; }
+      } catch { /* không chặn phản hồi cho khách */ }
+    }
+    res.status(200).json({ ok: true, trung, da_moi_oa });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'loi' });
+  }
+});
+
 app.get('/', (_req, res) => {
   // meta tag xác thực domain Zalo (env ZALO_SITE_VERIFICATION) — không có thì trang chủ như cũ
   const zaloMeta = process.env.ZALO_SITE_VERIFICATION
@@ -374,6 +423,70 @@ app.get('/admin/voucher-so', (req, res) => {
   const tong = ds.length;
   const daDung = ds.filter((v) => v.da_dung).length;
   res.status(200).json({ ok: true, tong, da_dung: daDung, con_hieu_luc: tong - daDung, ds });
+});
+
+// --- Admin (CHỈ ĐỌC): SỔ ĐÁNH GIÁ SAO của khách qua form Zalo OA (mẫu 522230) ---
+// GET /admin/danh-gia?token=XXX[&limit=50]
+//   Tổng hợp từ KV prefix rating_log: — đếm theo sao 1..5, điểm trung bình, danh sách N lượt
+//   gần nhất kèm góp ý. Trước đây điểm sao chỉ nằm trong log Render → không có chỗ xem tổng.
+app.get('/admin/danh-gia', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 500);
+    const ds = store.listKVByPrefix('rating_log:').map((row) => {
+      try { return JSON.parse(row.value); } catch { return null; }
+    }).filter(Boolean);
+    const theo_sao = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let tongSao = 0, hopLe = 0;
+    for (const r of ds) {
+      const s = Number(r.sao);
+      if (s >= 1 && s <= 5) { theo_sao[s] += 1; tongSao += s; hopLe += 1; }
+    }
+    const diem_tb = hopLe ? Math.round((tongSao / hopLe) * 100) / 100 : null;
+    const gan_nhat = ds.slice().sort((a, b) => (b.luc || 0) - (a.luc || 0)).slice(0, limit).map((r) => ({
+      sao: r.sao,
+      ten: r.ten || '(chưa rõ)',
+      sdt: r.phone ? String(r.phone).slice(0, 4) + '***' : null,
+      gop_y: r.gopY || null,
+      luc: r.luc ? new Date(r.luc * 1000 + 7 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') : null,
+    }));
+    res.status(200).json({
+      ok: true, tong: hopLe, diem_tb, theo_sao,
+      thap_1_3: theo_sao[1] + theo_sao[2] + theo_sao[3],
+      gan_nhat,
+      giai_thich: 'theo_sao = số lượt mỗi mức 1..5. diem_tb = điểm TB tích luỹ. gan_nhat = lượt mới nhất kèm góp ý (SĐT che 4 số đầu). Ca ≤3★ đã réo Telegram real-time lúc khách chấm.',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
+// --- Admin (CHỈ ĐỌC): soi cờ bật/tắt các env quan trọng — KHÔNG lộ secret ---
+// GET /admin/env-check?token=XXX → true/false + độ dài chuỗi (0 = chưa điền). Để chẩn từ xa
+// "gửi tài liệu chết vì env OpenAPI tắt hay vì khách không follow OA" mà không rò khoá.
+app.get('/admin/env-check', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const flag = (v) => /^(1|true|yes|on)$/i.test(v || '');
+  const len = (v) => (v ? String(v).length : 0);
+  const has = (v) => Boolean(v);
+  res.status(200).json({
+    ok: true,
+    ZALO_OPENAPI_ENABLED: flag(process.env.ZALO_OPENAPI_ENABLED),
+    ZNS_ENABLED: flag(process.env.ZNS_ENABLED),
+    ZNS_TEMPLATE_QUANTAM_OA: process.env.ZNS_TEMPLATE_QUANTAM_OA || null, // mã template, KHÔNG phải secret
+    MAPS_REVIEW_URL_co: has(process.env.MAPS_REVIEW_URL), // có override link Maps qua env chưa
+    ZALO_ACCESS_TOKEN_len: len(process.env.ZALO_ACCESS_TOKEN),
+    ZALO_REFRESH_TOKEN_len: len(process.env.ZALO_REFRESH_TOKEN),
+    ZALO_OA_SECRET_len: len(process.env.ZALO_OA_SECRET),
+    ZALO_OA_ID: process.env.ZALO_OA_ID || null, // OA id là định danh CÔNG KHAI
+    VOUCHER_LIVE: flag(process.env.VOUCHER_LIVE),
+  });
 });
 
 // --- Admin: CHIẾN DỊCH VOUCHER khách cũ (template 518980 đã duyệt) ---

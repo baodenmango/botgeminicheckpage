@@ -14,6 +14,10 @@ import { lookupMedi, mapDiagnosis } from './medi.js';
 import { notifyText } from './telegram.js';
 import * as store from './store.js';
 
+// Link đánh giá Google Maps CHÍNH THỨC của phòng khám (Google cấp, ổn định lâu dài) —
+// nguồn: 01-Van-hanh/HE-THONG-XIN-REVIEW-GOOGLE.md. Override qua env nếu Google đổi hồ sơ.
+const MAPS_REVIEW_URL = process.env.MAPS_REVIEW_URL || 'https://g.page/r/CZkVGnwcLz5vEBM/review';
+
 // Xác thực chữ ký webhook Zalo OA. Công thức CHUẨN (đối chiếu tài liệu Zalo + nhiều nguồn dev,
 // 10/07): mac = SHA256(app_id + RAW_BODY + timestamp + OA_SECRET), header X-ZEvent-Signature (hex trần).
 //  • RAW_BODY = đúng byte Zalo gửi (req.rawBody), KHÔNG JSON.stringify(parsed) — parse rồi stringify
@@ -310,8 +314,37 @@ export async function handleZaloRating(body) {
   let ten = null;
   if (uid) { try { const info = await getUserInfo(uid); ten = info?.name || null; if (!phone) phone = info?.phone || null; } catch { /* OpenAPI tắt */ } }
 
+  // LƯU mỗi lượt chấm vào KV để có CHỖ XEM tổng hợp (route /admin/danh-gia). Trước đây điểm sao
+  // chỉ nằm trong log Render → anh Trình không xem được ca nào chấm bao nhiêu. Key gồm ngày+uid
+  // để không đè lượt cũ; giá trị JSON đủ dựng bảng (sao/tên/sđt/góp ý/lúc).
+  try {
+    store.setKV(`rating_log:${ngay}:${uid}`, JSON.stringify({
+      sao, ten: ten || null, phone: phone || null, gopY: gopY || null, luc: Math.floor(Date.now() / 1000),
+    }));
+  } catch { /* không chặn luồng */ }
+
   if (sao >= 4) {
-    console.log(`[rating] 😊 ${uid} chấm ${sao}★ (tốt) — chỉ log, không réo`);
+    // KHÁCH HÀI LÒNG (≥4★) → mời đăng review GOOGLE MAPS ngay lúc đang vui (đòn bẩy #1 vượt đối
+    // thủ: ta 4,7★/111 review vs Tân Phú Therapy 4,9★/646). Link + lời văn CHUẨN đã duyệt tuân thủ
+    // y tế: 01-Van-hanh/HE-THONG-XIN-REVIEW-GOOGLE.md (Mẫu A). Chống trùng 1 lần/uid vĩnh viễn
+    // (đừng làm phiền khách chấm sao nhiều lần). OpenAPI tắt → sendTexts trả false, chỉ log, không kẹt.
+    const mkey = `moi_review_maps:${uid}`;
+    if (!store.getKV(mkey)) {
+      const okMoi = await sendTexts(uid, [
+        'Dạ em cảm ơn mình đã tin tưởng Phòng khám Cơ Xương Khớp Hiệp Lợi 🌿\n' +
+        'Nếu mình thấy hài lòng, mong mình dành 1 phút đánh giá giúp phòng khám tại đây ạ:\n' +
+        MAPS_REVIEW_URL + '\n' +
+        'Mỗi đánh giá của mình là động lực để bác sĩ và phòng khám phục vụ tốt hơn. Em cảm ơn nhiều ạ!',
+      ]);
+      if (okMoi) {
+        store.setKV(mkey, String(sao));
+        console.log(`[rating] 😊 ${uid} chấm ${sao}★ (tốt) → ĐÃ gửi lời mời review Google Maps`);
+      } else {
+        console.warn(`[rating] ${uid} chấm ${sao}★ nhưng gửi lời mời Maps HỤT (OpenAPI tắt?) — chưa mời được`);
+      }
+    } else {
+      console.log(`[rating] 😊 ${uid} chấm ${sao}★ (tốt) — đã mời review Maps trước đó, không nhắc lại`);
+    }
     return true;
   }
   // ≤3 sao → RADAR: réo anh gọi cứu khách trước khi họ review công khai
