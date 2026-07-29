@@ -163,6 +163,28 @@ function laTinAutoPancake(lsb) {
   return AUTO_ADMIN_NAMES.includes(ten);
 }
 
+// TIN HỆ THỐNG đội lốt tin người — nhận qua NỘI DUNG (snippet), không qua tên người gửi.
+//
+// VÁ 29/07/2026 (ca Thanh Sơn Hoàng, chờ 105 phút). Khác hẳn ca Botcake 23/07: tin hệ thống CRM
+// "Đã đặt giai đoạn của khách hàng tiềm năng thành Đủ tiêu chuẩn" mang admin_name = "Dr Nhật
+// Trình" (TÊN NGƯỜI) và id = PAGE → lọt cả 2 cửa trên: dòng so id thấy trùng page, laTinAutoPancake
+// thấy tên không nằm trong AUTO_ADMIN_NAMES → rescue chấm "telesale đã rep" và bỏ ca này.
+// Thực tế khách vừa hỏi GIÁ 3 giây trước đó và không ai trả lời. Vì tên người gửi KHÔNG phân biệt
+// được, phải soi nội dung: các câu này là nhật ký hệ thống, không bao giờ là câu telesale gõ tay.
+// Chỉnh qua env RESCUE_SYSTEM_SNIPPETS (phân tách |, so trên chuỗi đã bỏ dấu).
+const RESCUE_SYSTEM_SNIPPETS = ((process.env.RESCUE_SYSTEM_SNIPPETS || '').trim() ||
+  'da dat giai doan cua khach hang tiem nang thanh|da dat giai doan khach hang tiem nang thanh'
+  + '|da tra loi mot quang cao|ban dang phan hoi binh luan cua nguoi dung'
+).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+function laTinHeThong(c) {
+  const s = String(c?.snippet || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!s) return false;
+  return RESCUE_SYSTEM_SNIPPETS.some((m) => s.includes(m));
+}
+
 // Người gửi CUỐI có phải KHÁCH không (không phải page/bot). true = khách nhắn cuối → cần vớt.
 // So theo phần lõi (bỏ tiền tố zl_/ttm_...): Zalo lúc "zl_3136..." lúc "3136..." tùy endpoint —
 // so khít sẽ coi tin của chính OA là tin khách → bot tự trả lời chính mình lặp vô hạn.
@@ -170,6 +192,12 @@ function khachNhanCuoi(c, pageId) {
   const lsb = c.last_sent_by;
   if (!lsb) return false;
   if (stripChannelPrefix(lsb.id) !== stripChannelPrefix(pageId)) return true;
+  // Tin cuối là NHẬT KÝ HỆ THỐNG đội lốt tin người (vá 29/07) → khách vẫn đang chờ câu trả lời.
+  // Đặt TRƯỚC cửa laTinAutoPancake vì ca này mang tên người, không mang tên "Botcake".
+  if (laTinHeThong(c)) {
+    console.log(`[rescue] 🔎 ${c.id}: tin cuối là NHẬT KÝ HỆ THỐNG ("${String(c.snippet || '').slice(0, 60)}") tuy mang tên "${lsb.admin_name}" → CHƯA REP, đưa vào diện vớt`);
+    return true;
+  }
   // Tin cuối mang id PAGE nhưng là auto-message Botcake → khách VẪN đang chờ câu trả lời thật.
   if (laTinAutoPancake(lsb)) {
     console.log(`[rescue] 🔎 ${c.id}: tin cuối là auto-message "${lsb.admin_name}" (không trả lời khách) → vẫn coi là CHƯA REP, đưa vào diện vớt`);

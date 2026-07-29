@@ -107,8 +107,17 @@ const AUTO_REPLY_EXACT = (process.env.AUTO_REPLY_EXACT ||
 // ĐẦU câu → dùng regex neo cuối câu an toàn hơn includes, tránh chặn nhầm telesale thật lỡ nhắc
 // tới chữ "quảng cáo" giữa câu tư vấn.
 // Chỉnh qua env AUTO_REPLY_PATTERNS (phân tách |, cú pháp regex, so trên chuỗi ĐÃ bỏ dấu).
+//
+// VÁ 29/07/2026 — BIẾN THỂ MỚI cùng gia đình bệnh, lọt qua bản vá 23/07: tin hệ thống CRM
+// "Đã đặt giai đoạn của khách hàng tiềm năng thành Đủ tiêu chuẩn" (Pancake/FB bắn khi đổi
+// giai đoạn lead). Ca Thanh Sơn Hoàng 29/07 09:47: khách hỏi GIÁ ("dự trù khoảng 15 triệu hay
+// nhiều hơn"), 3 giây sau tin hệ thống này đè lên → mang danh nghĩa "Dr Nhật Trình" (tên NGƯỜI)
+// nên handler chấm là telesale gõ tay → bot tự câm; rescueLead cũng loại vì last_sent_by là tên
+// người → khách chờ 105 PHÚT không ai trả lời, máy canh phải kêu mới lộ.
+// Neo "^da dat giai doan" — tin hệ thống luôn mở đầu bằng cụm này, không có tên khách đứng trước.
 const AUTO_REPLY_PATTERNS = ((process.env.AUTO_REPLY_PATTERNS || '').trim() ||
   'da tra loi mot quang cao\\.?$|da tra loi quang cao\\.?$|ban dang phan hoi binh luan cua nguoi dung'
+  + '|^da dat giai doan cua khach hang tiem nang thanh|^da dat giai doan khach hang tiem nang thanh'
 ).split('|').map((s) => { try { return new RegExp(s.trim(), 'i'); } catch { return null; } }).filter(Boolean);
 
 function isAutoReplyMessage(text) {
