@@ -361,6 +361,27 @@ app.get('/admin/gui-card', async (req, res) => {
   }
 });
 
+// Admin: gửi 1 thông báo NỘI BỘ vào group đặt lịch, qua bot đặt lịch (@hieploi_datlich_bot).
+// Dùng khi cần phổ biến quy trình cho đội telesale (vd chốt form đặt lịch 02/08) — token bot này
+// chỉ có trên Render, ngoài không cầm được, nên phải đi qua route có ADMIN_TOKEN.
+// CHỈ gửi vào group NỘI BỘ (chat_id âm) — chặn nhắn thẳng khách qua đường này.
+// POST /admin/bao-group?token=XXX   body: { chat_id, text }
+app.post('/admin/bao-group', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const chatId = String(req.body?.chat_id || '').trim();
+  const text = String(req.body?.text || '').trim();
+  if (!chatId || !text) return res.status(400).json({ ok: false, error: 'thiếu chat_id hoặc text' });
+  // Chốt an toàn: group/supergroup luôn có id ÂM. Chat riêng của khách (id dương) → từ chối.
+  if (!chatId.startsWith('-')) {
+    return res.status(400).json({ ok: false, error: 'chỉ gửi được vào GROUP nội bộ (chat_id âm)' });
+  }
+  const ok = await guiBienNhan(chatId, null, text);
+  res.status(ok ? 200 : 500).json({ ok, chat_id: chatId, do_dai: text.length });
+});
+
 // --- Admin: RESET dedup voucher 1 SĐT (để test lại / xử ca gửi lỗi cần phát lại) ---
 // GET /admin/voucher-reset?token=XXX&phone=09xx → xoá key zns_voucher_sent để số đó nhận lại được.
 app.get('/admin/voucher-reset', (req, res) => {
