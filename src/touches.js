@@ -147,32 +147,51 @@ function noiDungCham4(condition, daCoSo) {
   const than = meo
     ? `Dạ em gửi mình vài mẹo nhỏ tự làm tại nhà cho đỡ hơn nha ạ 🌿\n${meo}`
     : 'Dạ em gửi mình vài lời dặn nhỏ để chăm sóc tại nhà cho đỡ hơn nha ạ 🌿 Mình nhớ vận động nhẹ nhàng đều đặn, tránh giữ một tư thế quá lâu ạ.';
-  const dan = daCoSo
-    ? '\nMình sắp xếp qua khám hôm nào tiện, em giữ suất cho mình nha 🙏'
-    : '\nMuốn Bác sĩ xem kỹ và tư vấn hướng phù hợp (miễn phí) thì mình để lại số giúp em nha 🙏';
 
-  // ĐÒN BẨY (anh chốt 30/06): KHÔNG dán link Drive cho không — cẩm nang PDF + video là LÝ DO
-  // Quan tâm OA, file giao SAU khi follow (webhook follow OA tự gửi). daCoPDF luôn = false.
-  return [than + dan, loiMoiZaloOA(tenCN, daCoSo, false)];
+  // VÁ 02/08 (ca Phuong Ngoc): trước đây ô 1 = mẹo + ĐÒI SỐ, ô 2 = ĐÒI quan tâm OA → 1 lượt
+  // đòi khách 2 việc, ngay sau khi vừa "tặng" mẹo. Khách đọc ra: món quà là cái bẫy.
+  // Nay ô mẹo CHO KHÔNG (không đuôi đòi hỏi), và mỗi lượt chỉ còn ĐÚNG 1 lời đòi:
+  //   - CHƯA có số → ô 2 xin số (đây là điểm ra lead thứ 2 của chuỗi, sau chạm 2).
+  //     KHÔNG mời OA cùng lượt: gộp 2 lời đòi là dấu hiệu rõ nhất của máy bán hàng.
+  //     Khách chưa cho số cũng chưa sẵn sàng follow OA — mời sớm chỉ tổ loãng.
+  //   - ĐÃ có số → telesale đang lo gọi, không cần xin gì nữa → ô 2 mời OA (giữ đúng đòn bẩy
+  //     anh chốt 30/06: cẩm nang PDF + video là LÝ DO quan tâm OA, file giao SAU khi follow,
+  //     KHÔNG dán link Drive cho không).
+  const oi2 = daCoSo
+    ? loiMoiZaloOA(tenCN, true, false)
+    : 'Dạ mình để lại số điện thoại giúp em nha, Bác sĩ Trình gọi xem kỹ tình trạng rồi tư vấn hướng phù hợp cho mình — tư vấn miễn phí thôi ạ 🙏';
+  return [than, oi2];
 }
 
-// ===================== CHẠM 6 — BÁM ĐUỔI NHẸ (T+30h) =====================
+// ===================== CHẠM 6 — HỎI THĂM THẬT (T+30h) =====================
 // Anh chốt 29/06: thay "retarget ad" bằng bot nhắn inbox bám đuổi nhẹ.
 // NÉN 04/07: 1 ô duy nhất.
-// Biến thể chạm 6 — giữ "suất tư vấn (miễn phí) với Bác sĩ Trình" nhưng xoay câu chữ để không trùng.
+//
+// === VÁ 02/08/2026 — CHỮA BỆNH "GIẢ TẠO" (ca Phuong Ngoc, MẤT KHÁCH THẬT) ===
+// Khách nhắn: "tui rất sợ giả tạo... Người thật nói ít bệnh nhận hiểu... 1 ngày mà Gởi tới 10 tn
+// hết hồn luôn" → bỏ luôn ý định chữa bệnh.
+// Đo lại toàn file thì thấy gốc KHÔNG phải lặp câu chữ (mỗi chạm đã có 5 biến thể, chống lặp tốt),
+// mà là: **7/7 câu "hỏi thăm" đều có ĐUÔI BÁN HÀNG**. Khách đọc nửa đầu tưởng được quan tâm, đọc
+// tới dấu gạch ngang thì hiểu hỏi thăm chỉ là cái cớ để xin số → đó ĐÚNG là "giả tạo".
+// Cả 5 lần chạm trong 30h đều đòi CÙNG một thứ (28 câu xin số/12 câu "giữ suất" trong 1 file).
+//
+// SỬA: chạm 6 là chạm hỏi thăm CUỐI chuỗi → cắt HẲN đuôi bán. Hỏi thăm là hỏi thăm, không kèm
+// điều kiện. Khách thấy được quan tâm thật sẽ tự quay lại; khách không quan tâm thì thêm 1 câu
+// xin số cũng không đổi được gì, chỉ tổ mất luôn thiện cảm (đúng ca này).
+// Đây là chỗ DUY NHẤT trong chuỗi bot "cho không, không đòi lại" — giữ nguyên tinh thần đó.
 const CHAM6_COSO = [
-  'Dạ em hỏi thăm mình chút xíu ạ 🌸 Mấy mẹo hôm trước mình áp dụng có đỡ hơn không ạ? Bác sĩ vẫn giữ suất tư vấn cho mình — hôm nào tiện qua khám mình nhắn em book giúp cho khỏi chờ nha 🙏',
-  'Dạ mấy hôm nay mình sao rồi ạ 🌸 Bài tập hôm trước có giúp mình dễ chịu hơn chút nào không? Suất tư vấn với Bác sĩ em vẫn để dành cho mình — khi nào tiện qua khám nhắn em xếp lịch cho khỏi chờ nha 🙏',
-  'Dạ em ghé hỏi thăm mình xíu nha 🌸 Mấy mẹo bữa trước mình làm thấy đỡ hơn không ạ? Bác sĩ vẫn dành suất tư vấn cho mình đó — bữa nào rảnh qua khám mình nhắn em giữ chỗ trước cho ạ 🙏',
-  'Dạ không biết mấy bữa nay mình thấy trong người sao rồi ạ 🌸 Hôm trước em có gửi mấy mẹo, mình áp dụng có nhẹ hơn không? Suất tư vấn với Bác sĩ em vẫn giữ — tiện hôm nào mình nhắn em book cho khỏi phải chờ nha 🙏',
-  'Dạ em nhắn hỏi thăm mình chút ạ 🌸 Tình trạng mấy hôm nay đỡ hơn được phần nào chưa mình? Bác sĩ vẫn còn giữ suất tư vấn cho mình — khi nào qua khám tiện thì nhắn em, em xếp lịch trước cho khỏi chờ ạ 🙏',
+  'Dạ em hỏi thăm mình chút xíu ạ 🌸 Mấy mẹo hôm trước mình áp dụng có đỡ hơn không ạ?',
+  'Dạ mấy hôm nay mình sao rồi ạ 🌸 Bài tập hôm trước có giúp mình dễ chịu hơn chút nào không?',
+  'Dạ em ghé hỏi thăm mình xíu nha 🌸 Mấy mẹo bữa trước mình làm thấy đỡ hơn không ạ?',
+  'Dạ không biết mấy bữa nay mình thấy trong người sao rồi ạ 🌸 Hôm trước em có gửi mấy mẹo, mình áp dụng có nhẹ hơn không?',
+  'Dạ em nhắn hỏi thăm mình chút ạ 🌸 Tình trạng mấy hôm nay đỡ hơn được phần nào chưa mình?',
 ];
 const CHAM6_CHUASO = [
-  'Dạ em hỏi thăm mình chút xíu ạ 🌸 Tình trạng mấy hôm nay có đỡ hơn không ạ? Suất tư vấn miễn phí với Bác sĩ Trình em vẫn giữ — mình để lại số giúp em để Bác sĩ gọi xem kỹ cho mình nha 🙏',
-  'Dạ mấy bữa nay mình thấy sao rồi ạ 🌸 Chỗ đau có dịu hơn được chút nào chưa? Em vẫn để dành suất tư vấn miễn phí với Bác sĩ Trình cho mình — mình để lại số, Bác sĩ gọi xem kỹ giúp mình nha 🙏',
-  'Dạ em ghé hỏi thăm mình xíu nha 🌸 Tình trạng mấy hôm nay đỡ hơn không ạ? Suất tư vấn miễn phí với Bác sĩ Trình vẫn còn cho mình đó — mình cho em xin số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
-  'Dạ không biết mấy hôm nay mình còn khó chịu nhiều không ạ 🌸 Em vẫn giữ suất tư vấn miễn phí với Bác sĩ Trình cho mình nè — mình để lại số giúp em, Bác sĩ gọi xem kỹ tình trạng cho mình nha 🙏',
-  'Dạ em nhắn hỏi thăm mình chút ạ 🌸 Chỗ đau hôm nay có bớt hơn được phần nào chưa mình? Suất tư vấn miễn phí với Bác sĩ Trình em vẫn để dành — mình gửi em số điện thoại, Bác sĩ gọi xem giúp cho mình nha 🙏',
+  'Dạ em hỏi thăm mình chút xíu ạ 🌸 Tình trạng mấy hôm nay có đỡ hơn không ạ? Mình cần gì cứ nhắn em nha.',
+  'Dạ mấy bữa nay mình thấy sao rồi ạ 🌸 Chỗ đau có dịu hơn được chút nào chưa? Có gì mình cứ nhắn em ạ.',
+  'Dạ em ghé hỏi thăm mình xíu nha 🌸 Tình trạng mấy hôm nay đỡ hơn không ạ? Cần gì mình nhắn em nha.',
+  'Dạ không biết mấy hôm nay mình còn khó chịu nhiều không ạ 🌸 Mình cần hỏi gì thêm cứ nhắn em ạ.',
+  'Dạ em nhắn hỏi thăm mình chút ạ 🌸 Chỗ đau hôm nay có bớt hơn được phần nào chưa mình?',
 ];
 function noiDungCham6(condition, daCoSo) {
   return [daCoSo ? pick(CHAM6_COSO) : pick(CHAM6_CHUASO)];
@@ -192,28 +211,42 @@ const CHAM2_CHUASO = [
   'Dạ nãy giờ mình quan tâm mà em chưa có số để nhờ Bác sĩ gọi ạ 🌸 Bên em vẫn dành riêng cho mình một suất tư vấn với Bác sĩ Trình hôm nay — mình cho em xin số, Bác sĩ gọi tư vấn miễn phí nha 🙏',
 ];
 // Chạm 2 (~15 phút, chưa số) — NÉN 04/07: 1 ô.
+// LƯU Ý (soi 02/08): 3 builder 2/5/7 vốn CHỈ dùng cho nhánh CHƯA có số — engine sevenTouch.js:140
+// rẽ nhánh trước: có số ở chạm 2/5/7 → telesale GỌI, không gửi tin. Nên tham số daCoSo trước giờ
+// bị bỏ qua ở đây KHÔNG gây lỗi tới khách. Vẫn thêm lối thoát an toàn phòng khi có đường gọi mới
+// (gọi tay/admin/engine khác) quên rẽ nhánh — bot sẽ im thay vì nhắn "mình chưa kịp để lại số"
+// cho người vừa cho số 15 phút trước (đúng họ hàng ca Cương 01/08).
 function noiDungCham2(condition, daCoSo) {
+  if (daCoSo) return [];
   return [pick(CHAM2_CHUASO)];
 }
-// Biến thể chạm 5 (~24h, chưa số) — bằng chứng xã hội nhẹ + xin số. KHÔNG cam kết khỏi 100%.
+// Biến thể chạm 5 (~24h, chưa số) — bằng chứng xã hội nhẹ. KHÔNG cam kết khỏi 100%.
+// VÁ 02/08: bỏ câu đòi số ở CUỐI (ca Phuong Ngoc). Chạm 2 và 4 đã xin số rồi; xin lần 3 trong
+// 24h không làm khách đổi ý, chỉ làm họ thấy mình đang bị đeo. Thay bằng lời mời NHẸ, không
+// điều kiện — khách muốn thì tự nhắn lại, và lúc đó họ nhắn với tâm thế chủ động chứ không bị ép.
 const CHAM5_CHUASO = [
-  'Dạ mấy hôm nay tình trạng của mình sao rồi ạ, còn khó chịu nhiều không? 🌸 Nhiều cô chú giống tình trạng mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng là cải thiện tốt lắm ạ — mình để lại số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
-  'Dạ chỗ đau của mình mấy bữa nay có dịu hơn được chút nào chưa ạ? 🌸 Nhiều cô chú tình trạng giống mình, được Bác sĩ Trình xem kỹ và hướng dẫn đúng nên đỡ hơn nhiều lắm ạ — mình cho em xin số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
-  'Dạ không biết mấy hôm nay mình còn đau nhiều không ạ 🌸 Bên em nhiều cô chú tình trạng như mình, sau khi được Bác sĩ Trình xem kỹ và dặn đúng cách thì cải thiện rõ lắm ạ — mình để lại số, Bác sĩ gọi xem giúp mình sớm nha 🙏',
-  'Dạ tình trạng của mình mấy bữa nay đỡ hơn được phần nào chưa ạ? 🌸 Nhiều cô chú giống mình được Bác sĩ Trình khám kỹ tìm đúng gốc rồi hướng dẫn nên nhẹ nhõm hơn hẳn ạ — mình gửi em số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
-  'Dạ em hỏi thăm chút, mấy hôm nay mình còn khó chịu nhiều không ạ 🌸 Nhiều cô chú tình trạng như mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng nên cải thiện tốt lắm — mình để lại số để Bác sĩ gọi xem giúp mình sớm nha 🙏',
+  'Dạ mấy hôm nay tình trạng của mình sao rồi ạ, còn khó chịu nhiều không? 🌸 Nhiều cô chú giống tình trạng mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng là cải thiện tốt lắm ạ. Mình muốn hỏi gì thêm cứ nhắn em nha.',
+  'Dạ chỗ đau của mình mấy bữa nay có dịu hơn được chút nào chưa ạ? 🌸 Nhiều cô chú tình trạng giống mình, được Bác sĩ Trình xem kỹ và hướng dẫn đúng nên đỡ hơn nhiều lắm ạ. Có gì mình cứ nhắn em ạ.',
+  'Dạ không biết mấy hôm nay mình còn đau nhiều không ạ 🌸 Bên em nhiều cô chú tình trạng như mình, sau khi được Bác sĩ Trình xem kỹ và dặn đúng cách thì cải thiện rõ lắm ạ. Mình cần gì cứ nhắn em nha.',
+  'Dạ tình trạng của mình mấy bữa nay đỡ hơn được phần nào chưa ạ? 🌸 Nhiều cô chú giống mình được Bác sĩ Trình khám kỹ tìm đúng gốc rồi hướng dẫn nên nhẹ nhõm hơn hẳn ạ. Mình muốn biết thêm gì cứ nhắn em ạ.',
+  'Dạ em hỏi thăm chút, mấy hôm nay mình còn khó chịu nhiều không ạ 🌸 Nhiều cô chú tình trạng như mình được Bác sĩ Trình xem kỹ rồi hướng dẫn đúng nên cải thiện tốt lắm ạ. Có gì mình nhắn em nha.',
 ];
 // Chạm 5 (~24h, chưa số) — NÉN 04/07: 1 ô.
 function noiDungCham5(condition, daCoSo) {
   return [pick(CHAM5_CHUASO)];
 }
-// Biến thể chạm 7 (~47h, chưa số) — lời cuối nhẹ để cửa mở, giữ "miễn phí" + xin số.
+// Biến thể chạm 7 (~47h, chưa số) — LỜI CUỐI, đóng chuỗi tử tế.
+// VÁ 02/08 (ca Phuong Ngoc): bỏ hẳn đòn khan hiếm GIẢ ("suất sắp hết hạn"). Khách nhận cả chuỗi
+// sẽ thấy "suất" được nhắc ở chạm 2, 6 rồi "sắp hết hạn" ở chạm 7 mà vẫn còn nguyên → bắt được
+// là mất niềm tin vào TẤT CẢ những gì bot nói trước đó, kể cả phần y khoa thật.
+// Đây là tin CUỐI: chốt thật thà, nói rõ "em không nhắn nữa" — chính câu đó mới giữ được thiện
+// cảm, và để ngỏ cửa cho khách quay lại khi họ thật sự cần.
 const CHAM7_CHUASO = [
-  'Dạ em nhắn mình lần cuối nha ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em giữ cho mình sắp hết hạn — nếu mình còn cần, để lại số điện thoại là Bác sĩ gọi cho mình liền, hoàn toàn miễn phí ạ 🙏',
-  'Dạ em xin phép nhắn mình một lần cuối nha 🌸 Suất tư vấn miễn phí với Bác sĩ Trình em dành cho mình cũng sắp hết đợt — nếu mình còn cần thì để lại số, Bác sĩ gọi cho mình liền, không tốn gì đâu ạ 🙏',
-  'Dạ em ghé nhắn mình lần cuối thôi ạ 🌸 Suất tư vấn với Bác sĩ Trình em giữ cho mình sắp tới hạn rồi — mình còn cần thì cho em xin số, Bác sĩ gọi tư vấn cho mình liền, hoàn toàn miễn phí nha 🙏',
-  'Dạ đây là lần cuối em nhắn để mình khỏi lỡ ạ 🌸 Suất tư vấn miễn phí với Bác sĩ Trình dành cho mình sắp hết hạn — nếu mình còn muốn thì để lại số, Bác sĩ gọi cho mình liền, không mất phí gì đâu ạ 🙏',
-  'Dạ em nhắn nhẹ mình lần cuối nha ạ 🌸 Em vẫn còn giữ cho mình suất tư vấn miễn phí với Bác sĩ Trình nhưng sắp hết đợt rồi — mình còn cần thì gửi em số, Bác sĩ gọi cho mình liền, hoàn toàn miễn phí ạ 🙏',
+  'Dạ em nhắn mình lần cuối nha ạ 🌸 Em không làm phiền mình nữa đâu. Khi nào mình cần Bác sĩ xem giúp, chỉ cần nhắn lại đây là bên em hỗ trợ liền ạ. Chúc mình mau khoẻ 🙏',
+  'Dạ em xin phép nhắn mình một lần cuối thôi ạ 🌸 Em dừng ở đây để khỏi làm phiền mình. Lúc nào cần thì mình cứ nhắn lại, em luôn sẵn sàng hỗ trợ ạ. Chúc mình nhiều sức khoẻ 🙏',
+  'Dạ đây là tin cuối em nhắn mình nha ạ 🌸 Em không nhắn thêm nữa đâu ạ. Khi nào mình muốn Bác sĩ xem giúp thì nhắn lại đây là được, bên em hỗ trợ liền. Chúc mình mau khoẻ nha 🙏',
+  'Dạ em ghé nhắn mình lần cuối rồi thôi ạ 🌸 Em không làm phiền mình nữa. Mình cần gì thì cứ nhắn lại đây bất cứ lúc nào, em hỗ trợ liền cho mình ạ. Giữ gìn sức khoẻ nha mình 🙏',
+  'Dạ em nhắn nhẹ mình lần cuối nha ạ 🌸 Từ đây em dừng, không làm phiền mình nữa. Khi nào cần Bác sĩ xem giúp, mình nhắn lại đây là bên em hỗ trợ ngay ạ. Chúc mình mau khoẻ 🙏',
 ];
 // Chạm 7 (~47h, chưa số) — NÉN 04/07: 1 ô, lời cuối nhẹ nhàng để cửa mở.
 function noiDungCham7(condition, daCoSo) {

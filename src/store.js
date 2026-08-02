@@ -707,6 +707,10 @@ export function findTouchTargets(touchNo, hours, holdHours = 2, graceHours = 6, 
   const rows = db.prepare(`
     SELECT * FROM conversations
     WHERE status != 'handover'
+      -- VÁ 02/08/2026 (ca Phuong Ngoc): khách xin ngừng nhận tin thì KHÔNG bao giờ vào danh sách
+      -- chạm nữa. Chặn tại NGUỒN (SQL) rẻ hơn và kín hơn chặn lúc gửi — engine mới viết sau này
+      -- lỡ quên gác opt_out vẫn không lôi được khách đã tắt ra khỏi đây.
+      AND opt_out = 0
       AND created_at IS NOT NULL
       AND created_at >= ?              -- còn trong cửa sổ 48h
       AND created_at <= ?              -- đã qua mốc T+hours
@@ -760,6 +764,8 @@ export function findRetouchTargets(minIdleHours, maxCount, holdHours = 2) {
   const rows = db.prepare(`
     SELECT * FROM conversations
     WHERE status = 'active' AND phone_captured = 0
+      -- VÁ 02/08/2026 (ca Phuong Ngoc): chặn tại nguồn, khách xin ngừng không bao giờ bị chạm lại.
+      AND opt_out = 0
       AND last_customer_msg_at IS NOT NULL
       AND last_customer_msg_at <= ?
       AND retouch_count < ?

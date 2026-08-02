@@ -38,6 +38,59 @@ function docLastCustomerMsgAt({ conversation_id, zalo_user_id, phone }) {
   return null;
 }
 
+// ── OPT-OUT: khách đã xin ngừng nhận tin thì MỌI engine chăm phải im (vá 02/08, ca Phuong Ngoc).
+// Tra cả 3 đường vì 1 người có thể có conv FB + conv Zalo + SĐT: chặn ở đường nào cũng phải chặn
+// hết, không thì khách tắt bên FB xong vẫn bị Zalo bắn tiếp — đúng cảm giác "bị đeo bám".
+export function khachDaOptOut({ conversation_id, zalo_user_id, phone } = {}) {
+  try {
+    if (conversation_id && store.isOptedOut(store.getConversation(conversation_id))) return true;
+    if (zalo_user_id) {
+      const oaId = process.env.ZALO_OA_ID || '3136814239074246132';
+      const uid = String(zalo_user_id).replace(/^zl_/i, '');
+      if (store.isOptedOut(store.getConversation(`zl_${oaId}_${uid}`))) return true;
+    }
+    if (phone && store.isPhoneOptedOut(phone)) return true;
+  } catch { /* đọc hụt → không chặn oan, tin vẫn đi */ }
+  return false;
+}
+
+// ── TRẦN TIN CHĂM/NGÀY/KHÁCH (vá 02/08) — chống DỘI TIN từ nhiều engine cùng lúc.
+// Ca Phuong Ngoc: "1 ngày mà Gởi tới 10 tn hết hồn luôn" → mất hẳn 1 bệnh nhân. Gốc: mỗi engine
+// (7 chạm / bill / tái bill / voucher / wakeup / rescue) tự thấy mình chỉ gửi "1-2 tin", không
+// engine nào biết engine khác vừa gửi gì → cộng dồn thành cơn mưa tin. Quota 500/tháng là ngân
+// sách TIỀN, không phải trần chống phiền theo NGƯỜI → không cứu được ca này.
+// Trần đếm theo Ô TIN thực gửi, khoá theo NGÀY giờ VN. Đổi bằng CARE_MAX_TIN_NGAY.
+const TRAN_TIN_NGAY = parseInt(process.env.CARE_MAX_TIN_NGAY || '3', 10);
+
+function ngayVN(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d); // YYYY-MM-DD
+}
+
+// Khoá đếm: ưu tiên SĐT (định danh xuyên kênh — chặn được cả FB lẫn Zalo của cùng 1 người),
+// không có thì mới dùng conv id / zalo uid.
+function khoaDemTin({ conversation_id, zalo_user_id, phone } = {}) {
+  const dinhDanh = (phone && String(phone).replace(/[^\d]/g, '')) || conversation_id || zalo_user_id;
+  return dinhDanh ? `care_tin_ngay:${ngayVN()}:${dinhDanh}` : null;
+}
+
+/** Khách này còn "ngạch" nhận tin chăm hôm nay không? Không xác định được danh tính → cho qua. */
+export function conDuTranNgay(target, soTin = 1) {
+  const key = khoaDemTin(target);
+  if (!key) return true;
+  const daGui = parseInt(store.getKV(key) || '0', 10);
+  return (daGui + Math.max(1, soTin | 0)) <= TRAN_TIN_NGAY;
+}
+
+/** Ghi nhận đã gửi bao nhiêu ô tin cho khách này hôm nay (chỉ gọi khi gửi THÀNH CÔNG). */
+export function ghiTinDaGui(target, soTin = 1) {
+  const key = khoaDemTin(target);
+  if (!key) return;
+  const daGui = parseInt(store.getKV(key) || '0', 10);
+  store.setKV(key, String(daGui + Math.max(1, soTin | 0)));
+}
+
 // ── KHUNG GIỜ GỬI (vá 19/07 — CEO soi log Render): cron chăm sóc chạy '10 * * * *' theo
 // giờ MÁY (Render UTC, env KHÔNG có TZ) → 24/24. Log thật 12–18/07: 7/67 tin rơi ngoài
 // khung, có ca 00:10 và 22:10 giờ VN. Tin chăm sóc rạng sáng phản tác dụng + dễ bị report OA.
@@ -97,6 +150,20 @@ export async function sendCareMessages(target, messages, opts = {}) {
     }
   }
 
+  // ===== GÁC OPT-OUT + TRẦN TIN/NGÀY (vá 02/08 — ca Phuong Ngoc) =====
+  // Ca lỗi thật: khách nhận ~10 tin/ngày từ nhiều engine cùng lúc → "hết hồn luôn", bỏ luôn ý định
+  // chữa bệnh. Trước vá, 8/9 engine chăm KHÔNG engine nào kiểm opt_out (chỉ wakeup.js có).
+  // Gác Ở ĐÂY vì care-send là chốt chặn chung của bill/tái bill/voucher/wakeup — chặn 1 chỗ,
+  // mọi engine đi qua đều dính, khỏi phải nhớ sửa từng file (bài học "vá 1 nơi, sót 8 nơi").
+  if (khachDaOptOut({ conversation_id, zalo_user_id, phone: target?.phone })) {
+    console.warn(`[care-send] 🛑 BỎ gửi${opts.code ? ` ${opts.code}` : ''}: khách đã xin NGỪNG nhận tin (opt_out).`);
+    return false;
+  }
+  if (!conDuTranNgay({ conversation_id, zalo_user_id, phone: target?.phone }, messages.length)) {
+    console.warn(`[care-send] 🚧 BỎ gửi${opts.code ? ` ${opts.code}` : ''}: khách đã nhận đủ ${TRAN_TIN_NGAY} tin hôm nay (chống dội tin).`);
+    return false;
+  }
+
   // TÁCH TIN GIAO DỊCH: nếu tin gửi trong cửa sổ 48h kể từ lần khách nhắn cuối → MIỄN PHÍ,
   // KHÔNG tính vào quota 500 → bỏ luôn gác đạn (tin miễn phí không cần giữ đạn).
   const lc = docLastCustomerMsgAt({ conversation_id, zalo_user_id, phone: target?.phone });
@@ -145,6 +212,10 @@ export async function sendCareMessages(target, messages, opts = {}) {
   }
 
   if (ok) {
+    // Đếm trần chống-dội-tin TRƯỚC quota: quota là ngân sách TIỀN (bỏ qua tin trong 48h),
+    // còn trần này đếm theo NGƯỜI và phải tính MỌI tin đã tới tay khách — kể cả tin miễn phí,
+    // vì khách bị phiền không quan tâm tin đó có tốn tiền của phòng khám hay không.
+    ghiTinDaGui({ conversation_id, zalo_user_id, phone: target?.phone }, messages.length);
     if (mienPhi) {
       quota.ghiMienPhi(messages.length); // trong 48h → không trừ quota, chỉ đếm để đo
     } else {

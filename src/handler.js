@@ -3,7 +3,7 @@ import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageChannel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
-import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, isUrgent } from './telegram.js';
+import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyText, isUrgent } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
 import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
 import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS } from './echoguard.js';
@@ -214,6 +214,38 @@ export function laConvDaKham(conversationId) {
 // chưa có bệnh án để chăm sau khám, nhưng telesale ĐÃ cầm số → cấm mọi kịch bản xin số.
 export function laConvDaDatLich(conversationId) {
   return Boolean(store.getKV(`da_dat_lich_conv:${conversationId}`));
+}
+
+// --- KHÁCH XIN NGỪNG NHẬN TIN (ca Phuong Ngoc 02/08) ---
+// Ca lỗi thật: khách nhắn "Gởi tn nhiều quá... 1 ngày mà Gởi tới 10 tn hết hồn luôn... Kh nên
+// Gởi tn tới tui nữa tui đã bỏ ý định đến chữa bệnh rồi" → MẤT HẲN 1 bệnh nhân vì bị dội tin.
+// Gốc: cờ opt_out ĐÃ CÓ trong DB (store.js:36) nhưng chỉ bật khi Gemini tự đặt `opt_out:true`,
+// mà system-prompt.md (bộ não FACEBOOK — đúng kênh ca này) KHÔNG hề khai/dạy trường đó
+// (grep -c opt_out system-prompt.md = 0) → bot FB KHÔNG BAO GIỜ bật được cờ dừng.
+// → Bắt bằng LUẬT CỨNG ở tầng code, không phụ thuộc model có "hiểu" hay không.
+const RE_XIN_NGUNG = new RegExp([
+  // "đừng/không nhắn|gửi tin nữa", "kh nên gởi tn tới tui nữa", "đừng làm phiền"
+  '(dung|khong|kh|ko|k|thoi) (nen )?(nhan|nhat|gui|goi|gio|gioi|ib|inbox|lam phien|phien|spam)',
+  '(nhan|gui|goi|gio|gioi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
+  // "bỏ ý định", "không còn nhu cầu", "hủy lịch", "không chữa nữa"
+  'bo (y dinh|dinh|nhu cau|kham|chua)',
+  '(khong|kh|ko|k) (con )?(nhu cau|y dinh|muon|can) ',
+  '(huy|khong) (lich|kham|chua|dat lich)',
+  // "làm phiền quá", "gửi tin nhiều quá", "spam quá"
+  '(lam phien|phien|spam|nhieu tin|tin nhieu) (qua|lam)',
+  '(gui|goi|gio|gioi) (tn|tin) (nhieu|qua)',
+  ' (unsubscribe|stop) ',
+].join('|'));
+
+/**
+ * Khách có đang xin NGỪNG nhận tin / rút lui không? (bắt ở tầng code, độc lập với Gemini)
+ * Cố ý KHÔNG chặn theo độ dài câu: khách bức xúc thường viết dài (ca Phuong Ngoc ~430 ký tự).
+ */
+export function laTinXinNgung(text) {
+  const n = ` ${boDauKham(text)} `;
+  // Loại câu HỎI ngược ("phòng khám có gửi tin nhiều không em") — hỏi ≠ yêu cầu dừng.
+  if (/ (co|la) .{0,20}(khong|ko)( |\?|$)/.test(n) && !/(dung|kh nen|khong nen|bo y dinh)/.test(n)) return false;
+  return RE_XIN_NGUNG.test(n);
 }
 
 /**
@@ -430,6 +462,40 @@ export async function handleIncoming(ev) {
     // Lưu tin khách + cập nhật mốc thời gian (cho retouch).
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
+
+    // ===== KHÁCH XIN NGỪNG NHẬN TIN (ca Phuong Ngoc 02/08) — CHỐT CHẶN SỐ 1 =====
+    // Đặt TRƯỚC mọi nhánh khác: khách đã nói "đừng nhắn nữa" thì không nhánh nào được phép
+    // chen thêm tin (kể cả nhánh đã-khám / xin tài liệu / kịch bản lead).
+    // Xử: bật opt_out (dừng TOÀN BỘ engine chăm) + xin lỗi ĐÚNG 1 lần + giao người thật.
+    if (laTinXinNgung(messageText) && !store.isOptedOut(store.getConversation(conversationId))) {
+      store.setOptOut(conversationId);
+      store.setHandover(conversationId); // bot IM hẳn, để người thật quyết có cứu hay không
+      // Xin lỗi 1 lượt DUY NHẤT rồi im hẳn — khách đang bực vì bị dội tin, nói nhiều là phản tác dụng.
+      // Cờ kv chặn cả trường hợp khách nhắn thêm vài tin bực nữa (mỗi tin lại xin lỗi = dội tiếp).
+      const daXinLoi = store.getKV(`optout_xinloi:${conversationId}`);
+      if (!daXinLoi) {
+        store.setKV(`optout_xinloi:${conversationId}`, String(Date.now()));
+        const msgs = [
+          'Dạ em xin lỗi mình vì đã nhắn nhiều làm phiền ạ. Đây là lỗi của bên em 🙏',
+          'Em dừng nhắn tin cho mình từ đây nha. Khi nào mình cần, chỉ cần nhắn lại là bên em hỗ trợ liền ạ. Chúc mình nhiều sức khoẻ.',
+        ];
+        msgs.forEach((m) => noteBotSent(conversationId, m));
+        noteBotJustSent(conversationId);
+        const okOO = await sendMessages(pageId, conversationId, msgs);
+        if (okOO) store.appendHistory(conversationId, 'model', msgs.join('\n'));
+        else console.error(`[opt-out] ❌ GỬI HỤT lời xin lỗi cho ${conversationId}`);
+      }
+      // Báo người thật: đây là ca MẤT KHÁCH, cần người gọi cứu chứ không để bot xử.
+      notifyText(
+        `🛑 <b>KHÁCH XIN NGỪNG NHẬN TIN</b> (đã tắt mọi chuỗi chăm tự động)\n` +
+        `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
+        `• Hội thoại: https://pancake.vn/${pageId}?c_id=${conversationId}\n` +
+        `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 180)}"\n` +
+        `→ Đây là ca MẤT KHÁCH vì bị dội tin. Cần người thật xem lại, đừng để bot chen tiếp.`
+      ).catch(() => {});
+      console.log(`[opt-out] 🛑 ${conversationId} khách xin ngừng → tắt chuỗi chăm + xin lỗi 1 lần + báo người`);
+      return;
+    }
 
     // KHÁCH BÁO "ĐÃ ĐẾN KHÁM" mà conv chưa có SĐT (SOP quầy — ca Loan Le 07/07):
     // đây là BỆNH NHÂN, không phải lead → gắn cờ da_kham + cảm ơn + mời bấm nút
@@ -775,6 +841,13 @@ export async function handleRetouch(conv) {
   try {
     const fresh = store.getConversation(conversationId);
     if (!fresh || store.isHandled(fresh)) return; // đã giao người trong lúc chờ
+    // OPT-OUT (vá 02/08, ca Phuong Ngoc): khách đã xin ngừng → TUYỆT ĐỐI không chạm lại.
+    // Trước vá, handleRetouch không có cửa này: khách nói "đừng nhắn nữa" xong cron 10' vẫn dập tiếp.
+    if (store.isOptedOut(fresh)) {
+      store.incRetouch(conversationId); // đốt lượt để cron sau khỏi nhặt lại ca này mãi
+      console.log(`[retouch] 🛑 ${conversationId} khách đã opt-out → KHÔNG chạm lại`);
+      return;
+    }
     // CỜ TẮT BOT theo nhãn: telesale đã chốt lịch/đang xử → KHÔNG chạm lại tự động.
     if (await hasStopLabel(pageId, conversationId)) {
       console.log(`[retouch] ${conversationId} có nhãn chốt lịch/telesale xử → bỏ chạm lại`);
@@ -821,6 +894,13 @@ export async function handleBotTouch(conv, touchNo) {
     if (!fresh) return;
     if (store.isTouchDone(fresh, touchNo)) return;      // đã gửi chạm này rồi (đua cron)
     if (store.isHandover(fresh)) return;                  // khiếu nại/cần người → bot không chen
+    // OPT-OUT (vá 02/08, ca Phuong Ngoc): khách xin ngừng → dừng cả chuỗi 7 chạm.
+    // Gác TƯỜNG MINH ở đây dù isHandover phía trên thường đã chặn: opt_out có thể được bật từ
+    // đường khác (Gemini đặt opt_out, admin gắn tay) mà KHÔNG kèm handover → hở là dội tin tiếp.
+    if (store.isOptedOut(fresh)) {
+      console.log(`[cham${touchNo}] 🛑 ${conversationId} khách đã opt-out → bỏ chạm`);
+      return;
+    }
     if (store.isHumanActive(fresh, HUMAN_HOLD_HOURS)) {   // telesale đang giữ → để người thật
       console.log(`[cham${touchNo}] ${conversationId} người thật đang giữ → bỏ chạm bot`);
       return;
