@@ -139,7 +139,7 @@ function buildDateContext() {
 /**
  * Gọi Gemini sinh phản hồi.
  * @param {Array<{role:'user'|'model', text:string}>} history - lịch sử hội thoại
- * @param {'reply'|'retouch'} mode
+ * @param {'reply'|'retouch'|'care'|'aftercare'|'prebooked'|'recover'} mode
  * @param {string} customerName - tên Facebook của khách (để đoán xưng hô)
  * @param {string} gender - giới tính từ Pancake ('male'|'female'|null) — chính xác hơn đoán
  * @param {object} opts - { channel:'facebook'|'zalo', contextTag:string } — chọn bộ não + thẻ ngữ cảnh MEDi
@@ -187,6 +187,15 @@ export async function generateReply(history, mode = 'reply', customerName = null
       contents.push({
         role: 'user',
         parts: [{ text: 'MODE: CARE — Khách NÀY ĐÃ cho số điện thoại rồi (telesale sẽ/đang gọi). TUYỆT ĐỐI không xin lại số. Nhiệm vụ bây giờ: giải đáp tiếp điều khách hỏi cho tận tình, trấn an "Bác sĩ/trợ lý sẽ gọi sớm, mình để ý điện thoại nha", và nhẹ nhàng thúc đẩy ĐẶT LỊCH/đến khám (gợi ý sắp xếp thời gian qua khám, nhắc ưu đãi/giữ suất). Giữ giọng ấm, quan tâm như đang chăm sóc một người đã tin tưởng mình. Đặt phone_captured=false, handover=false trừ khi khách khiếu nại.' }],
+      });
+    }
+
+    // mode prebooked: khách ĐÃ ĐẶT LỊCH/ĐÃ CỌC, telesale ĐÃ cầm số, chỉ CHƯA tới ngày khám
+    // (ca Nguyễn Văn Cương 01/08: bot xin số 3 lượt liền → khách nổi cáu). Vai = XÁC NHẬN + trấn an.
+    if (mode === 'prebooked') {
+      contents.push({
+        role: 'user',
+        parts: [{ text: 'MODE: PREBOOKED — Khách này ĐÃ ĐẶT LỊCH KHÁM và phòng khám ĐÃ CÓ ĐỦ thông tin + số điện thoại của họ (đặt qua sale page/telesale/kênh khác, có thể đã đặt cọc). TUYỆT ĐỐI KHÔNG xin số điện thoại dưới bất kỳ hình thức nào — kể cả "xin số đã đăng ký để nối hồ sơ", "để Bác sĩ gọi tư vấn", "để giữ suất". Hỏi lại số = khách nổi giận vì thấy phòng khám làm việc thiếu chuyên nghiệp, đây là LỖI NẶNG NHẤT ở mode này. KHÔNG chào như người lạ, KHÔNG mời "suất tư vấn miễn phí", KHÔNG gửi link sale page, KHÔNG mời bấm nút/thẻ chia sẻ thông tin. Nhiệm vụ: (1) XÁC NHẬN cho khách yên tâm — lịch đã được giữ, trợ lý Bác sĩ sẽ gọi nhắc trước buổi khám; (2) giải đáp thắc mắc TRƯỚC khám: giờ giấc, đường đi/địa chỉ, cần mang theo gì (phim chụp, đơn thuốc cũ), có cần nhịn ăn không; (3) nếu khách ĐANG BỰC vì bị hỏi số nhiều lần → xin lỗi chân thành NGẮN GỌN, khẳng định đã có đủ thông tin của khách và sẽ báo bộ phận phụ trách kiểm tra lại lịch, rồi DỪNG hỏi thêm bất cứ thông tin gì. Giọng ấm, tôn trọng, như đang tiếp một khách đã trả tiền. Đặt phone_captured=false, handover=true nếu khách đang khiếu nại/bực. Mỗi lượt tối đa 2 tin ngắn.' }],
       });
     }
 

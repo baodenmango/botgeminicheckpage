@@ -166,11 +166,39 @@ const HUMAN_HOLD_HOURS = parseFloat(process.env.HUMAN_HOLD_HOURS || '2');
 const boDauKham = (s) => String(s || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
   .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+// VÁ 01/08/2026 (ca Nguyễn Văn Cương / "Gia Bảo Khang"): khách ĐÃ ĐẶT LỊCH qua sale page,
+// telesale đã chốt + khách đã CỌC 100k, vậy mà bot vẫn 3 lượt đi xin SĐT → khách nổi cáu
+// ("Tại sao lại có chuyện vô lý thế nầy...?"). Đo lại 3 câu khách nói thì laTinDaKham() trả
+// FALSE cả 3: (a) thiếu hẳn nhóm từ ĐÃ CHỐT LỊCH ("đã đăng ký khám", "đã đặt cọc", "đã gửi
+// SĐT/thông tin", "đã có phiếu khám"); (b) trần 90 ký tự cắt luôn câu khách viết dài; (c) bộ
+// lọc phủ định quét TOÀN câu nên "đã cọc rồi, CHƯA biết mấy giờ" bị đá oan.
+// → Tách 2 nhóm tín hiệu: ĐÃ KHÁM (cũ) + ĐÃ CHỐT LỊCH (mới). Cả 2 đều là BỆNH NHÂN/khách của
+// phòng khám, KHÔNG phải lead lạ → cấm kịch bản xin số.
+const RE_DA_CHOT_LICH = new RegExp([
+  // "đã đăng ký khám", "đã đặt lịch (khám)", "đã book lịch", "đã hẹn lịch"
+  ' (da|vua|moi) (dang ky|dat|book|bookinh|hen|chot|len) (lich|kham|phieu)',
+  // "đã đặt cọc / đã cọc / đã chuyển khoản / đã chuyển tiền / đã thanh toán / đã tạm ứng"
+  ' (da|vua|moi) (dat coc|coc|chuyen khoan|chuyen tien|thanh toan|tam ung|ck)',
+  // "đã gửi SĐT / gửi thông tin / gửi số qua phòng khám" — telesale đã cầm số rồi
+  ' (da|vua|moi) (gui|goi|gio|gioi|cho|cung cap|de lai) .{0,20}(sdt|so dien thoai|so dt|thong tin|so)',
+  // Đảo thứ tự: "thông tin và SĐT tôi ĐÃ gởi qua phòng khám" (ca Cương 01/08) — tân ngữ đứng TRƯỚC "đã".
+  ' (sdt|so dien thoai|so dt|thong tin) .{0,20}(da|vua|moi) (gui|goi|gio|gioi|cho|cung cap|de lai)',
+  // "đã nhận được lịch/giờ/ngày khám", "đã có lịch hẹn", "có phiếu khám rồi"
+  ' (da|vua|moi) (nhan duoc|nhan|co) .{0,20}(lich|gio kham|ngay kham|phieu kham|so phieu)',
+  ' (lich|phieu) kham .{0,15}(roi|xong)( |$)',
+].join('|'));
+
 export function laTinDaKham(text) {
   const n = ` ${boDauKham(text)} `;
-  if (n.length > 90) return false; // câu dài là đang kể chuyện/hỏi bệnh → để Gemini xử theo prompt
-  if (/ (chua|sap|chuan bi|dinh|muon|can|de|se) (di |den |toi |ghe )?kham/.test(n)) return false; // "chưa/sắp khám" ≠ đã khám
   if (/ khac( |$)/.test(n)) return false; // "đã khám Ở CHỖ/NƠI/BV KHÁC" (ca Hạnh Nguyên 08/07) ≠ đã khám Hiệp Lợi
+  if (/ (chua|sap|chuan bi|dinh|muon|can|de|se) (di |den |toi |ghe )?kham/.test(n)) return false; // "chưa/sắp khám" ≠ đã khám
+
+  // --- Nhóm MỚI: ĐÃ CHỐT LỊCH / ĐÃ CỌC / ĐÃ GIAO SỐ (khách của phòng khám rồi) ---
+  // Không áp trần 90 ký tự và không áp bộ lọc "ý định tương lai" quét-toàn-câu ở đây: các cụm
+  // trên đã tự neo bằng "đã/vừa/mới" nên không nhầm với ý định, mà khách loại này hay viết dài.
+  if (RE_DA_CHOT_LICH.test(n)) return true;
+
+  if (n.length > 90) return false; // câu dài là đang kể chuyện/hỏi bệnh → để Gemini xử theo prompt
   // Ý ĐỊNH TƯƠNG LAI ở BẤT KỲ đâu trong câu ≠ đã khám (ca Lê Hải 20/07: "mình MUỐN biết địa chỉ
   // phòng khám rồi mình ĐẾN KHÁM đậy đc ko" — khách chưa khám mà bot chào như bệnh nhân cũ).
   if (/ (muon|dinh|se|sap|chuan bi|chua) /.test(n)) return false;
@@ -181,6 +209,11 @@ export function laTinDaKham(text) {
 }
 export function laConvDaKham(conversationId) {
   return Boolean(store.getKV(`da_kham_conv:${conversationId}`));
+}
+// Khách ĐÃ ĐẶT LỊCH/ĐÃ CỌC nhưng CHƯA tới khám (ca Cương 01/08). Khác laConvDaKham ở chỗ:
+// chưa có bệnh án để chăm sau khám, nhưng telesale ĐÃ cầm số → cấm mọi kịch bản xin số.
+export function laConvDaDatLich(conversationId) {
+  return Boolean(store.getKV(`da_dat_lich_conv:${conversationId}`));
 }
 
 /**
@@ -403,10 +436,20 @@ export async function handleIncoming(ev) {
     // "Chia sẻ thông tin" để nối hồ sơ (1 nút, không bắt gõ số). KHÔNG đi kịch bản lead.
     if (!store.isCaptured(conv) && !laConvDaKham(conversationId) && laTinDaKham(messageText)) {
       store.setKV(`da_kham_conv:${conversationId}`, String(Date.now()));
+      // VÁ 01/08/2026 (ca Cương): phân biệt ĐÃ ĐẶT LỊCH (chưa tới khám, telesale ĐÃ cầm số)
+      // với ĐÃ ĐẾN KHÁM. Khách đã cọc mà bot xin lại số = khách nổi cáu ("vô lý thế nầy...?").
+      // Nhánh đã-đặt-lịch: XÁC NHẬN + trấn an, TUYỆT ĐỐI không xin số, không mời thẻ OA.
+      const daDatLich = RE_DA_CHOT_LICH.test(` ${boDauKham(messageText)} `);
+      if (daDatLich) store.setKV(`da_dat_lich_conv:${conversationId}`, String(Date.now()));
       // Nút "Chia sẻ thông tin" là THẺ RIÊNG CỦA ZALO OA — Facebook KHÔNG có. Ca Lê Hải 20/07:
       // bot mời khách FB bấm thẻ không tồn tại → khách đứng hình. FB thì xin số bằng lời.
       const laZalo = isZaloPage(getPageChannel(pageId));
-      const msgs = laZalo
+      const msgs = daDatLich
+        ? [
+            'Dạ em ghi nhận rồi ạ, cảm ơn mình đã tin tưởng đặt lịch bên Hiệp Lợi nha 🌿',
+            'Lịch của mình đã được giữ, mình cứ tới đúng giờ hẹn là được, không cần làm thêm gì nữa ạ. Trợ lý Bác sĩ sẽ gọi nhắc mình trước buổi khám nha 🙏',
+          ]
+        : laZalo
         ? [
             'Dạ em cảm ơn mình đã tin tưởng ghé khám tại Hiệp Lợi nha ạ 🌿',
             'Để em nối đúng hồ sơ khám và gửi tài liệu chăm sóc đúng bệnh cho mình, mình bấm giúp em nút "Chia sẻ thông tin" ở thẻ bên dưới nha ạ 🙏',
@@ -425,8 +468,9 @@ export async function handleIncoming(ev) {
       }
       store.appendHistory(conversationId, 'model', msgs.join('\n'));
       const zuidDK = ev.customerId ? stripZaloPrefix(ev.customerId) : null;
-      if (laZalo && zuidDK) sendRequestInfo(zuidDK).catch(() => {});
-      console.log(`[da-kham] 🏥 ${conversationId} khách tự báo ĐÃ ĐẾN KHÁM → gắn cờ da_kham + mời bấm nút chia sẻ SĐT`);
+      // Khách ĐÃ ĐẶT LỊCH: telesale đã cầm số rồi → KHÔNG bắn thẻ xin thông tin (đòi số lần nữa).
+      if (laZalo && zuidDK && !daDatLich) sendRequestInfo(zuidDK).catch(() => {});
+      console.log(`[da-kham] 🏥 ${conversationId} khách tự báo ${daDatLich ? 'ĐÃ ĐẶT LỊCH/ĐÃ CỌC → xác nhận giữ lịch, KHÔNG xin số' : 'ĐÃ ĐẾN KHÁM → gắn cờ da_kham + mời bấm nút chia sẻ SĐT'}`);
       return;
     }
 
@@ -606,8 +650,26 @@ export async function handleIncoming(ev) {
       }
     }
 
+    // Thẻ ngữ cảnh ĐÃ-ĐẶT-LỊCH (ca Cương 01/08): khách đặt lịch qua sale page/telesale, ĐÃ CỌC,
+    // telesale ĐÃ cầm số — chỉ CHƯA tới ngày khám. Đè lên mọi tag khác: cấm xin số dưới MỌI hình thức.
+    const daDatLichTuBao = laConvDaDatLich(conversationId);
+    if (daDatLichTuBao) {
+      contextTag = (contextTag ? contextTag + '\n' : '') +
+        '[KHÁCH ĐÃ ĐẶT LỊCH KHÁM — ĐÃ CHỐT VỚI TELESALE] Khách này ĐÃ đăng ký/đặt lịch khám (có thể đã đặt cọc, ' +
+        'đã nhận giờ hẹn, đã gửi SĐT cho phòng khám qua kênh khác) nhưng CHƯA tới ngày khám. ' +
+        'TUYỆT ĐỐI KHÔNG xin số điện thoại dưới BẤT KỲ hình thức nào (kể cả "xin số đã đăng ký để nối hồ sơ", ' +
+        '"để Bác sĩ gọi tư vấn", "để giữ suất") — phòng khám ĐÃ CÓ số của khách, hỏi lại là khách nổi giận vì thấy ' +
+        'phòng khám làm việc thiếu chuyên nghiệp. KHÔNG chào như người lạ, KHÔNG mời "suất tư vấn miễn phí", ' +
+        'KHÔNG gửi link sale page, KHÔNG mời bấm thẻ/nút chia sẻ thông tin. ' +
+        'Vai của em: XÁC NHẬN cho khách yên tâm ("lịch của mình đã được giữ", "trợ lý Bác sĩ sẽ gọi nhắc trước buổi khám"), ' +
+        'giải đáp thắc mắc trước khám (giờ giấc, đường đi, cần mang gì, nhịn ăn không), dặn dò nhẹ. ' +
+        'Nếu khách BỰC vì bị hỏi số nhiều lần → XIN LỖI CHÂN THÀNH ngắn gọn, KHẲNG ĐỊNH đã có đủ thông tin của khách ' +
+        'và sẽ báo bộ phận phụ trách kiểm tra, TUYỆT ĐỐI không hỏi thêm thông tin gì nữa.';
+    }
+
     // Thẻ ngữ cảnh ĐÃ-KHÁM-TỰ-BÁO: đè lên mọi tag khác — cấm tuyệt đối kịch bản lead.
-    if (daKhamTuBao) {
+    // (Khách đã ĐẶT LỊCH mà chưa khám thì dùng thẻ ở trên, không dùng thẻ này.)
+    if (daKhamTuBao && !daDatLichTuBao) {
       contextTag = (contextTag ? contextTag + '\n' : '') +
         '[KHÁCH ĐÃ ĐẾN KHÁM — TỰ XÁC NHẬN] Khách này ĐÃ đến khám tại phòng khám (quầy lễ tân xác nhận). ' +
         'TUYỆT ĐỐI KHÔNG chào như người lạ, KHÔNG mời "suất tư vấn miễn phí", KHÔNG dụ để lại số kiểu chốt lead. ' +
@@ -624,9 +686,13 @@ export async function handleIncoming(ev) {
       contextTag = contextTag ? `${contextTag}\n${PAGE_AUDIENCE[pageId]}` : PAGE_AUDIENCE[pageId];
     }
 
-    // Chọn mode: khách ĐÃ KHÁM (hồ sơ/tự báo) → aftercare (chăm sau khám, cấm kịch bản lead);
+    // Chọn mode: khách ĐÃ ĐẶT LỊCH chưa tới khám → prebooked (xác nhận + trấn an, CẤM xin số);
+    // khách ĐÃ KHÁM (hồ sơ/tự báo) → aftercare (chăm sau khám, cấm kịch bản lead);
     // khách đã cho số/có nhãn → care; còn lại → reply (kịch bản lead thường).
-    const mode = (daKhamHoSo || daKhamTuBao) ? 'aftercare' : isCustomer ? 'care' : 'reply';
+    // Ưu tiên prebooked TRƯỚC aftercare: có hồ sơ POS/MEDi cũ không có nghĩa khách đã khám lần NÀY.
+    const mode = daDatLichTuBao ? 'prebooked'
+      : (daKhamHoSo || daKhamTuBao) ? 'aftercare'
+      : isCustomer ? 'care' : 'reply';
 
     const history = store.getConversation(conversationId).history;
     const reply = await generateReply(history, mode, customerName || conv.customer_name, null, { channel, contextTag });

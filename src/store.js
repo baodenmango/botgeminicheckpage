@@ -901,22 +901,39 @@ db.exec(`
     created_at   INTEGER DEFAULT (strftime('%s','now')),
     xacnhan      TEXT,                                  -- 'ok' | 'loi_<ly_do>' | NULL (chưa gửi)
     nhac1_at     INTEGER,                               -- đã nhắc T-1 ngày lúc (epoch)
-    nhac2_at     INTEGER                                -- đã nhắc T-2 giờ lúc (epoch)
+    nhac2_at     INTEGER,                               -- đã nhắc T-2 giờ lúc (epoch)
+    telesale     TEXT,                                  -- người telesale dán block (trường "Telesale:")
+    nguon        TEXT                                   -- nguồn lead (trường "nguồn:" — salepage/FB/...)
   )
 `);
 
+// Migration bookings: thêm telesale + nguon (01/08 — quy booking về closer & nguồn lead).
+// DB production nằm trên persistent disk Render nên CREATE TABLE IF NOT EXISTS ở trên KHÔNG áp
+// cho bảng đã tồn tại → phải ALTER. Khối riêng, 1 lỗi ALTER không chặn khởi động; có PRAGMA
+// chặn trước nên chạy lại nhiều lần vô hại.
+try {
+  const bkCols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name);
+  if (!bkCols.includes('telesale')) db.exec('ALTER TABLE bookings ADD COLUMN telesale TEXT');
+  if (!bkCols.includes('nguon')) db.exec('ALTER TABLE bookings ADD COLUMN nguon TEXT');
+} catch (e) { console.warn('[store] migration bookings.telesale/nguon:', e?.message || e); }
+
 // Ghi 1 booking vào sổ. Cùng SĐT + cùng giờ hẹn → cập nhật (telesale dán lại), không nhân đôi nhắc.
-export function addBooking({ phone, ten, gioHenText, henEpoch, chatId, msgId }) {
+// telesale/nguon mặc định '' → lời gọi cũ (không truyền) vẫn chạy y như trước.
+// Nhánh cập nhật dùng COALESCE: lần dán lại thiếu 2 trường này thì GIỮ giá trị cũ, không xoá.
+export function addBooking({ phone, ten, gioHenText, henEpoch, chatId, msgId, telesale = '', nguon = '' }) {
   const cu = henEpoch
     ? db.prepare('SELECT id FROM bookings WHERE phone = ? AND hen_epoch = ?').get(String(phone), henEpoch)
     : null;
   if (cu) {
-    db.prepare('UPDATE bookings SET ten = ?, gio_hen_text = ?, chat_id = ?, msg_id = ? WHERE id = ?')
-      .run(ten || null, gioHenText || null, String(chatId || ''), msgId || null, cu.id);
+    db.prepare(`UPDATE bookings SET ten = ?, gio_hen_text = ?, chat_id = ?, msg_id = ?,
+                  telesale = COALESCE(?, telesale), nguon = COALESCE(?, nguon) WHERE id = ?`)
+      .run(ten || null, gioHenText || null, String(chatId || ''), msgId || null,
+        telesale || null, nguon || null, cu.id);
     return { id: cu.id, moi: false };
   }
-  const r = db.prepare('INSERT INTO bookings (phone, ten, gio_hen_text, hen_epoch, chat_id, msg_id) VALUES (?,?,?,?,?,?)')
-    .run(String(phone), ten || null, gioHenText || null, henEpoch || null, String(chatId || ''), msgId || null);
+  const r = db.prepare('INSERT INTO bookings (phone, ten, gio_hen_text, hen_epoch, chat_id, msg_id, telesale, nguon) VALUES (?,?,?,?,?,?,?,?)')
+    .run(String(phone), ten || null, gioHenText || null, henEpoch || null, String(chatId || ''), msgId || null,
+      telesale || null, nguon || null);
   return { id: r.lastInsertRowid, moi: true };
 }
 

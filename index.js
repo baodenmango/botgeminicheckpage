@@ -958,14 +958,82 @@ function chuanGioHen(s) {
   t = t.replace(/(\d{1,2})h(\d{2})?/i, (_, h, mi) => `${h.padStart(2, '0')}:${mi || '00'}`);
   return t.slice(0, 30);
 }
-// parse 1 block Booking → { ten, phone, gio_hen } hoặc null nếu thiếu SĐT/thời gian.
+// Trích trường TUỲ CHỌN: thử lần lượt nhiều biến thể nhãn (có dấu / không dấu / viết tách),
+// trả '' khi telesale bỏ trống thay vì null → chỗ gọi khỏi phải kiểm null, ghi sổ không vỡ.
+// (trichTruong khớp nhãn LITERAL, không tự bỏ dấu — nên phải khai từng biến thể như tên/ten, sđt/sdt.)
+function trichTuyChon(text, nhanList) {
+  for (const nhan of nhanList) {
+    const v = trichTruong(text, nhan);
+    if (v) return v;
+  }
+  return '';
+}
+// Chuẩn hoá tên telesale về ĐÚNG 1 dạng — vì tên này chảy sang cột "NV Check-in" (Sheet NHẬP THU CHI)
+// ăn thẳng vào tiền thưởng (1% bill + 15k/ca + 50k/ngày). Gõ 'thang'/'Thắng'/'THANG' mà không gom lại
+// thì thành 3 "người" khác nhau → chia thưởng sai người.
+// Khoá bảng = dạng ĐÃ BỎ DẤU + thường + bỏ mọi ký tự không phải chữ cái ("Hạnh Duyên" → "hanhduyen").
+// Viết tắt (HD, Duyên…) CHƯA được anh Trình chốt nên KHÔNG map — gán nhầm là trả nhầm tiền;
+// chờ anh xác nhận danh sách viết tắt rồi mới thêm khoá.
+// Anh Trình chốt 01/08/2026: danh sách 4 người — Thắng · Hana · Hạnh Duyên · THẢO.
+// Thảo là CSKH nhưng ĐƯỢC tính công check-in như telesale (anh xác nhận khi rà cột H T7:
+// Thảo đang có 9 ca ở cột NV Check-in). Thiếu khoá này thì Thảo gõ đúng tên mà máy vẫn
+// không quy được công về ai.
+const BANG_TEN_TELESALE = {
+  thang: 'Thắng', huuthang: 'Thắng',
+  hana: 'Hana', hanna: 'Hana',
+  hanhduyen: 'Hạnh Duyên', nguyenhanh: 'Hạnh Duyên', nguyenhanhduyen: 'Hạnh Duyên',
+  thao: 'Thảo', thaott: 'Thảo',
+};
+// Nhãn chung chung — gõ mấy chữ này thì không suy ra được AI cả, coi như THIẾU.
+// Lưu ý thứ tự kiểm: bảng tên tra TRƯỚC regex này (xem chuanTenTelesale), nên 'thao' → 'Thảo'
+// không bị 'cskh' ở đây nuốt mất.
+const TEN_CHUNG_CHUNG = /^(tele|telesale|telesales|ts|nv|nhanvien|nhanvientelesale|cskh)$/;
+// 3 lối ra, KHÔNG có lối "đoán bừa":
+//  1) khớp bảng           → trả tên chuẩn có dấu ('thang' → 'Thắng')
+//  2) chung chung / rỗng  → trả '' = CHƯA RÕ NGƯỜI. Từ T8 form đã chuẩn, gõ "Tele" nghĩa là telesale
+//     QUÊN điền tên thật → chỗ gọi nhắc lại trong biên nhận, TUYỆT ĐỐI không tự gán thành Thắng
+//     (đó đúng là loại rác 'assigning_seller' xoay vòng mà anh Trình đã bác 01/08).
+//  3) tên LẠ (người mới tuyển) → GIỮ NGUYÊN VĂN đã trim, đừng nuốt mất kẻo đội thay người là mù thêm lần nữa.
+export function chuanTenTelesale(raw) {
+  const goc = String(raw || '').trim();
+  if (!goc) return '';
+  const key = goc
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
+    .toLowerCase().replace(/[^a-z]/g, '');
+  if (!key) return '';
+  if (TEN_CHUNG_CHUNG.test(key)) return ''; // gõ chung chung = coi như THIẾU, không đoán bừa
+  return BANG_TEN_TELESALE[key] || goc.slice(0, 30);
+}
+// parse 1 block Booking → { ten, phone, gio_hen, telesale, telesale_raw, nguon } hoặc null nếu thiếu SĐT/thời gian.
+// THÊM 01/08: 2 trường 'telesale' + 'nguồn' — cột "NV Check-in" (Sheet NHẬP THU CHI) trước nay suy ra
+// từ cache data/_pos_all.json (nick người bán POS), file này CHẾT (không cron làm mới, cũ cả tháng).
+// Group đặt lịch Telegram mới là nguồn SỐNG: telesale tự khai người chốt + kênh lead ngay lúc đặt.
+// Giữ 2 trường này TUỲ CHỌN — KHÔNG đưa vào guard `if (!phone || !gioRaw)` kẻo block Booking cũ
+// (đang gõ thiếu trường) bị vứt hết, chết luôn luồng ZNS xác nhận lịch đang chạy production.
 export function parseBooking(text) {
   if (!/booking/i.test(text || '')) return null;
   const ten = trichTruong(text, 'tên') || trichTruong(text, 'ten') || 'Quý khách';
   const phone = sdtTuChuoi(trichTruong(text, 'sđt') || trichTruong(text, 'sdt') || text);
   const gioRaw = trichTruong(text, 'thời gian') || trichTruong(text, 'thoi gian') || trichTruong(text, 'giờ') || trichTruong(text, 'gio');
   if (!phone || !gioRaw) return null;
-  return { ten: ten.slice(0, 30), phone, gio_hen: chuanGioHen(gioRaw) };
+  // 'Telesale :' / 'telesale:' / 'Tele sale:' / 'nhân viên:' — cờ 'i' lo hoa-thường, ở đây lo dấu + cách viết.
+  // KHÔNG khai nhãn cụt kiểu 'nv': trichTruong không có ranh giới từ (\b) nên 'nv' khớp cả trong
+  // "- CSKH nv:" (đã thử) → dễ vơ nhầm trường khác. Nhãn mới chỉ thêm khi thấy telesale gõ thật.
+  const telesaleRaw = trichTuyChon(text, ['telesale', 'tele sale', 'nhân viên', 'nhan vien']);
+  // telesale = bản ĐÃ CHUẨN HOÁ (dùng để cộng công/chia thưởng); telesale_raw = nguyên văn telesale gõ.
+  // Giữ cả 2 vì bản chuẩn hoá có thể trả '' (gõ "Tele" chung chung) — mất raw là mất luôn dấu vết
+  // để anh truy ngược "ai gõ cái gì" khi đối soát cuối tháng.
+  const telesale = chuanTenTelesale(telesaleRaw);
+  // 'nguồn' / 'nguon' (salepage, FB, GG, TIKTOK, HOTLINE, GIỚI THIỆU…) — rỗng thì để ''.
+  const nguon = trichTuyChon(text, ['nguồn', 'nguon']);
+  return {
+    ten: ten.slice(0, 30),
+    phone,
+    gio_hen: chuanGioHen(gioRaw),
+    telesale: telesale.slice(0, 30),
+    telesale_raw: telesaleRaw.slice(0, 30),
+    nguon: nguon.slice(0, 30),
+  };
 }
 
 // Webhook Telegram nhận tin group đặt lịch. Đăng ký: setWebhook bot Telegram → BASE/telegram/booking.
@@ -998,10 +1066,23 @@ app.post('/telegram/booking', (req, res) => {
     if (!bk) return; // không phải block booking đủ dữ liệu → bỏ qua
     // GHI SỔ HẸN trước (anh duyệt 14/07): để cron nhắc T-1 ngày + T-2 giờ.
     const henEpoch = parseHenEpoch(bk.gio_hen);
+    // telesale + nguon: 2 trường TUỲ CHỌN, block cũ gõ thiếu thì parseBooking trả '' (không null),
+    // store.addBooking dùng COALESCE nên dán lại thiếu trường sẽ GIỮ giá trị cũ, không xoá trắng.
     const so = store.addBooking({
       phone: bk.phone, ten: bk.ten, gioHenText: bk.gio_hen,
       henEpoch, chatId, msgId: msg?.message_id,
+      telesale: bk.telesale, nguon: bk.nguon,
     });
+    // Nhắc tên telesale ngay trong biên nhận (anh Trình chốt 01/08): telesale thấy bot nhắc ngay
+    // dưới tin mình vừa dán thì lần sau tự gõ đúng — rẻ hơn đi huấn luyện tay từng người.
+    // KHÔNG chặn booking: sổ đã ghi ở trên, ZNS vẫn gửi bình thường, đây chỉ THÊM 1 dòng vào biên nhận.
+    // bk.telesale đã qua chuanTenTelesale trong parseBooking → '' nghĩa là CHƯA RÕ NGƯỜI
+    // (bỏ trống, hoặc gõ chung chung "Tele"/"NV"). Phòng thủ ?? '' phòng bản parseBooking cũ
+    // (file này nhiều agent cùng sửa) chưa có trường telesale.
+    const telesaleChot = String(bk.telesale ?? '').trim();
+    const nhacTele = telesaleChot
+      ? `\n✅ Telesale: ${telesaleChot}`
+      : '\n⚠️ Thiếu TÊN TELESALE — nhờ anh/chị ghi rõ "Telesale: Thắng" (hoặc Hana / Hạnh Duyên) thay cho "Tele" giúp em, để em tính công check-in đúng người ạ.';
     sendZnsXacNhanLich(bk.phone, { ten: bk.ten, gio_hen: bk.gio_hen }).then(async (r) => {
       // Biên nhận REPLY thẳng dưới tin Booking trong group đặt lịch (anh yêu cầu 14/07);
       // gửi group hụt thì lùi về group thông báo (notifyText) — không được câm.
@@ -1010,15 +1091,23 @@ app.post('/telegram/booking', (req, res) => {
         const nhac = henEpoch
           ? ' Em sẽ nhắc lại trước 1 ngày và trước 2 giờ.'
           : ' ⚠️ Không đọc được ngày giờ nên KHÔNG hẹn nhắc lại được — gõ dạng "15h 09/07/2026" giúp em.';
-        const bien = `📅 Đã gửi ZNS xác nhận cho ${bk.ten} (${bk.phone}) — hẹn ${bk.gio_hen}.${nhac}`;
+        const bien = `📅 Đã gửi ZNS xác nhận cho ${bk.ten} (${bk.phone}) — hẹn ${bk.gio_hen}.${nhac}${nhacTele}`;
         if (!(await guiBienNhan(chatId, msg?.message_id, bien))) {
-          notifyText(`📅 <b>Đã gửi ZNS xác nhận đặt lịch</b>\n• Khách: ${bk.ten}\n• SĐT: ${bk.phone}\n• Hẹn: ${bk.gio_hen}`).catch(() => {});
+          notifyText(`📅 <b>Đã gửi ZNS xác nhận đặt lịch</b>\n• Khách: ${bk.ten}\n• SĐT: ${bk.phone}\n• Hẹn: ${bk.gio_hen}\n• Telesale: ${telesaleChot || '⚠️ CHƯA RÕ'}`).catch(() => {});
         }
-      } else if (r.ly_do !== 'vua_gui_roi') {
+      } else if (r.ly_do === 'vua_gui_roi') {
+        // Dán LẠI block vừa gửi ZNS (thường là telesale bổ sung tên sau khi bot nhắc): không bắn ZNS
+        // lần hai cho khách, nhưng sổ ĐÃ cập nhật tên ở addBooking phía trên → vẫn phải phản hồi,
+        // không thì telesale sửa xong mà bot im, tưởng chưa ăn.
+        const bien = telesaleChot
+          ? `👌 Đã ghi nhận — lịch của ${bk.ten} (${bk.phone}) hẹn ${bk.gio_hen}.${nhacTele}\n(ZNS xác nhận đã gửi lúc nãy rồi nên em không gửi lại cho khách ạ.)`
+          : `👌 Lịch của ${bk.ten} (${bk.phone}) hẹn ${bk.gio_hen} em đã ghi (ZNS đã gửi lúc nãy).${nhacTele}`;
+        guiBienNhan(chatId, msg?.message_id, bien).catch(() => {});
+      } else {
         store.setBookingXacNhan(so.id, `loi_${r.ly_do}`);
-        const bien = `⚠️ ZNS xác nhận KHÔNG gửi được (${r.ly_do}) — ${bk.ten} ${bk.phone}, hẹn ${bk.gio_hen}. Nhờ telesale nhắn/gọi tay giúp em ạ.`;
+        const bien = `⚠️ ZNS xác nhận KHÔNG gửi được (${r.ly_do}) — ${bk.ten} ${bk.phone}, hẹn ${bk.gio_hen}. Nhờ telesale nhắn/gọi tay giúp em ạ.${nhacTele}`;
         if (!(await guiBienNhan(chatId, msg?.message_id, bien))) {
-          notifyText(`⚠️ Xác nhận đặt lịch KHÔNG gửi được (${r.ly_do})\n• ${bk.ten} ${bk.phone} — ${bk.gio_hen}`).catch(() => {});
+          notifyText(`⚠️ Xác nhận đặt lịch KHÔNG gửi được (${r.ly_do})\n• ${bk.ten} ${bk.phone} — ${bk.gio_hen}\n• Telesale: ${telesaleChot || '⚠️ CHƯA RÕ'}`).catch(() => {});
         }
       }
     }).catch(() => {});
@@ -1103,9 +1192,13 @@ app.get('/admin/so-hen', (req, res) => {
   if (!adminToken || req.query.token !== adminToken) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
+  // telesale + nguon: hàng cũ (trước migration 01/08) là NULL → trả '' cho gọn, script bên
+  // Quản lý nhân sự đọc route này để quy booking về closer & nguồn lead (thay cột "NV Check-in"
+  // trước nay suy từ cache data/_pos_all.json đã chết).
   const rows = store.listBookings(parseInt(req.query.limit || '30', 10)).map((b) => ({
     id: b.id, ten: b.ten, phone: b.phone, hen: b.gio_hen_text,
     hen_epoch: b.hen_epoch, xacnhan: b.xacnhan,
+    telesale: b.telesale || '', nguon: b.nguon || '',
     nhac_truoc_1_ngay: b.nhac1_at ? new Date(b.nhac1_at * 1000).toISOString() : null,
     nhac_truoc_2_gio: b.nhac2_at ? new Date(b.nhac2_at * 1000).toISOString() : null,
     tao_luc: b.created_at ? new Date(b.created_at * 1000).toISOString() : null,
