@@ -20,7 +20,7 @@ import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive, laSoKhongCoZalo } from './src/zns.js';
 import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -840,6 +840,85 @@ app.post('/admin/zns-test', async (req, res) => {
 // Dùng để verify template 609256 hết -127 sau khi Zalo duyệt production (van Đòn 4).
 // Đường voucher-medi chỉ mời khách CHƯA follow → không test được số admin đã follow. Route này gọi thẳng.
 // GET /admin/test-quantam-oa?token=XXX&phone=09xxxxxxxx[&ten=Ten]
+// --- Admin: WAKEUP PILOT — đánh thức BN ngủ bằng ZNS mời QUAN TÂM OA (anh Trình duyệt 30/07) ---
+// Vì sao: wakeup-stats đo thật 684 ứng viên / 0 gửi được qua OA — BN ngủ hầu hết KHÔNG có kênh
+// Zalo, nên đường máy duy nhất chạm họ là ZNS 609256 (1 tin làm 2 việc: đánh thức + kéo follower
+// = tài sản chăm miễn phí). Nằm trong khoản 170 lượt "wakeup + mời OA" của kế hoạch quota T8.
+// GET /admin/wakeup-pilot?token=XXX[&limit=100][&dry=1]
+//   dry=1 (MẶC ĐỊNH): chỉ trả danh sách ứng viên đã lọc — không gửi gì. Bắn thật phải chủ động dry=0.
+//   dry=0: bắn NỀN tuần tự (delay 600ms/tin — 100 tin ~1 phút, tránh timeout gateway), xong vòng
+//   notifyText kết quả về Telegram + ghi KV wakeup_pilot_kq. sendZnsQuanTamOA tự guard đủ:
+//   khung giờ 7-21h VN, quota Tag3 (chống -1472), xử -118 (ghi cờ no_zalo ngừng quay).
+//   Lọc ứng viên: ngủ 45-365 ngày, canWakeup (cooldown 30d/max 3), CHƯA dính -118, CHƯA từng
+//   mời OA, CHƯA có kênh Zalo (có kênh thì engine wakeup OA tự lo, khỏi tốn ZNS).
+//   Ưu tiên ca ngủ NGẮN nhất trước (còn "ấm" — dễ quay lại hơn ca ngủ 300 ngày).
+app.get('/admin/wakeup-pilot', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  if (!isQuanTamOAEnabled()) return res.status(400).json({ ok: false, error: 'engine mời OA chưa bật' });
+  if (!isMediConfigured()) return res.status(400).json({ ok: false, error: 'MEDi chưa cấu hình' });
+  const limit = Math.min(parseInt(req.query.limit || '100', 10), 120);
+  const dry = req.query.dry !== '0';
+  try {
+    const records = await getAllMediRecords();
+    const now = Math.floor(Date.now() / 1000);
+    const SLEEP_MIN = parseFloat(process.env.WAKEUP_SLEEP_DAYS || '45');
+    const SLEEP_MAX = parseFloat(process.env.WAKEUP_MAX_DAYS || '365');
+    const ung = [];
+    const seen = new Set();
+    for (const rec of records) {
+      if (!rec.phone) continue;
+      const visit = parseVisitDate(rec.lastVisit);
+      if (!visit) continue;
+      const ngu = Math.floor((now - visit) / 86400);
+      if (ngu < SLEEP_MIN || ngu > SLEEP_MAX) continue;
+      const sdt10 = String(rec.phone).replace(/\D/g, '').replace(/^84/, '0');
+      if (sdt10.length !== 10 || seen.has(sdt10)) continue;
+      seen.add(sdt10);
+      if (!store.canWakeup(rec.phone, 30, 3)) continue;
+      if (laSoKhongCoZalo(rec.phone)) continue;                    // đã -118 → khỏi đốt lượt
+      if (store.getKV(`zns_moi_oa:${sdt10}`)) continue;            // đã mời OA rồi
+      const zc = store.getZaloConvByPhone(rec.phone);
+      if (zc?.conversation_id || zc?.zalo_user_id || store.getKV(`phone_zalo:${rec.phone}`)) continue; // đã có kênh
+      ung.push({ sdt: sdt10, ten: rec.name || null, ngu_ngay: ngu });
+    }
+    ung.sort((a, b) => a.ngu_ngay - b.ngu_ngay);
+    const chon = ung.slice(0, limit);
+    if (dry) {
+      return res.status(200).json({
+        ok: true, dry: true, tong_ung_vien_hop_le: ung.length, chon: chon.length,
+        ds: chon.map((c) => ({ sdt: c.sdt.slice(0, 4) + '***' + c.sdt.slice(-3), ten: c.ten, ngu_ngay: c.ngu_ngay })),
+      });
+    }
+    // Bắn NỀN — trả response ngay, kết quả về Telegram khi xong vòng.
+    res.status(200).json({ ok: true, dry: false, dang_ban: chon.length, ghi_chu: 'chạy nền — kết quả báo về Telegram + KV wakeup_pilot_kq' });
+    setImmediate(async () => {
+      let okN = 0, failN = 0;
+      for (const c of chon) {
+        try {
+          const ok = await sendZnsQuanTamOA(c.sdt, { ten: c.ten || 'Quý khách' });
+          if (ok) { okN++; store.setKV(`zns_moi_oa:${c.sdt}`, 'pilot-t8'); store.markWokeUp(c.sdt); }
+          else failN++;
+        } catch { failN++; }
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      const kq = { luc: now, ban: chon.length, gui_ok: okN, that_bai: failN };
+      store.setKV('wakeup_pilot_kq', JSON.stringify(kq));
+      console.log(`[wakeup-pilot] xong vòng: OK ${okN} / fail ${failN} / tổng ${chon.length}`);
+      notifyText(
+        `🌅 <b>WAKEUP PILOT xong vòng</b>\n` +
+        `Bắn: ${chon.length} tin mời QUAN TÂM OA (BN ngủ, đã lọc -118)\n` +
+        `✅ Zalo nhận: <b>${okN}</b> · ❌ hụt: ${failN} (quota/-118 mới/ngoài giờ — soi log)\n` +
+        `Theo dõi 7 ngày: % bấm Quan tâm (co_kenh nhích) + % đặt lịch. Ngưỡng thắng: ≥5% đặt lịch.`
+      ).catch(() => {});
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 app.get('/admin/test-quantam-oa', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken || req.query.token !== adminToken) {
