@@ -840,6 +840,17 @@ app.post('/admin/zns-test', async (req, res) => {
 // Dùng để verify template 609256 hết -127 sau khi Zalo duyệt production (van Đòn 4).
 // Đường voucher-medi chỉ mời khách CHƯA follow → không test được số admin đã follow. Route này gọi thẳng.
 // GET /admin/test-quantam-oa?token=XXX&phone=09xxxxxxxx[&ten=Ten]
+// --- Admin (CHỈ ĐỌC): kết quả vòng wakeup-pilot gần nhất (KV wakeup_pilot_kq) ---
+app.get('/admin/pilot-kq', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  let kq = null;
+  try { kq = JSON.parse(store.getKV('wakeup_pilot_kq') || 'null'); } catch { /* rỗng */ }
+  res.status(200).json({ ok: true, kq, ghi_chu: kq ? undefined : 'chưa có vòng pilot nào ghi kết quả' });
+});
+
 // --- Admin: WAKEUP PILOT — đánh thức BN ngủ bằng ZNS mời QUAN TÂM OA (anh Trình duyệt 30/07) ---
 // Vì sao: wakeup-stats đo thật 684 ứng viên / 0 gửi được qua OA — BN ngủ hầu hết KHÔNG có kênh
 // Zalo, nên đường máy duy nhất chạm họ là ZNS 609256 (1 tin làm 2 việc: đánh thức + kéo follower
