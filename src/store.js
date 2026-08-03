@@ -200,6 +200,19 @@ export function canWakeup(phone, cooldownDays = 30, maxCount = 3) {
   return (nowSec() - chamCuoi) > cooldownDays * 86400;
 }
 
+// Bản cho PILOT ZNS (wakeup-pilot 30/07): cooldown CHỈ tính lần GỬI THẬT (last_wake_at),
+// KHÔNG tính last_list_at — vì "listed" nghĩa là tên mới nằm trong Telegram cho telesale,
+// khách CHƯA nhận tin nào; cron wakeup chạy đều làm last_list_at luôn mới → canWakeup()
+// chặn gần cả tệp (đo thật 30/07: 684 pool mà chỉ 3 ca lọt). ZNS mời OA là kênh khác,
+// chặn theo list là tự khoá tệp lần hai — cùng gia đình bug tự-khoá-tệp đã vá 20/07.
+export function canWakeupZns(phone, cooldownDays = 30, maxCount = 3) {
+  if (!phone) return false;
+  const row = db.prepare('SELECT * FROM wakeup_log WHERE phone = ?').get(String(phone));
+  if (!row) return true;
+  if ((row.wake_count || 0) >= maxCount) return false;
+  return (nowSec() - (row.last_wake_at || 0)) > cooldownDays * 86400;
+}
+
 // ĐÃ GỬI TIN THẬT cho BN (qua Zalo OA) — đốt 1 lượt trong hạn mức maxCount.
 export function markWokeUp(phone) {
   if (!phone) return;

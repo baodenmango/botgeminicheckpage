@@ -877,7 +877,9 @@ app.get('/admin/wakeup-pilot', async (req, res) => {
       const sdt10 = String(rec.phone).replace(/\D/g, '').replace(/^84/, '0');
       if (sdt10.length !== 10 || seen.has(sdt10)) continue;
       seen.add(sdt10);
-      if (!store.canWakeup(rec.phone, 30, 3)) continue;
+      // canWakeupZns: cooldown CHỈ tính tin GỬI THẬT — không chặn ca mới-chỉ-nằm-list-telesale
+      // (canWakeup thường tính cả last_list_at → đo thật 30/07 chỉ 3/684 ca lọt = tự khoá tệp).
+      if (!store.canWakeupZns(rec.phone, 30, 3)) continue;
       if (laSoKhongCoZalo(rec.phone)) continue;                    // đã -118 → khỏi đốt lượt
       if (store.getKV(`zns_moi_oa:${sdt10}`)) continue;            // đã mời OA rồi
       const zc = store.getZaloConvByPhone(rec.phone);
