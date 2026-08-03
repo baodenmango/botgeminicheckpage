@@ -5,6 +5,7 @@ import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
 import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyText, isUrgent } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
+import { trongKhungGioGui } from './care-send.js';
 import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
 import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS } from './echoguard.js';
 import { lookupMedi, buildContextTag } from './medi.js';
@@ -24,6 +25,26 @@ const PAGE_AUDIENCE = {
 // Chuẩn hóa câu để so trùng nguyên văn (chống bot lặp lại chính mình — lộ máy).
 function chuanHoaCau(s) {
   return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// CHỐNG LẶP Ý (ca Bé Tuyết 03/08): bot không lặp NGUYÊN VĂN nhưng DIỄN ĐẠT LẠI cùng một ý
+// ("Bác sĩ Trình luôn dặn dò... theo đủ liệu trình...") 3 lượt liền → cửa so trùng nguyên văn
+// (daGui.includes) lọt sạch. So theo TỪ: ≥65% từ của câu mới nằm trong 1 tin bot đã gửi
+// (tính trên câu ngắn hơn) → coi là lặp ý, bỏ ô đó. Chỉ soi ô >25 ký tự như cửa nguyên văn.
+function tapTu(s) {
+  return new Set(chuanHoaCau(s).replace(/[^\p{L}\p{N} ]/gu, '').split(' ').filter((w) => w.length > 1));
+}
+function laCauLapY(m, cacCauBotDaGui) {
+  if (chuanHoaCau(m).length <= 25) return false;
+  const A = tapTu(m);
+  if (!A.size) return false;
+  return cacCauBotDaGui.some((c) => {
+    const B = tapTu(c);
+    if (!B.size) return false;
+    let chung = 0;
+    for (const w of A) if (B.has(w)) chung++;
+    return chung / Math.min(A.size, B.size) >= 0.65;
+  });
 }
 
 // Ô này có nhắc "suất tư vấn" / "suất tư vấn miễn phí" không? (bỏ dấu cho chắc).
@@ -246,6 +267,34 @@ export function laTinXinNgung(text) {
   // Loại câu HỎI ngược ("phòng khám có gửi tin nhiều không em") — hỏi ≠ yêu cầu dừng.
   if (/ (co|la) .{0,20}(khong|ko)( |\?|$)/.test(n) && !/(dung|kh nen|khong nen|bo y dinh)/.test(n)) return false;
   return RE_XIN_NGUNG.test(n);
+}
+
+// --- BỆNH NHÂN NẢN LIỆU TRÌNH / CHÊ TRẢI NGHIỆM (ca Bé Tuyết 03/08) ---
+// Ca lỗi thật: BN đang liệu trình tiêm nhắn "Mà tiêm nhìu quá thôi bỏ cuộc" → bot giảng
+// "theo đủ liệu trình" 3 lượt liền (mỗi lượt 1 kiểu diễn đạt) + dọa "bệnh tái phát nặng hơn"
+// → khách chốt: "Lúc khám thì k ai nói j" / "Về chỉ nhận tn thôi". Máy càng nói càng mất
+// bệnh nhân — ca này chỉ NGƯỜI THẬT gọi mới cứu được. Bắt bằng LUẬT CỨNG, không chờ Gemini.
+// 2 tầng: (a) CHÊ TRẢI NGHIỆM tại phòng khám / than chỉ nhận tin nhắn → bắt với MỌI hội thoại;
+//         (b) NẢN/ĐÒI BỎ liệu trình → chỉ bắt khi conv là bệnh nhân ĐÃ KHÁM (lead nói "bỏ cuộc"
+//             về chỗ chữa CŨ là lead vàng mục 8, không được nhầm sang đây).
+const RE_CHE_TRAI_NGHIEM = new RegExp([
+  // "lúc khám thì k ai nói j", "không ai tư vấn/giải thích/dặn gì"
+  '(khong|kh|ko|k|cha|dau)( co)? ai (noi|tu van|dan|giai thich|hoi|quan tam)',
+  // "về chỉ nhận tn thôi", "toàn nhắn tin"
+  'chi nhan (tn|tin nhan|tin)',
+  '(toan|suot ngay) (nhan tin|gui tin|tn)',
+].join('|'));
+const RE_NAN_LIEU_TRINH = new RegExp([
+  'bo cuoc|bo ngang|bo giua chung',
+  // "thôi không tiêm nữa", "không theo nữa", "không chữa nữa"
+  '(thoi|chac)? ?(khong|kh|ko|k) (tiem|chich|theo|chua|dieu tri|di|den|toi)( tiep)? nua',
+  // "tiêm nhiều quá", "nhiều mũi quá" (kèm teen-speak "nhìu" → bỏ dấu = "nhiu")
+  '(tiem|chich) (nhieu|nhiu) qua|(nhieu|nhiu) (mui|lan|dot) qua',
+].join('|'));
+export function laTinNanBenhNhan(text, daKham) {
+  const n = ` ${boDauKham(text)} `;
+  if (RE_CHE_TRAI_NGHIEM.test(n)) return true;
+  return Boolean(daKham) && RE_NAN_LIEU_TRINH.test(n);
 }
 
 /**
@@ -494,6 +543,37 @@ export async function handleIncoming(ev) {
         `→ Đây là ca MẤT KHÁCH vì bị dội tin. Cần người thật xem lại, đừng để bot chen tiếp.`
       ).catch(() => {});
       console.log(`[opt-out] 🛑 ${conversationId} khách xin ngừng → tắt chuỗi chăm + xin lỗi 1 lần + báo người`);
+      return;
+    }
+
+    // ===== BỆNH NHÂN NẢN LIỆU TRÌNH / CHÊ TRẢI NGHIỆM (ca Bé Tuyết 03/08) — CHỐT CHẶN SỐ 2 =====
+    // Khách đang bực về CÁCH CHĂM (không ai tư vấn lúc khám / chỉ nhận tin máy / muốn bỏ liệu trình)
+    // → mọi tin bot gửi thêm đều là "thêm 1 tin nhắn máy nữa" = đổ dầu vào lửa. Xoa dịu đúng 1 lần,
+    // handover (bot im + mọi engine chăm tự dừng theo isHandover), báo người thật GỌI ĐIỆN cứu.
+    if (laTinNanBenhNhan(messageText, laConvDaKham(conversationId))) {
+      store.setHandover(conversationId);
+      const daXoaDiu = store.getKV(`nanlt_xoadiu:${conversationId}`);
+      if (!daXoaDiu) {
+        store.setKV(`nanlt_xoadiu:${conversationId}`, String(Date.now()));
+        const msgs = [
+          'Dạ em xin lỗi mình thiệt tình ạ 😔 Nghe mình nói vậy em biết mình chưa được chăm chu đáo rồi.',
+          'Em báo ngay Bác sĩ Trình để đích thân Bác sĩ gọi lại nghe mình chia sẻ và coi lại liệu trình cho mình nha ạ 🙏',
+        ];
+        msgs.forEach((m) => noteBotSent(conversationId, m));
+        noteBotJustSent(conversationId);
+        const okND = await sendMessages(pageId, conversationId, msgs);
+        if (okND) store.appendHistory(conversationId, 'model', msgs.join('\n'));
+        else console.error(`[nan-benh-nhan] ❌ GỬI HỤT lời xoa dịu cho ${conversationId}`);
+      }
+      // Báo người thật: ca NGUY CƠ MẤT BỆNH NHÂN đang liệu trình — giá trị cao hơn mọi lead mới.
+      notifyText(
+        `🚨 <b>BỆNH NHÂN NẢN LIỆU TRÌNH / CHÊ TRẢI NGHIỆM</b> (bot đã lui + tắt chuỗi chăm)\n` +
+        `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
+        `• Hội thoại: https://pancake.vn/${pageId}?c_id=${conversationId}\n` +
+        `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 180)}"\n` +
+        `→ Nguy cơ BỎ NGANG liệu trình. Cần NGƯỜI THẬT (ưu tiên Bác sĩ/CSKH) GỌI ĐIỆN trong hôm nay — đừng nhắn tin thêm.`
+      ).catch(() => {});
+      console.log(`[nan-benh-nhan] 🚨 ${conversationId} bệnh nhân nản/chê trải nghiệm → handover + báo người`);
       return;
     }
 
@@ -765,6 +845,21 @@ export async function handleIncoming(ev) {
 
     await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName);
 
+    // BOT TỰ HỨA GỬI TÀI LIỆU (ca Nguyễn Chung 02/08): model nói "con gửi cô cẩm nang + video
+    // bài tập... nha" nhưng khách chỉ đáp "Nếu được vậy thì cô cảm ơn" → không khớp ASK_DOC_RE
+    // (regex chỉ bắt lời KHÁCH xin) → cờ doc_wanted không cắm → không luồng nào giao thật.
+    // 2 tiếng sau retouch còn bịa "con gửi rồi đó ạ, nhận được chưa?" → khách kết luận "lừa đảo"
+    // rồi chặn page (#551). Bắt lời hứa trong CHÍNH TIN BOT → cắm cờ, khối trả-nợ ngay dưới
+    // giao liền khi đã rõ bệnh. Lời hứa đã nói ra là PHẢI có code đứng sau.
+    try {
+      const RE_HUA_TAI_LIEU = /(gửi|gởi|share)[^.!?\n]{0,45}(cẩm nang|bài tập|tài liệu|video|hướng dẫn)/i;
+      if (!store.getKV(`doc_wanted:${conversationId}`) &&
+          (reply.messages || []).some((m) => RE_HUA_TAI_LIEU.test(String(m)))) {
+        store.setKV(`doc_wanted:${conversationId}`, String(Date.now()));
+        console.log(`[doc] 🤝 ${conversationId} bot tự hứa gửi tài liệu → cắm cờ doc_wanted để giao thật`);
+      }
+    } catch (e) { console.warn('[doc] bắt lời hứa tài liệu lỗi:', e?.message); }
+
     // TRẢ NỢ CẨM NANG: khách từng đòi (kv doc_wanted) mà lúc đó chưa rõ bệnh / bot bị chặn —
     // giờ lượt này đã chốt được bệnh (Gemini/link-fb/MEDi) → giao liền, không bắt đòi lại.
     try {
@@ -841,6 +936,20 @@ export async function handleRetouch(conv) {
   try {
     const fresh = store.getConversation(conversationId);
     if (!fresh || store.isHandled(fresh)) return; // đã giao người trong lúc chờ
+    // VÁ 03/08 (ca Nguyễn Chung): config.js ghi "giờ vàng 8-22h (handler.js chặn)" nhưng cửa đó
+    // KHÔNG HỀ TỒN TẠI — cron */10 chạy cả đêm, đo thật khách bị dập 22:40 + 22:50. Dùng chung
+    // khung giờ care-send (8-21h VN, env CARE_SEND_HOURS); ngoài khung → HOÃN, KHÔNG đốt lượt,
+    // sáng cron tự nhặt lại.
+    if (!trongKhungGioGui()) {
+      console.log(`[retouch] ⏰ ngoài khung giờ gửi → hoãn chạm ${conversationId}`);
+      return;
+    }
+    // VÁ 03/08: GIÃN NHỊP giữa các lần chạm — findRetouchTargets chỉ lọc theo mốc KHÁCH im,
+    // không theo mốc BOT vừa chạm → cron 10' bắn lần 2 đúng 10' sau lần 1 (đo thật 22:40→22:50,
+    // 2 phát liền = lộ máy + phiền). Lần sau phải cách lần trước ≥ RETOUCH_SPACING_HOURS (mặc định 3h).
+    const spacingMs = parseFloat(process.env.RETOUCH_SPACING_HOURS || '3') * 3600 * 1000;
+    const lanTruoc = Number(store.getKV(`retouch_at:${conversationId}`) || 0);
+    if (lanTruoc && Date.now() - lanTruoc < spacingMs) return;
     // OPT-OUT (vá 02/08, ca Phuong Ngoc): khách đã xin ngừng → TUYỆT ĐỐI không chạm lại.
     // Trước vá, handleRetouch không có cửa này: khách nói "đừng nhắn nữa" xong cron 10' vẫn dập tiếp.
     if (store.isOptedOut(fresh)) {
@@ -865,6 +974,7 @@ export async function handleRetouch(conv) {
     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
     await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name);
     store.incRetouch(conversationId);
+    store.setKV(`retouch_at:${conversationId}`, String(Date.now())); // mốc giãn nhịp lần sau
     console.log(`[retouch] đã chạm lại ${conversationId} (lần ${fresh.retouch_count + 1})`);
   } catch (err) {
     console.error('[handler] lỗi handleRetouch:', err?.message || err);
@@ -1090,14 +1200,17 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   // CHỐNG LẶP NGUYÊN VĂN (anh chốt 04/07): bot lặp y câu đã nói là lộ máy → bỏ ô trùng.
   // Chỉ soi ô dài (>25 ký tự) để không chặn oan câu ngắn đời thường ("Dạ vâng ạ"…).
   {
-    const daGui = (freshConv?.history || [])
+    const cacTinBot = (freshConv?.history || [])
       .filter((h) => h.role === 'model')
-      .map((h) => chuanHoaCau(h.text))
-      .join('\n');
+      .flatMap((h) => String(h.text).split('\n'))   // appendHistory nối các ô bằng \n → tách lại từng ô
+      .slice(-16);                                   // chỉ so 16 ô gần nhất (đủ phủ 5-8 lượt)
+    const daGui = cacTinBot.map((c) => chuanHoaCau(c)).join('\n');
     const truoc = outMessages.length;
-    outMessages = outMessages.filter((m) => !(chuanHoaCau(m).length > 25 && daGui.includes(chuanHoaCau(m))));
+    // 2 lớp: trùng NGUYÊN VĂN (cửa cũ 04/07) + lặp Ý diễn đạt lại (cửa mới 03/08, ca Bé Tuyết).
+    outMessages = outMessages.filter((m) =>
+      !(chuanHoaCau(m).length > 25 && daGui.includes(chuanHoaCau(m))) && !laCauLapY(m, cacTinBot));
     if (outMessages.length < truoc) {
-      console.log(`[dispatch] ${conversationId} bỏ ${truoc - outMessages.length} ô trùng nguyên văn tin bot đã gửi`);
+      console.log(`[dispatch] ${conversationId} bỏ ${truoc - outMessages.length} ô trùng/lặp ý tin bot đã gửi`);
     }
     // PHAO CỨU SINH (VÁ 20/07/2026 — ca 14 hội thoại CHƯA ĐỌC, ảnh Pancake 20:05):
     // Đây là cửa lọc DUY NHẤT trong 3 cửa của dispatch KHÔNG có phao (cửa gỡ link có phao ở ~910,
