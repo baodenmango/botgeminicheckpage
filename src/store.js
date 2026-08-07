@@ -572,6 +572,12 @@ export function getMediRecord(conv) {
 export function setOptOut(conversationId) {
   db.prepare('UPDATE conversations SET opt_out = 1 WHERE conversation_id = ?').run(String(conversationId));
 }
+// GỠ opt-out khi cắm OAN (ca Nick Chan 07/08: "VLTL không nhanh bằng" khớp nhầm "không nhắn"
+// → khách đang chốt lịch bị tắt vĩnh viễn). Gọi qua /admin/reset-human?conv=...&optout=1.
+export function clearOptOut(conversationId) {
+  const r = db.prepare('UPDATE conversations SET opt_out = 0 WHERE conversation_id = ?').run(String(conversationId));
+  return r.changes || 0;
+}
 // Kiểm 1 SĐT có opt-out ở BẤT KỲ kênh nào không (voucher-medi có phone nhưng chưa chắc có conv).
 // Khách đã nhắn "ngừng" ở FB/Zalo → tôn trọng, KHÔNG bắn voucher (chống spam → giữ chất OA).
 export function isPhoneOptedOut(phone) {

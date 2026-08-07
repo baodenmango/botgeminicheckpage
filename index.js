@@ -262,8 +262,15 @@ app.get('/admin/reset-human', (req, res) => {
   if (conv && (req.query.handover === '1' || req.query.handover === 'true')) {
     handoverCleared = store.clearHandover(String(conv));
   }
-  console.log(`[admin] gỡ cờ human-taken ${conv ? `conv ${conv}` : 'TẤT CẢ'} → ${changed} dòng${handoverCleared ? ` + gỡ handover ${handoverCleared}` : ''}`);
-  res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed, handoverCleared });
+  // thêm &optout=1 để gỡ cờ opt_out cắm OAN (ca Nick Chan 07/08: luật cứng khớp nhầm
+  // "không nhanh bằng" → tắt vĩnh viễn chuỗi chăm với khách đang chốt lịch).
+  let optoutCleared = 0;
+  if (conv && (req.query.optout === '1' || req.query.optout === 'true')) {
+    optoutCleared = store.clearOptOut(String(conv));
+    store.delKV(`optout_xinloi:${conv}`); // xoá cờ "đã xin lỗi 1 lần" để lần opt-out THẬT sau còn xin lỗi được
+  }
+  console.log(`[admin] gỡ cờ human-taken ${conv ? `conv ${conv}` : 'TẤT CẢ'} → ${changed} dòng${handoverCleared ? ` + gỡ handover ${handoverCleared}` : ''}${optoutCleared ? ` + gỡ opt-out ${optoutCleared}` : ''}`);
+  res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed, handoverCleared, optoutCleared });
 });
 
 // --- Admin: ÉP bot trả lời lại 1 hội thoại bị bỏ lửng (khách chưa nhắn mới) ---

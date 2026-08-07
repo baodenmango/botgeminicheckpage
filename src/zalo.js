@@ -177,15 +177,27 @@ function convIdPancake(userId) {
 }
 
 /**
- * GỬI nhiều ô text lần lượt qua Zalo OpenAPI (cùng nhịp với Pancake — có delay nhẹ).
+ * GỬI nhiều ô text lần lượt qua Zalo OpenAPI — nhịp NGƯỜI GÕ như bên Pancake.
+ * VÁ 03/08 (anh Trình chốt): trước vá các ô cách nhau CỨNG 1,2s — 3 ô dội xuống trong 3 giây
+ * là lộ máy tức thì. Nay: ô đầu gửi ngay (nhanh = tài sản), ô 2-3 chờ đúng thời gian GÕ theo
+ * độ dài câu (~7 ký tự/s + nhịp nghĩ + jitter, trần 25s). delayMs (nếu caller truyền) giữ vai
+ * trò SÀN tối thiểu để không phá chữ ký hàm cũ.
  */
+const TYPE_MS_ZALO = parseInt(process.env.TYPE_MS_PER_CHAR_NEXT || '140', 10);
+const DELAY_CAP_ZALO_MS = parseInt(process.env.DELAY_CAP_NEXT_MS || '25000', 10);
 export async function sendTexts(userId, messages, delayMs = 1200) {
   let okAny = false;
-  for (const m of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (i > 0) {
+      const typing = String(m || '').length * TYPE_MS_ZALO;
+      const thinking = 1000 + Math.floor(Math.random() * 2500);
+      const cho = Math.min(Math.round((typing + thinking) * (0.7 + Math.random() * 0.6)), DELAY_CAP_ZALO_MS);
+      await new Promise((r) => setTimeout(r, Math.max(cho, delayMs)));
+    }
     const ok = await sendText(userId, m);
     okAny = okAny || ok;
     if (!ok) break;
-    await new Promise((r) => setTimeout(r, delayMs));
   }
   return okAny;
 }

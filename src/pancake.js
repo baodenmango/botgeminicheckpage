@@ -84,6 +84,12 @@ const THINK_RAND_MS = parseInt(process.env.THINK_RAND_MS || '2500', 10);
 const FIRST_READ_MS = parseInt(process.env.FIRST_READ_MS || '800', 10);       // nhịp đọc tin khách trước khi gõ ô đầu
 // Nâng trần lên 12s để dải delay các ô sau giãn ra (ai muốn giữ 8s cứ set env DELAY_CAP_MS=8000).
 const DELAY_CAP_MS = parseInt(process.env.DELAY_CAP_MS || '12000', 10);       // trần 12s/ô (câu rất dài / có jitter)
+// VÁ 03/08 (anh Trình chốt): Ô ĐẦU nhanh là TÀI SẢN (bot "suy nghĩ" xong trả lời liền — hợp lý),
+// nhưng Ô 2-3 phải chậm ĐÚNG BẰNG TỐC ĐỘ GÕ PHÍM. Trước vá: ô sau dài 100-200 ký tự mà đội trần
+// 12s → bắn đều 10-13s/ô (đo thật ca Nguyễn Chung 02/08) — người thật gõ ĐT ~7 ký tự/s thì câu đó
+// phải mất 15-30s → khách đọc ra máy. Ô sau dùng tốc độ gõ THẬT + trần riêng cao hơn.
+const TYPE_MS_PER_CHAR_NEXT = parseInt(process.env.TYPE_MS_PER_CHAR_NEXT || '140', 10); // ô 2-3: ~7 ký tự/s, tốc độ gõ ĐT thật
+const DELAY_CAP_NEXT_MS = parseInt(process.env.DELAY_CAP_NEXT_MS || '25000', 10);       // trần riêng ô sau (câu rất dài)
 
 // DELAY ĐỘNG BIÊN RỘNG — chống "nhịp máy":
 // Đo được (audit 09/07/2026): từ lượt khách thứ 3–4, bot trả lời 16–20s ĐỀU TĂM TẮP (median 16–20s,
@@ -93,8 +99,10 @@ const DELAY_CAP_MS = parseInt(process.env.DELAY_CAP_MS || '12000', 10);       //
 // (index>0) nhân thêm hệ số jitter ±30% để phá thế đều đặn.
 function humanDelay(text, index) {
   const len = (text || '').length;
-  // gõ: tỉ lệ độ dài, tốc độ người thật trên ĐT
-  const typing = len * TYPE_MS_PER_CHAR;
+  // gõ: tỉ lệ độ dài. Ô ĐẦU giữ tốc độ "gõ nhanh tay" (nhanh = tài sản);
+  // Ô SAU (2-3) dùng tốc độ gõ ĐT THẬT ~7 ký tự/s — khách đang nhìn "đang gõ..." nên thời gian
+  // phải khớp độ dài câu, bắn sớm là lộ máy (anh Trình chốt 03/08).
+  const typing = len * (index === 0 ? TYPE_MS_PER_CHAR : TYPE_MS_PER_CHAR_NEXT);
   // nghĩ: nhịp "lắng nghe + cân nhắc" trước khi gõ, có ngẫu nhiên cho tự nhiên (biên đã nới rộng)
   const thinking = THINK_MIN_MS + Math.floor(Math.random() * THINK_RAND_MS);
   // ô ĐẦU: thêm nhịp ĐỌC tin khách (người thật đọc xong mới gõ — không bắn ngay)
@@ -105,7 +113,9 @@ function humanDelay(text, index) {
   // JITTER ±30% CHỈ cho ô SAU (index>0) — phá thế 16–20s đều tăm tắp. Ô ĐẦU (index===0) GIỮ NGUYÊN
   // để tin đầu vẫn nhanh (<30s), KHÔNG chạm cap — đây là tài sản.
   if (index > 0) total *= (0.7 + Math.random() * 0.6);
-  return Math.min(Math.round(total), DELAY_CAP_MS);
+  // Trần tách đôi: ô đầu giữ 12s; ô sau trần 25s để câu dài THẬT SỰ chậm như gõ tay
+  // (trước vá: mọi ô sau ≥100 ký tự đều đội trần 12s → nhịp đều tăm tắp 10-13s = tell lộ bot).
+  return Math.min(Math.round(total), index === 0 ? DELAY_CAP_MS : DELAY_CAP_NEXT_MS);
 }
 
 // Tra cấu hình 1 page theo page_id, KHỚP LINH HOẠT tiền tố kênh.

@@ -68,7 +68,10 @@ function wantsDocument(text) {
 // Map (không Set): lưu thời điểm khóa để TỰ HẾT HẠN sau LOCK_TTL — chống kẹt vĩnh viễn
 // nếu 1 lượt xử lý bị treo (Gemini/sendMessages hang) → conv đó sẽ không câm mãi.
 const locks = new Map();
-const LOCK_TTL_MS = parseInt(process.env.LOCK_TTL_MS || '60000', 10);
+// VÁ 03/08: nâng 60s → 120s theo vá "ô 2-3 chậm như gõ tay" (pancake.js humanDelay trần ô sau
+// 25s) — 1 lượt 3 ô giờ có thể mất ~60-70s kể cả Gemini; TTL 60s cũ sẽ nhả khóa GIỮA lúc đang
+// gửi → lượt mới chen vào, 2 luồng bắn xen kẽ. 120s vẫn đủ ngắn để không câm lâu khi treo thật.
+const LOCK_TTL_MS = parseInt(process.env.LOCK_TTL_MS || '120000', 10);
 function lockHeld(id) {
   const at = locks.get(String(id));
   if (!at) return false;
@@ -246,12 +249,21 @@ export function laConvDaDatLich(conversationId) {
 // → Bắt bằng LUẬT CỨNG ở tầng code, không phụ thuộc model có "hiểu" hay không.
 const RE_XIN_NGUNG = new RegExp([
   // "đừng/không nhắn|gửi tin nữa", "kh nên gởi tn tới tui nữa", "đừng làm phiền"
-  '(dung|khong|kh|ko|k|thoi) (nen )?(nhan|nhat|gui|goi|gio|gioi|ib|inbox|lam phien|phien|spam)',
+  // VÁ 07/08 (ca Nick Chan — khách ĐANG CHỐT LỊCH hỏi "VLTL không nhanh bằng đúng không?"):
+  // thiếu BIÊN TỪ nên "khong nhanh" khớp nhầm "khong nhan" → bot tự tắt vĩnh viễn với lead nóng
+  // đang hỏi giá tiêm. Thêm (?![a-z]) chặn khớp giữa từ; (?! vien) chặn "không NHÂN VIÊN nào..."
+  // (bỏ dấu "nhân"="nhan" — câu than phiền, không phải xin ngừng).
+  '(dung|khong|kh|ko|k|thoi) (nen )?(nhan(?! vien)|nhat|gui|goi|gio|gioi|ib|inbox|lam phien|phien|spam)(?![a-z])',
   '(nhan|gui|goi|gio|gioi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
   // "bỏ ý định", "không còn nhu cầu", "hủy lịch", "không chữa nữa"
-  'bo (y dinh|dinh|nhu cau|kham|chua)',
-  '(khong|kh|ko|k) (con )?(nhu cau|y dinh|muon|can) ',
-  '(huy|khong) (lich|kham|chua|dat lich)',
+  'bo (y dinh|dinh|nhu cau|kham|chua)(?![a-z])',
+  '(khong|kh|ko|k) (con )?(nhu cau|y dinh)(?![a-z])',
+  // VÁ 07/08: tách "muốn|cần" khỏi nhóm trên — bản cũ '(khong...)(muon|can) ' nuốt oan cả
+  // "không muốn mổ/tiêm/đau" (khách SỢ = lead cần trấn an, không phải xin ngừng nhận tin).
+  // Chỉ còn opt-out khi cái khách không muốn/cần là TIN NHẮN/TƯ VẤN/LIÊN LẠC.
+  '(khong|kh|ko|k) (con )?(muon|can) (nhan|tin|tn|nghe|tu van|goi|lam phien)(?![a-z])',
+  // "chua" thêm chặn đuôi: "không chữa ĐƯỢC/khỏi/hết" là khách THAN (lead vàng mục 8), không phải bỏ chữa.
+  '(huy|khong) (lich|kham|chua(?! (duoc|khoi|het))|dat lich)(?![a-z])',
   // "làm phiền quá", "gửi tin nhiều quá", "spam quá"
   '(lam phien|phien|spam|nhieu tin|tin nhieu) (qua|lam)',
   '(gui|goi|gio|gioi) (tn|tin) (nhieu|qua)',
