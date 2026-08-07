@@ -20,7 +20,7 @@ import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive, laSoKhongCoZalo } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive, laSoKhongCoZalo, sendZnsRating } from './src/zns.js';
 import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -958,6 +958,31 @@ app.get('/admin/wakeup-pilot', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
   }
+});
+
+// --- Admin: TEST FORM ĐÁNH GIÁ end-to-end (07/08 — chốt nghi án "100 gửi / 0 chấm về") ---
+// GET /admin/test-rating?token=XXX&phone=09xx[&force=1]
+// Bắn form 522230 tới 1 số thật → người nhận CHẤM SAO → webhook phải ghi rating_log
+// (xem /admin/danh-gia). Không thấy log về = webhook đánh giá chiều về ĐỨT.
+// force=1: xoá cooldown 6 tháng của số đó trước khi gửi (số test hay đã nhận rồi).
+app.get('/admin/test-rating', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const phone = req.query.phone ? String(req.query.phone) : null;
+  if (!phone) return res.status(400).json({ ok: false, error: 'thiếu phone' });
+  if (req.query.force === '1') {
+    const sdt84 = phone.replace(/\D/g, '').replace(/^0/, '84');
+    store.delKV(`zns_rating_sent:${sdt84}`);
+  }
+  const ok = await sendZnsRating(phone, { ten: req.query.ten || 'Quý khách', maKH: 'TEST' });
+  res.status(200).json({
+    ok, phone,
+    buoc_tiep: ok
+      ? 'Người nhận mở tin → CHẤM SAO → chờ 1-2 phút → GET /admin/danh-gia phải thấy 1 lượt. Không thấy = webhook chiều về đứt.'
+      : 'Zalo không nhận — soi log (-118/-1472/cooldown/ngoài giờ 7-21h)',
+  });
 });
 
 app.get('/admin/test-quantam-oa', async (req, res) => {
