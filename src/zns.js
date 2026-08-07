@@ -14,6 +14,7 @@ import * as store from './store.js';
 import { getAccessTokenNow, refreshAccessToken, zaloAgentV4 } from './zalo.js';
 // VÁ 20/07/2026: ZNS phải ghi sổ chống echo như mọi đường gửi khác — xem ghiSoEchoZns() bên dưới.
 import { noteBotSent, noteBotJustSent } from './echoguard.js';
+import { notifyText } from './telegram.js';
 
 // Sinh mã voucher NGẪU NHIÊN THẬT + ký tự checksum (bảo mật — vá 10/07: mã cũ tính được từ SĐT).
 // Chỉ [A-Z0-9] (loại "Mã số" của ZNS + để Zalo render QR đúng), độ dài 9: tiền tố theo chương trình
@@ -569,7 +570,17 @@ export async function pullZnsRatings({ fromDays = 60 } = {}) {
       if (store.getKV(key)) continue; // đã kéo lần trước
       store.setKV(key, JSON.stringify({ sao, ten: null, phone: phone || null, gopY, luc }));
       moi++;
-      if (sao <= 3) console.warn(`[zns] 🚨 kéo về ca ${sao}★ (${phone ? phone.slice(0, 5) + '***' : 'chưa rõ SĐT'}) — góp ý: ${gopY || '(không)'}`);
+      if (sao <= 3) {
+        // Ca chê kéo về trễ tối đa 30' (cron) — vẫn réo Telegram để gọi cứu như luồng webhook cũ.
+        console.warn(`[zns] 🚨 kéo về ca ${sao}★ (${phone ? phone.slice(0, 5) + '***' : 'chưa rõ SĐT'}) — góp ý: ${gopY || '(không)'}`);
+        const ngayChe = new Date(luc * 1000 + 7 * 3600e3).toISOString().slice(0, 16).replace('T', ' ');
+        notifyText([
+          `🚨 KHÁCH CHẤM ${sao}★ (form đánh giá ZNS)`,
+          `Lúc: ${ngayChe} · SĐT: ${phone || 'chưa rõ (Zalo không trả, tin gửi trước 08/08)'}`,
+          `Góp ý: ${gopY || '(không ghi)'}`,
+          `→ Gọi cứu trong hôm nay. Xem sổ: /admin/danh-gia`,
+        ].join('\n')).catch(() => {});
+      }
     }
     if (ds.length < 100) break;
   }
