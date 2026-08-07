@@ -216,6 +216,9 @@ export async function sendZnsNhacLich(phone, { ten, ngay_hen, maKH } = {}) {
     }
     if (r.data?.error === 0) {
       ghiSoEchoZns(phone, [ten, ngay_hen]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
+      // Dấu đếm "tới đích" (07/08): trả lời được "ZNS nhắc tái khám đã bắn bao nhiêu?" qua
+      // /admin/zns-dem — trước đây chỉ có log Render, không đếm được từ ngoài.
+      store.setKV(`zns_nhaclich_sent:${sdt}:${Date.now()}`, ngay_hen || '1');
       console.log(`[zns] ✅ nhắc lịch ${ngay_hen} tới ${sdt.slice(0, 5)}*** (msg_id ${r.data?.data?.msg_id || '?'})`);
       return true;
     }

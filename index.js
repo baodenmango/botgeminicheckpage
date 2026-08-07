@@ -862,6 +862,7 @@ app.get('/admin/zns-dem', (req, res) => {
     moi_quan_tam_oa: dem('zns_moi_oa:'),           // mời OA 609256 (gồm pilot + d0/d1)
     so_khong_co_zalo: dem('zns_no_zalo:'),         // cờ -118
     voucher_phat: dem('voucher:'),                 // sổ voucher
+    nhaclich_tai_kham: dem('zns_nhaclich_sent:'),  // ZNS nhắc lịch 603887/500295 (d6/d7 fallback, đếm từ 07/08)
     rating_log_ve: dem('rating_log:'),             // khách CHẤM SAO gửi về (chiều về webhook)
     ghi_chu: 'Mỗi key = 1 SĐT/1 tin Zalo đã NHẬN (error=0), trừ voucher_phat là sổ phát. ZNS nhắc lịch 603887 không có KV riêng — đếm qua log Render [bill] ZNS nhắc tái khám.',
   });
