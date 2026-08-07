@@ -16,7 +16,7 @@ import { ingestBill, runBillTouches } from './src/billengine.js';
 import { thongKe as quotaThongKe } from './src/quota.js';
 import { runGroupTouches } from './src/rebillengine.js';
 import { handleZaloFollow, handleZaloSubmitInfo, handleZaloRating, handleZaloUnfollow, zaloWebhookAllowed } from './src/follow.js';
-import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './src/zalo.js';
+import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang, sendTexts } from './src/zalo.js';
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
@@ -1071,6 +1071,83 @@ app.get('/admin/test-rating', async (req, res) => {
     buoc_tiep: ok
       ? 'Người nhận mở tin → CHẤM SAO → gọi /admin/keo-danh-gia (hoặc chờ cron 30 phút) → /admin/danh-gia thấy lượt mới. Kết quả KHÔNG về qua webhook.'
       : 'Zalo không nhận — soi log (-118/-1472/cooldown/ngoài giờ 7-21h)',
+  });
+});
+
+// --- Admin: XIN REVIEW GOOGLE tệp 100 ca đã nhận form đánh giá (anh Trình chốt 08/08) ---
+// GET /admin/moi-review-100?token=XXX[&dry=1 mặc định][&test=09xx]
+// Cơ sở: 2 ca ≤3★ là test nội bộ (anh + Nguyên Hạnh) → tệp đã nhận form coi như hài lòng.
+// test=SĐT: bắn 1 tin mẫu tới số đó (bỏ qua khung giờ + không ghi cờ) để anh duyệt lời văn.
+// dry=0: bắn thật — có kênh OA → tin mời Maps; chưa có OA → ZNS mời Quan tâm + cờ cho_moi_maps
+// (follow xong bot tự mời Maps — chuỗi đã cắm). Dedupe moi_review_maps 1 lần/người vĩnh viễn.
+const LOI_XIN_REVIEW =
+  'Dạ em chào mình 🌿 Em là trợ lý của Phòng khám Cơ Xương Khớp Hiệp Lợi ạ.\n'
+  + 'Bác sĩ Trình và đội ngũ cảm ơn mình đã tin tưởng đồng hành thời gian qua. Phòng khám có một mong nhỏ: '
+  + 'nếu mình thấy hài lòng với kết quả điều trị, mình chạm vào link dưới đây rồi chọn mức sao mình ưng giúp phòng khám nha — chỉ mất 30 giây ạ:\n'
+  + (process.env.MAPS_REVIEW_URL || 'https://g.page/r/CZkVGnwcLz5vEBM/review') + '\n'
+  + '(Chạm link là hiện sẵn khung chấm ⭐ — chạm vào ngôi sao là xong, không cần gõ gì thêm ạ)\n'
+  + 'Mỗi đánh giá của mình giúp bà con đau nhức xương khớp quanh vùng tìm được đúng địa chỉ để thăm khám. Em cảm ơn mình thiệt nhiều 🙏';
+app.get('/admin/moi-review-100', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const timUid = (sdt84) => {
+    const p0 = String(sdt84).replace(/^84/, '0');
+    const conv = store.getZaloConvByPhone(p0) || store.getZaloConvByPhone(sdt84);
+    return { uid: conv?.zalo_user_id || store.getKV(`phone_zalo:${p0}`) || store.getKV(`phone_zalo:${sdt84}`) || null, p0 };
+  };
+  // Chế độ TEST: bắn 1 tin cho anh duyệt lời văn, không đụng cờ gì.
+  if (req.query.test) {
+    const sdt84 = String(req.query.test).replace(/\D/g, '').replace(/^0/, '84');
+    const { uid, p0 } = timUid(sdt84);
+    if (!uid) return res.status(400).json({ ok: false, error: `SĐT ${p0} chưa có kênh OA (chưa follow/nhắn OA) → không gửi tin thường được` });
+    const ok = await sendTexts(uid, [LOI_XIN_REVIEW]);
+    return res.status(200).json({ ok, test: p0, loi_van: LOI_XIN_REVIEW });
+  }
+  // Tệp = mọi SĐT đã nhận form đánh giá (KV zns_rating_sent:).
+  const tep = store.listKVByPrefix('zns_rating_sent:').map((r) => r.key.slice('zns_rating_sent:'.length));
+  const ke = { co_kenh: [], da_moi_roi: 0, khong_kenh: [] };
+  for (const sdt84 of tep) {
+    const { uid, p0 } = timUid(sdt84);
+    if (!uid) { ke.khong_kenh.push({ sdt84, p0 }); continue; }
+    if (store.getKV(`moi_review_maps:${uid}`)) { ke.da_moi_roi++; continue; }
+    ke.co_kenh.push({ uid, p0 });
+  }
+  const dry = req.query.dry !== '0';
+  if (dry) {
+    return res.status(200).json({
+      ok: true, dry: true, tong_tep: tep.length,
+      gui_tin_oa: ke.co_kenh.length, da_moi_roi_bo_qua: ke.da_moi_roi,
+      chua_co_kenh_se_zns_moi_oa: ke.khong_kenh.length,
+      ban_that: 'thêm &dry=0 (khung 8-20h VN)',
+    });
+  }
+  const gio = (new Date(Date.now() + 7 * 3600e3)).getUTCHours();
+  if (gio < 8 || gio >= 20) return res.status(400).json({ ok: false, error: `ngoài khung 8-20h VN (đang ${gio}h)` });
+  res.status(200).json({ ok: true, dang_ban: ke.co_kenh.length, zns_moi_oa: ke.khong_kenh.length, kq: 'tự về Telegram + KV moi_review_100_kq' });
+  setImmediate(async () => {
+    let okOA = 0, hutOA = 0, okZns = 0;
+    for (const { uid, p0 } of ke.co_kenh) {
+      const ok = await sendTexts(uid, [LOI_XIN_REVIEW]);
+      if (ok) { okOA++; store.setKV(`moi_review_maps:${uid}`, 'xin-100-0808'); } else hutOA++;
+      await new Promise((s) => setTimeout(s, 700));
+    }
+    for (const { sdt84, p0 } of ke.khong_kenh) {
+      store.setKV(`cho_moi_maps:${p0}`, '5');
+      if (!store.getKV(`zns_moi_oa:${p0}`) && !store.getKV(`zns_moi_oa:${sdt84}`)) {
+        const ok = await sendZnsQuanTamOA(p0, {});
+        if (ok) { okZns++; store.setKV(`zns_moi_oa:${p0}`, 'xin-review-0808'); }
+        await new Promise((s) => setTimeout(s, 700));
+      }
+    }
+    const kq = `⭐ XIN REVIEW GOOGLE (tệp ${tep.length} ca đã nhận form):\n`
+      + `• Tin OA mời Maps: ${okOA} OK / ${hutOA} hụt (trên ${ke.co_kenh.length} ca có kênh)\n`
+      + `• ZNS mời Quan tâm OA (chưa có kênh, follow xong tự mời Maps): ${okZns}/${ke.khong_kenh.length}\n`
+      + `• Bỏ qua vì đã mời trước đó: ${ke.da_moi_roi}`;
+    store.setKV('moi_review_100_kq', kq);
+    notifyText(kq).catch(() => {});
+    console.log('[moi-review-100]', kq.replace(/\n/g, ' | '));
   });
 });
 
