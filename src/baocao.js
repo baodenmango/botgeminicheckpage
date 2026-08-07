@@ -18,6 +18,19 @@ export async function baoCaoTuanZalo() {
     : '(chưa có dữ liệu — tích luỹ từ ngày deploy)';
   const tyLeSDT = t.convMoi ? Math.round((t.phoneCaptured / t.convMoi) * 100) : 0;
 
+  // Đánh giá sao (sổ rating_log — kéo từ Zalo qua rating/get, xem /admin/danh-gia).
+  // Tách lượt 7 ngày để thấy nhịp tuần; ca ≤3★ đã réo riêng lúc kéo về, đây chỉ là tổng.
+  let dgStr = '(chưa có lượt nào)';
+  try {
+    const ds = store.listKVByPrefix('rating_log:').map((r) => { try { return JSON.parse(r.value); } catch { return null; } }).filter((r) => r && r.sao >= 1 && r.sao <= 5);
+    if (ds.length) {
+      const tb = Math.round(ds.reduce((s, r) => s + r.sao, 0) / ds.length * 100) / 100;
+      const tuanQua = ds.filter((r) => (r.luc || 0) > Date.now() / 1000 - 7 * 86400);
+      const cheTuan = tuanQua.filter((r) => r.sao <= 3).length;
+      dgStr = `TB <b>${tb}★</b>/${ds.length} lượt · tuần này +${tuanQua.length}${cheTuan ? ` (⚠️ ${cheTuan} ca ≤3★)` : ''}`;
+    }
+  } catch { /* không chặn báo cáo */ }
+
   const text =
     `📊 <b>BÁO CÁO ZALO TUẦN</b> (${homNay})\n` +
     `• Follower OA: <b>${follower ?? 'n/a'}</b>\n` +
@@ -26,6 +39,7 @@ export async function baoCaoTuanZalo() {
     `• Lịch đặt qua Zalo tuần: <b>${t.bookingZalo}</b>\n` +
     `• Ca chăm mới tuần / tổng: <b>${t.caChamTuan}</b> / ${t.caCham}\n` +
     `• Unfollow/block tuần: <b>${t.unfollowTuan}</b>\n` +
+    `• Đánh giá sao: ${dgStr}\n` +
     `• Bill theo nguồn (tích luỹ): ${nguonStr}\n` +
     `• Quota tin tư vấn ${q.thang}: đã tiêu <b>${q.da_tieu}/${q.quota}</b> (còn ${q.con_lai}` +
     `${q.mien_phi_48h ? `, miễn phí 48h: ${q.mien_phi_48h}` : ''})\n` +
