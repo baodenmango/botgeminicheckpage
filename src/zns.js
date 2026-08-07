@@ -296,6 +296,8 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
   if (Math.floor(Date.now() / 1000) - lanTruoc < RATING_COOLDOWN_S) return false;
   if (!tag3ConQuota(sdt)) return false; // chống -1472: đã đủ 4 tin Tag3/tháng → nhường quota cho voucher/quan-tâm
 
+  // trackingId lưu sổ để lượt kéo rating/get tra ngược ra SĐT (Zalo không trả phone trong kết quả chấm)
+  const trackingId = `rating-${Date.now()}`;
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
     template_id: RATING_TEMPLATE,
@@ -303,7 +305,7 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
       customer_name: (ten || 'Quý khách').slice(0, 30),
       ma_khach_hang: String(maKH || sdt.slice(-4)).slice(0, 30),
     },
-    tracking_id: `rating-${Date.now()}`,
+    tracking_id: trackingId,
   }, { headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4 });
 
   try {
@@ -311,6 +313,7 @@ export async function sendZnsRating(phone, { ten, maKH } = {}) {
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
     if (r.data?.error === 0) {
       store.setKV(key, String(Math.floor(Date.now() / 1000)));
+      store.setKV(`zns_rating_track:${trackingId}`, sdt); // map trackingId→SĐT cho lượt kéo kết quả
       tangTag3(sdt); // rating cũng là Tag3 → đếm gộp chống dội trần 4 tin/số/tháng
       ghiSoEchoZns(phone, [ten]); // VÁ 20/07: chặn echo ZNS bị tưởng telesale gõ tay
       console.log(`[zns] ⭐ gửi form đánh giá tới ${sdt.slice(0, 5)}*** (van xả complain về kênh kín)`);
@@ -530,6 +533,8 @@ export async function pullZnsRatings({ fromDays = 60 } = {}) {
   const toTime = Date.now();
   const fromTime = toTime - fromDays * 86400e3;
   let keo = 0, moi = 0, mau = null, tho = null;
+  // Dọn bản ghi hỏng của lượt kéo đầu 08/08 (id rơi về ':<giây>' vì đọc trượt field msgId).
+  for (const row of store.listKVByPrefix('rating_log:zns::')) store.delKV(row.key);
   for (let offset = 0; offset < 2000; offset += 100) {
     const goi = async () => axios.get(RATING_GET_API, {
       params: { template_id: RATING_TEMPLATE, offset, limit: 100, from_time: fromTime, to_time: toTime },
@@ -547,19 +552,24 @@ export async function pullZnsRatings({ fromDays = 60 } = {}) {
     for (const dg of ds) {
       keo++;
       if (!mau) mau = dg;
+      // Field THẬT Zalo trả (soi 08/08): rate, note, feedbacks[], msgId, trackingId, submitDate(ms, string).
       const sao = Number(docSo(dg, ['rate', 'rating', 'star', 'stars', 'score', 'point']));
       if (!(sao >= 1 && sao <= 5)) continue;
-      const phone = String(docSo(dg, ['phone', 'sdt', 'user_phone']) || '');
-      const gopY = docSo(dg, ['note', 'feedback', 'comment', 'content', 'message']) || null;
-      let luc = Number(docSo(dg, ['submit_date', 'submit_time', 'submitted_at', 'timestamp', 'time']) || 0);
+      const trackingId = docSo(dg, ['trackingId', 'tracking_id']) || '';
+      // Zalo KHÔNG trả SĐT — tra ngược qua sổ zns_rating_track: (ghi lúc gửi, chỉ có từ 08/08).
+      const phone = String(docSo(dg, ['phone', 'sdt', 'user_phone']) || (trackingId ? store.getKV(`zns_rating_track:${trackingId}`) : '') || '');
+      const note = docSo(dg, ['note', 'feedback', 'comment', 'content', 'message']) || '';
+      const tags = Array.isArray(dg.feedbacks) ? dg.feedbacks.join(' · ') : '';
+      const gopY = [note, tags].filter(Boolean).join(' — ') || null;
+      let luc = Number(docSo(dg, ['submitDate', 'submit_date', 'submit_time', 'submitted_at', 'timestamp', 'time']) || 0);
       if (luc > 1e12) luc = Math.floor(luc / 1000); // ms → s
       if (!luc) luc = Math.floor(Date.now() / 1000);
-      const id = docSo(dg, ['msg_id', 'message_id', 'tracking_id']) || `${phone}:${luc}`;
+      const id = docSo(dg, ['msgId', 'msg_id', 'message_id']) || trackingId || `${phone}:${luc}`;
       const key = `rating_log:zns:${id}`;
       if (store.getKV(key)) continue; // đã kéo lần trước
       store.setKV(key, JSON.stringify({ sao, ten: null, phone: phone || null, gopY, luc }));
       moi++;
-      if (sao <= 3) console.warn(`[zns] 🚨 kéo về ca ${sao}★ (${phone.slice(0, 5)}***) — cần gọi cứu`);
+      if (sao <= 3) console.warn(`[zns] 🚨 kéo về ca ${sao}★ (${phone ? phone.slice(0, 5) + '***' : 'chưa rõ SĐT'}) — góp ý: ${gopY || '(không)'}`);
     }
     if (ds.length < 100) break;
   }
