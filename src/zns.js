@@ -529,7 +529,7 @@ const docSo = (o, keys) => { for (const k of keys) { const v = o?.[k]; if (v != 
 export async function pullZnsRatings({ fromDays = 60 } = {}) {
   const toTime = Date.now();
   const fromTime = toTime - fromDays * 86400e3;
-  let keo = 0, moi = 0, mau = null;
+  let keo = 0, moi = 0, mau = null, tho = null;
   for (let offset = 0; offset < 2000; offset += 100) {
     const goi = async () => axios.get(RATING_GET_API, {
       params: { template_id: RATING_TEMPLATE, offset, limit: 100, from_time: fromTime, to_time: toTime },
@@ -537,8 +537,13 @@ export async function pullZnsRatings({ fromDays = 60 } = {}) {
     });
     let r = await goi();
     if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
-    if (r.data?.error !== 0) return { keo, moi, loi: r.data, mau };
-    const ds = Array.isArray(r.data?.data) ? r.data.data : [];
+    if (r.data?.error !== 0) return { keo, moi, loi: r.data, mau, tho };
+    if (!tho) tho = r.data; // giữ nguyên response trang đầu để soi cấu trúc thật Zalo trả
+    // Zalo có thể trả mảng ở data / data.ratings / data.data — đọc linh hoạt.
+    const goc = r.data?.data;
+    const ds = Array.isArray(goc) ? goc
+      : Array.isArray(goc?.ratings) ? goc.ratings
+      : Array.isArray(goc?.data) ? goc.data : [];
     for (const dg of ds) {
       keo++;
       if (!mau) mau = dg;
@@ -559,7 +564,7 @@ export async function pullZnsRatings({ fromDays = 60 } = {}) {
     if (ds.length < 100) break;
   }
   if (moi) console.log(`[zns] ⭐ kéo đánh giá: ${keo} bản ghi, ${moi} mới vào sổ`);
-  return { keo, moi, loi: null, mau };
+  return { keo, moi, loi: null, mau, tho };
 }
 
 // ============================================================

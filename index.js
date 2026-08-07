@@ -1051,7 +1051,7 @@ app.get('/admin/keo-danh-gia', async (req, res) => {
     const kq = await pullZnsRatings({ fromDays: parseInt(req.query.days || '60', 10) });
     res.status(200).json({
       ok: !kq.loi, keo_duoc: kq.keo, moi_vao_so: kq.moi, loi_zalo: kq.loi,
-      ...(req.query.raw === '1' ? { ban_ghi_mau: kq.mau } : {}),
+      ...(req.query.raw === '1' ? { ban_ghi_mau: kq.mau, response_tho: kq.tho } : {}),
       xem_so: '/admin/danh-gia',
     });
   } catch (err) {
