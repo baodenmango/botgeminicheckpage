@@ -1014,8 +1014,8 @@ app.post('/admin/ydao-pilot', async (req, res) => {
 
 // --- Admin: TEST FORM ĐÁNH GIÁ end-to-end (07/08 — chốt nghi án "100 gửi / 0 chấm về") ---
 // GET /admin/test-rating?token=XXX&phone=09xx[&force=1]
-// Bắn form 522230 tới 1 số thật → người nhận CHẤM SAO → webhook phải ghi rating_log
-// (xem /admin/danh-gia). Không thấy log về = webhook đánh giá chiều về ĐỨT.
+// KẾT LUẬN 08/08: Zalo KHÔNG push kết quả chấm qua webhook — kết quả về bằng /admin/keo-danh-gia
+// (cron POS tự kéo mỗi 30'). Test: bắn form → người nhận chấm → kéo → /admin/danh-gia thấy lượt mới.
 // force=1: xoá cooldown 6 tháng của số đó trước khi gửi (số test hay đã nhận rồi).
 app.get('/admin/test-rating', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
@@ -1032,7 +1032,7 @@ app.get('/admin/test-rating', async (req, res) => {
   res.status(200).json({
     ok, phone,
     buoc_tiep: ok
-      ? 'Người nhận mở tin → CHẤM SAO → chờ 1-2 phút → GET /admin/danh-gia phải thấy 1 lượt. Không thấy = webhook chiều về đứt.'
+      ? 'Người nhận mở tin → CHẤM SAO → gọi /admin/keo-danh-gia (hoặc chờ cron 30 phút) → /admin/danh-gia thấy lượt mới. Kết quả KHÔNG về qua webhook.'
       : 'Zalo không nhận — soi log (-118/-1472/cooldown/ngoài giờ 7-21h)',
   });
 });
