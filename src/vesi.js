@@ -181,6 +181,22 @@ async function loiKhach(cv) {
   return { soTin: cau.length, cau: cau.slice(-3).join(' | ').slice(0, 400) };
 }
 
+// True nếu ANH TRÌNH đã tự bấm chặn ca này trong Pancake.
+// Đo thật 07/08/2026: Pancake giữ cờ `is_banned` trên KHÁCH, chỉ bật khi chặn QUA PANCAKE —
+// máy chặn qua Graph API KHÔNG bật (Nick Chan is_banned=false dù đã chặn thật; Trung Hà anh
+// bấm tay thì is_banned=true). Nhờ đó phân biệt "anh đã xử" với "chưa ai đụng" → hết báo lại
+// ca anh vừa bấm xong. Lỗi mạng → false (thà báo thừa còn hơn nuốt mất ca chưa xử).
+async function anhDaChan(cv) {
+  const cus = (cv?.customers || [])[0]?.id;
+  if (!cus) return false;
+  const r = await goiPancake({
+    method: 'get', pageId: PAGE_ID, duongDan: `/customers/${cus}`,
+    viec: 'vệ sĩ soi anh đã chặn chưa',
+  });
+  if (!r?.ok) return false;
+  return Boolean(r?.data?.data?.is_banned);
+}
+
 async function geminiCham(name, snippet, laComment = false) {
   const model = getGeminiModel();
   if (!model) return { ngoai: null, pha_hoai: false, ly_do: 'không có GEMINI_API_KEY' };
@@ -578,6 +594,15 @@ export async function runVesi(opts = {}) {
       if (g.ngoai === true) { verdict = `NGOAI_GEMINI(${g.ly_do})`; action = 'chan'; chacCham = g.chac; }
       else if (g.pha_hoai) { verdict = `PHA_HOAI(${g.ly_do})`; action = 'chan'; chacCham = g.chac; } // lệnh anh Trình 14/07
       else if (loai === 'NGHI_NGOAI') { verdict = `NGHI_NGOAI_THA(${g.ly_do})`; action = 'bo_qua'; }
+    }
+
+    // ANH ĐÃ TỰ BẤM CHẶN TRONG PANCAKE → ca coi như xong, ghi sổ và IM.
+    // (Bệnh anh Trình bắt 07/08: "anh bấm link chặn rồi mà nó vẫn báo hoài".)
+    if (action === 'chan' && (await anhDaChan(cv))) {
+      setState(cid, { verdict: `ANH_DA_CHAN_TRONG_PANCAKE(${verdict})`, action: 'anh_da_chan', ts: nowIsoUtc() });
+      xoaSoDeXuat(cid);
+      log(`anh đã tự chặn ${name} trong Pancake → im, không báo lại`);
+      continue;
     }
 
     if (action === 'chan' && chan.length < TRAN_CHAN) {
