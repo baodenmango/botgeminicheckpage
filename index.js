@@ -847,6 +847,26 @@ app.post('/admin/zns-test', async (req, res) => {
 // Dùng để verify template 609256 hết -127 sau khi Zalo duyệt production (van Đòn 4).
 // Đường voucher-medi chỉ mời khách CHƯA follow → không test được số admin đã follow. Route này gọi thẳng.
 // GET /admin/test-quantam-oa?token=XXX&phone=09xxxxxxxx[&ten=Ten]
+// --- Admin (CHỈ ĐỌC): đếm DẤU VẾT ZNS THẬT theo KV — trả lời "template X đã bắn bao nhiêu?" ---
+// Vì cham_da_gui của bill_care đánh dấu XONG cả ca bỏ-cuộc-sau-3-lần-hụt → đếm mốc chạm là "đo tới
+// cửa". Route này đếm tới ĐÍCH: mỗi KV chỉ được ghi khi Zalo trả error=0 (tin THẬT rời máy).
+app.get('/admin/zns-dem', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const dem = (prefix) => store.listKVByPrefix(prefix).length;
+  res.status(200).json({
+    ok: true,
+    rating_da_gui: dem('zns_rating_sent:'),        // form đánh giá 522230 (Zalo nhận)
+    moi_quan_tam_oa: dem('zns_moi_oa:'),           // mời OA 609256 (gồm pilot + d0/d1)
+    so_khong_co_zalo: dem('zns_no_zalo:'),         // cờ -118
+    voucher_phat: dem('voucher:'),                 // sổ voucher
+    rating_log_ve: dem('rating_log:'),             // khách CHẤM SAO gửi về (chiều về webhook)
+    ghi_chu: 'Mỗi key = 1 SĐT/1 tin Zalo đã NHẬN (error=0), trừ voucher_phat là sổ phát. ZNS nhắc lịch 603887 không có KV riêng — đếm qua log Render [bill] ZNS nhắc tái khám.',
+  });
+});
+
 // --- Admin (CHỈ ĐỌC): kết quả vòng wakeup-pilot gần nhất (KV wakeup_pilot_kq) ---
 app.get('/admin/pilot-kq', (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
