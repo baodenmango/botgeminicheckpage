@@ -29,12 +29,13 @@
 // ============================================================
 import axios from 'axios';
 import * as store from './store.js';
-import { getUserToken } from './pancake.js';
+import { getUserToken, goiPancake } from './pancake.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const PAGE_ID = '957014354156110';   // page Dr Nhật Trình
 const NGAY_CU = 14;                   // chỉ xét hội thoại tương tác trong N ngày gần đây
 const TRAN_CHAN = 10;                 // tối đa số PSID chặn mỗi lượt chạy
+const TIN_KHACH_LA_THAT = 3;          // khách tự gõ ≥ N tin có nội dung → ĐANG đối thoại thật, cấm chặn
 const SO_HOI_THOAI = 60;              // số hội thoại kéo mỗi lượt
 const FB_VER = 'v21.0';
 
@@ -157,6 +158,29 @@ function pyRepr(s) {
 }
 
 // Trả {ngoai: bool|null, pha_hoai: bool, ly_do}. null = Gemini không trả lời được.
+// HÀNG RÀO KHÁCH THẬT (vá 07/08/2026 — ca Nick Chan, xem [[vesi-tach-2-nac-an-chan]]).
+// INBOX trước đây chấm trên `snippet`, mà snippet là tin BOT MÌNH vừa gửi → thực chất chỉ còn
+// cái TÊN để phán → người Đài Loan đã chốt lịch khám bị chặn vì "tên không phải người Việt".
+// Trả (số tin khách TỰ GÕ có nội dung, 3 câu gần nhất) để vừa dựng hàng rào vừa cho Gemini
+// chấm trên LỜI KHÁCH. Lỗi mạng → trả 0 (không tự tiện tha, để nhánh cũ xử như trước).
+async function loiKhach(cv) {
+  const cid = cv?.id || '';
+  const cus = (cv?.customers || [])[0]?.id;
+  const psid = String(cv?.from_psid || (cv?.from || {}).id || '');
+  if (!cid || !cus || !psid) return { soTin: 0, cau: '' };
+  const r = await goiPancake({
+    method: 'get', pageId: PAGE_ID, duongDan: `/conversations/${cid}/messages`,
+    params: { customer_id: cus }, viec: 'vệ sĩ đọc lời khách',
+  });
+  if (!r?.ok) return { soTin: 0, cau: '' };
+  const ds = r?.data?.messages || [];
+  const cau = ds
+    .filter((m) => String((m?.from || {}).id || '') === psid)
+    .map((m) => String(m?.message || m?.text || '').trim())
+    .filter(Boolean);
+  return { soTin: cau.length, cau: cau.slice(-3).join(' | ').slice(0, 400) };
+}
+
 async function geminiCham(name, snippet, laComment = false) {
   const model = getGeminiModel();
   if (!model) return { ngoai: null, pha_hoai: false, ly_do: 'không có GEMINI_API_KEY' };
@@ -166,8 +190,13 @@ async function geminiCham(name, snippet, laComment = false) {
     + (laComment ? 'nội dung BÌNH LUẬN công khai của người đó' : 'câu nhắn gần nhất trong hội thoại')
     + ', hãy trả về DUY NHẤT một JSON: {"ngoai": true/false, "pha_hoai": true/false, '
     + '"chac": <0-100>, "ly_do": "<ngắn gọn tiếng Việt>"}.\n'
-    + '- "ngoai" = true nếu tên KHÔNG phải tên người Việt (tên Ấn Độ, Khmer, Philippines, '
-    + 'tên rác vô nghĩa, cụm ký tự ngẫu nhiên, tên bot/clone farm).\n'
+    + '- "ngoai" = true CHỈ KHI tài khoản là ẢO/RÁC/farm: tên rác vô nghĩa, cụm ký tự ngẫu '
+    + 'nhiên, nick clone, spam link, không có nhu cầu khám gì cả.\n'
+    + '- ⛔ TÊN NƯỚC NGOÀI KHÔNG PHẢI LÀ TỘI. TP.HCM có rất nhiều người Đài Loan, Trung, Hàn, '
+    + 'Nhật, Ấn, Âu-Mỹ sinh sống và làm ăn — họ đau xương khớp thì đến khám như mọi người. '
+    + 'Người nước ngoài đang KỂ BỆNH, hỏi giá, hỏi đường, xin lịch, gửi phim X-quang = KHÁCH '
+    + 'THẬT → ngoai=false. Chặn nhầm là mất khách VĨNH VIỄN. (Ca thật 07/08/2026: "Nick Chan" '
+    + 'người Đài Loan đau tay trái, đã chốt lịch khám 9h30 Chủ Nhật, bị chặn oan vì cái tên.)\n'
     + '- "pha_hoai" = true nếu nội dung anti phòng khám/bác sĩ: chửi bới xúc phạm, tố lừa '
     + 'đảo vô căn cứ, kêu người khác đừng đến khám, phá rối, spam link, seeding cho đối thủ.\n'
     + '- "chac" = độ CHẮC CHẮN của phán đoán (0-100). CHỈ ghi ≥95 khi CỰC KỲ rõ ràng, không '
@@ -177,7 +206,8 @@ async function geminiCham(name, snippet, laComment = false) {
     + "điều trị, chửi thề vì BỨC XÚC do không ai bắt máy...) KHÔNG phải phá hoại → pha_hoai=false, ly_do ghi 'khách phàn nàn'.\n"
     + '- QUAN TRỌNG: nếu nội dung là tin do PHÒNG KHÁM/bot của phòng khám gửi (mở đầu '
     + "'[Botcake]', xưng 'em'/'Dạ', mời để lại SĐT...) thì đó KHÔNG phải lời của khách → "
-    + "pha_hoai=false, chỉ chấm 'ngoai' theo TÊN.\n"
+    + "pha_hoai=false, chỉ chấm 'ngoai' theo TÊN — và nhớ luật trên: tên nước ngoài KHÔNG "
+    + 'phải là tội, chỉ tên RÁC/clone mới tính.\n'
     + '- Nghi ngờ 50/50 thì để cả hai = false (thà bỏ sót còn hơn chặn oan khách thật).\n'
     + `Tên: ${pyRepr(name)}\nNội dung: ${pyRepr(snippet)}`;
   try {
@@ -459,6 +489,7 @@ export async function runVesi(opts = {}) {
   const NHAC_GIO = parseInt(process.env.VESI_DEXUAT_NHAC_GIO || '24', 10);
 
   const chan = [];      // [name, uid, verdict, ok, resp]
+  const thaThat = [];   // [name, verdict, cid] — tên ngoại nhưng ĐANG đối thoại thật → hàng rào giữ
   const deXuat = [];    // [name, verdict, cid]  (chế độ đề-xuất khi dry vì thiếu token)
   let imDeXuat = 0;     // số ca chờ duyệt đã báo trước đó → lượt này im (chống spam 30'/lần)
   // gom 1 cửa: mọi đề xuất đều qua đây để đi qua sổ chống lặp vesi:dexuat:*
@@ -512,6 +543,19 @@ export async function runVesi(opts = {}) {
     const loai = phanLoaiTen(name);
     let verdict = loai;
     let action = 'bo_qua';
+
+    // ── HÀNG RÀO KHÁCH THẬT: ai đã tự gõ ≥ TIN_KHACH_LA_THAT tin có nội dung thì là người
+    // đang hỏi bệnh — CẤM chặn/ẩn, dù tên nước nào. Rác thật hầu như nhắn 1 tin rồi im.
+    if (kieu === 'INBOX' && uid && !hasPhone && loai !== 'KHACH') {
+      const { soTin, cau } = await loiKhach(cv);
+      if (cau) noiDung = cau; // Gemini chấm trên LỜI KHÁCH, không phải tin bot
+      if (soTin >= TIN_KHACH_LA_THAT) {
+        const v = `THA_DANG_DOI_THOAI(${soTin} tin khách tự gõ)`;
+        thaThat.push([name, v, cid]);
+        setState(cid, { verdict: v, action: 'tha', ts: nowIsoUtc() });
+        continue;
+      }
+    }
     let chacCham = 0; // độ chắc Gemini chấm (0 = không qua Gemini, vd NGOAI_CHAC theo bảng chữ)
 
     // Khách có SĐT = lead thật → khai báo cho FB học (KHÔNG BAO GIỜ chặn)
@@ -635,8 +679,12 @@ export async function runVesi(opts = {}) {
   }
 
   // ---------- gom báo cáo Telegram bản gọn (py 410-427) ----------
-  if (chan.length || deXuat.length || anCmt.length) {
+  if (chan.length || deXuat.length || anCmt.length || thaThat.length) {
     const msg = ['🛡 VỆ SĨ HỘP THƯ' + (dry ? ' (ĐỀ-XUẤT/DRY)' : '')];
+    if (thaThat.length) {
+      msg.push(`🤝 THA ${thaThat.length} ca tên ngoại nhưng ĐANG hỏi bệnh thật (hàng rào khách thật):`);
+      for (const [n, v, c] of thaThat) msg.push(`  • ${n} — ${v} — https://pancake.vn/${PAGE_ID}?c_id=${c}`);
+    }
     if (chan.length) {
       msg.push(`Đã ${dry ? 'ĐỀ XUẤT chặn' : 'chặn'} ${chan.length} tài khoản ngoại/ảo/phá hoại (không SĐT):`);
       for (const [n, , v, ok, resp] of chan) {
