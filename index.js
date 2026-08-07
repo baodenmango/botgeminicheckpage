@@ -481,11 +481,48 @@ app.get('/admin/danh-gia', (req, res) => {
       gop_y: r.gopY || null,
       luc: r.luc ? new Date(r.luc * 1000 + 7 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') : null,
     }));
+    // Mở bằng trình duyệt → trang HTML đọc được (anh Trình xem trên điện thoại/Chrome).
+    // curl / máy gọi (Accept: */*) → JSON như cũ. Ép JSON trong browser: thêm &json=1.
+    const wantHtml = req.query.json !== '1' && String(req.headers.accept || '').includes('text/html');
+    if (wantHtml) {
+      const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const maxSao = Math.max(...[1, 2, 3, 4, 5].map((i) => theo_sao[i]), 1);
+      const thanh = [5, 4, 3, 2, 1].map((i) =>
+        `<div class="bar"><span class="lbl">${i}★</span><div class="track"><div class="fill${i <= 3 ? ' xau' : ''}" style="width:${Math.round(theo_sao[i] / maxSao * 100)}%"></div></div><span class="n">${theo_sao[i]}</span></div>`).join('');
+      const dong = gan_nhat.map((r) => `<tr class="${r.sao <= 3 ? 'che' : ''}">
+        <td class="sao">${'★'.repeat(r.sao)}<span class="mo">${'★'.repeat(5 - r.sao)}</span></td>
+        <td>${esc(r.luc || '')}</td><td>${esc(r.sdt || '—')}</td>
+        <td class="gopy">${esc(r.gop_y || '')}</td></tr>`).join('');
+      return res.status(200).type('html').send(`<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Đánh giá khách — PK Hiệp Lợi</title><style>
+body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;margin:0;background:#f4f6f4;color:#1c2b21;padding:16px}
+.card{background:#fff;border-radius:14px;padding:18px;max-width:720px;margin:0 auto 14px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+h1{font-size:19px;margin:0 0 4px}.sub{color:#5b6d60;font-size:13px;margin:0 0 12px}
+.to{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}.diem{font-size:40px;font-weight:700;color:#1a7a3d}
+.tong{color:#5b6d60;font-size:14px}
+.bar{display:flex;align-items:center;gap:8px;margin:4px 0}.lbl{width:26px;font-size:13px;color:#5b6d60}
+.track{flex:1;height:10px;background:#e7ece8;border-radius:5px;overflow:hidden}
+.fill{height:100%;background:#2f9e57;border-radius:5px}.fill.xau{background:#d9534f}
+.n{width:28px;text-align:right;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:14px}th{text-align:left;color:#5b6d60;font-weight:600;font-size:12px;padding:8px 6px;border-bottom:2px solid #e7ece8}
+td{padding:9px 6px;border-bottom:1px solid #eef2ef;vertical-align:top}
+.sao{color:#e8a812;white-space:nowrap;font-size:15px}.mo{color:#ddd}
+tr.che{background:#fdf0ef}.gopy{color:#374b3d}
+.chu{font-size:12px;color:#8a978d;max-width:720px;margin:0 auto}
+</style></head><body>
+<div class="card"><h1>⭐ Đánh giá khách hàng — PK Cơ Xương Khớp Hiệp Lợi</h1>
+<p class="sub">Nguồn: form ZNS sau khám (kéo từ Zalo mỗi 30 phút)</p>
+<div class="to"><span class="diem">${diem_tb ?? '—'}</span><span class="tong">/5 · ${hopLe} lượt chấm · ${theo_sao[1] + theo_sao[2] + theo_sao[3]} ca ≤3★</span></div>
+${thanh}</div>
+<div class="card"><table><tr><th>Chấm</th><th>Lúc (giờ VN)</th><th>SĐT</th><th>Góp ý</th></tr>${dong}</table></div>
+<p class="chu">SĐT trống = lượt chấm trước 08/08/2026 (Zalo không trả danh tính, chỉ lượt gửi từ 08/08 mới tra ngược được). Ca ≤3★ tự réo Telegram để gọi cứu. Ca ≥4★ có kênh Zalo OA được bot tự mời review Google Maps.</p>
+</body></html>`);
+    }
     res.status(200).json({
       ok: true, tong: hopLe, diem_tb, theo_sao,
       thap_1_3: theo_sao[1] + theo_sao[2] + theo_sao[3],
       gan_nhat,
-      giai_thich: 'theo_sao = số lượt mỗi mức 1..5. diem_tb = điểm TB tích luỹ. gan_nhat = lượt mới nhất kèm góp ý (SĐT che 4 số đầu). Ca ≤3★ đã réo Telegram real-time lúc khách chấm.',
+      giai_thich: 'theo_sao = số lượt mỗi mức 1..5. diem_tb = điểm TB tích luỹ. gan_nhat = lượt mới nhất kèm góp ý (SĐT che 4 số đầu). Ca ≤3★ réo Telegram khi kéo về (trễ tối đa 30 phút).',
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err?.message || 'lỗi' });

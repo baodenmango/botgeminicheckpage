@@ -11,7 +11,7 @@
 import axios from 'axios';
 import crypto from 'node:crypto';
 import * as store from './store.js';
-import { getAccessTokenNow, refreshAccessToken, zaloAgentV4 } from './zalo.js';
+import { getAccessTokenNow, refreshAccessToken, zaloAgentV4, sendTexts } from './zalo.js';
 // VÁ 20/07/2026: ZNS phải ghi sổ chống echo như mọi đường gửi khác — xem ghiSoEchoZns() bên dưới.
 import { noteBotSent, noteBotJustSent } from './echoguard.js';
 import { notifyText } from './telegram.js';
@@ -525,6 +525,32 @@ const RATING_GET_API = 'https://business.openapi.zalo.me/rating/get';
 // Đọc linh hoạt vì tên field trả về của Zalo có thể khác tài liệu (rate/rating/star...).
 const docSo = (o, keys) => { for (const k of keys) { const v = o?.[k]; if (v != null && v !== '') return v; } return null; };
 
+// Mời review Google Maps cho ca chấm ≥4★ kéo về. Trước 08/08 việc này chỉ nằm ở handleZaloRating
+// (follow.js) — nhánh webhook KHÔNG BAO GIỜ nổ vì Zalo không push kết quả chấm → 18 ca 5★ chưa ai
+// được mời. Cần biết SĐT (chỉ có từ lượt gửi 08/08 qua map trackingId) + khách có kênh Zalo OA.
+// Dedupe CHUNG key moi_review_maps:<uid> với follow.js — không bao giờ mời 1 người 2 lần.
+const MAPS_REVIEW_URL = process.env.MAPS_REVIEW_URL || 'https://g.page/r/CZkVGnwcLz5vEBM/review';
+async function moiReviewMaps(phone84, sao) {
+  try {
+    const phone0 = String(phone84).replace(/^84/, '0');
+    const conv = store.getZaloConvByPhone(phone0) || store.getZaloConvByPhone(phone84);
+    const uid = conv?.zalo_user_id || store.getKV(`phone_zalo:${phone0}`) || store.getKV(`phone_zalo:${phone84}`);
+    if (!uid) return; // khách chấm qua ZNS nhưng chưa có kênh OA → không có đường gửi tin mời
+    const mkey = `moi_review_maps:${uid}`;
+    if (store.getKV(mkey)) return;
+    const ok = await sendTexts(uid, [
+      'Dạ em cảm ơn mình đã tin tưởng Phòng khám Cơ Xương Khớp Hiệp Lợi 🌿\n' +
+      'Nếu mình thấy hài lòng, mong mình dành 1 phút đánh giá giúp phòng khám tại đây ạ:\n' +
+      MAPS_REVIEW_URL + '\n' +
+      'Mỗi đánh giá của mình là động lực để bác sĩ và phòng khám phục vụ tốt hơn. Em cảm ơn nhiều ạ!',
+    ]);
+    if (ok) {
+      store.setKV(mkey, String(sao));
+      console.log(`[zns] 😊 ${phone0.slice(0, 5)}*** chấm ${sao}★ (kéo về) → ĐÃ mời review Google Maps`);
+    }
+  } catch (e) { console.warn('[zns] mời review Maps lỗi:', e?.message); }
+}
+
 /**
  * Kéo đánh giá từ Zalo về sổ rating_log. Dedupe theo msg_id (hoặc phone+thời điểm chấm).
  * @param {object} p  { fromDays: kéo lùi bao nhiêu ngày (mặc định 60) }
@@ -570,6 +596,7 @@ export async function pullZnsRatings({ fromDays = 60 } = {}) {
       if (store.getKV(key)) continue; // đã kéo lần trước
       store.setKV(key, JSON.stringify({ sao, ten: null, phone: phone || null, gopY, luc }));
       moi++;
+      if (sao >= 4 && phone) await moiReviewMaps(phone, sao);
       if (sao <= 3) {
         // Ca chê kéo về trễ tối đa 30' (cron) — vẫn réo Telegram để gọi cứu như luồng webhook cũ.
         console.warn(`[zns] 🚨 kéo về ca ${sao}★ (${phone ? phone.slice(0, 5) + '***' : 'chưa rõ SĐT'}) — góp ý: ${gopY || '(không)'}`);
