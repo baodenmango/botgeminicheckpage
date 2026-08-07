@@ -535,7 +535,18 @@ async function moiReviewMaps(phone84, sao) {
     const phone0 = String(phone84).replace(/^84/, '0');
     const conv = store.getZaloConvByPhone(phone0) || store.getZaloConvByPhone(phone84);
     const uid = conv?.zalo_user_id || store.getKV(`phone_zalo:${phone0}`) || store.getKV(`phone_zalo:${phone84}`);
-    if (!uid) return; // khách chấm qua ZNS nhưng chưa có kênh OA → không có đường gửi tin mời
+    if (!uid) {
+      // Chưa có kênh OA → không gửi tin thường được (Zalo không cho nhắn OA theo SĐT).
+      // ĐƯỜNG VÒNG (anh Trình chốt 08/08): bắn ZNS 609256 mời QUAN TÂM OA (đi theo SĐT, đã production)
+      // + cắm cờ cho_moi_maps — khách follow xong bấm chia sẻ SĐT là handleZaloSubmitInfo mời Maps ngay.
+      // Khách đang vui (vừa chấm ≥4★) = thời điểm mời follow dễ nhất. Dedupe zns_moi_oa 1 lần/SĐT.
+      store.setKV(`cho_moi_maps:${phone0}`, String(sao));
+      if (!store.getKV(`zns_moi_oa:${phone0}`) && !store.getKV(`zns_moi_oa:${phone84}`)) {
+        const okMoi = await sendZnsQuanTamOA(phone0, {});
+        if (okMoi) { store.setKV(`zns_moi_oa:${phone0}`, `sau-danh-gia-${sao}sao`); console.log(`[zns] 😊 ${phone0.slice(0, 5)}*** chấm ${sao}★ chưa có OA → đã ZNS mời Quan tâm (follow xong sẽ mời Maps)`); }
+      }
+      return;
+    }
     const mkey = `moi_review_maps:${uid}`;
     if (store.getKV(mkey)) return;
     const ok = await sendTexts(uid, [

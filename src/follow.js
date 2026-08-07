@@ -251,6 +251,25 @@ export async function handleZaloSubmitInfo(body) {
     if (srcFollow) store.setSource(conv.conversation_id, srcFollow);
   }
 
+  // Khách từng chấm ≥4★ qua ZNS (cờ cho_moi_maps do pullZnsRatings cắm) mà giờ mới nối được kênh OA
+  // → mời review Google Maps ngay (mắt xích cuối của chuỗi: chấm sao → ZNS mời OA → follow → mời Maps).
+  try {
+    const choMoi = store.getKV(`cho_moi_maps:${phone}`);
+    if (choMoi && !store.getKV(`moi_review_maps:${uid}`)) {
+      const okMaps = await sendTexts(uid, [
+        'Dạ em cảm ơn mình đã tin tưởng Phòng khám Cơ Xương Khớp Hiệp Lợi 🌿\n' +
+        'Nếu mình thấy hài lòng, mong mình dành 1 phút đánh giá giúp phòng khám tại đây ạ:\n' +
+        MAPS_REVIEW_URL + '\n' +
+        'Mỗi đánh giá của mình là động lực để bác sĩ và phòng khám phục vụ tốt hơn. Em cảm ơn nhiều ạ!',
+      ]);
+      if (okMaps) {
+        store.setKV(`moi_review_maps:${uid}`, choMoi);
+        store.delKV(`cho_moi_maps:${phone}`);
+        console.log(`[submit-info] 😊 ${phone.slice(0, 4)}*** (từng chấm ${choMoi}★) vừa nối OA → ĐÃ mời review Google Maps`);
+      }
+    }
+  } catch { /* không chặn luồng submit-info */ }
+
   console.log(`[submit-info] ✅ ${uid} bấm nút chia sẻ: ${info.name || '(không tên)'} ${phone.slice(0, 4)}***`);
   notifyText(
     `📱 <b>Khách Zalo bấm nút CHIA SẺ SĐT</b>\n• Tên: ${info.name || '(chưa rõ)'}\n• SĐT: ${phone}\n→ Đã nối hồ sơ tự động. Telesale gọi được ngay nếu là khách mới.`
