@@ -197,6 +197,31 @@ async function anhDaChan(cv) {
   return Boolean(r?.data?.data?.is_banned);
 }
 
+// ANH ĐÃ XEM RỒI MÀ KHÔNG CHẶN = kết luận "tha" (anh Trình hỏi 07/08: "nó đề xuất, anh vào xem
+// hội thoại không muốn chặn thì làm sao cho nó im?"). Pancake ghi sẵn `recent_seen_users` —
+// ai mở hội thoại, lúc mấy giờ. Anh mở xem SAU tin cuối của khách mà không bấm chặn
+// (is_banned vẫn false) → coi như đã duyệt qua → im. Khách nhắn tiếp thì mốc khách vượt lên
+// trên mốc xem → tình huống mới → báo lại. Không tốn thêm 1 cú bấm nào của anh.
+const FB_ID_ANH = process.env.VESI_FB_ID_ANH || '1143287012411428'; // Phan Nhật Trình
+const NHAN_DONE = 59; // nhãn "Done" trong Pancake — anh gắn = dứt điểm, im vĩnh viễn
+
+function anhDaXemMaKhongChan(cv) {
+  const mocXem = (cv?.recent_seen_users || [])
+    .filter((u) => String(u?.fb_id) === FB_ID_ANH)
+    .map((u) => String(u?.seen_at || ''))
+    .filter(Boolean)
+    .sort()
+    .pop();
+  if (!mocXem) return false;
+  // cả 2 mốc đều là ISO naive UTC của Pancake → so chuỗi là đủ, khỏi parse
+  const mocKhach = String(cv?.last_customer_interactive_at || cv?.updated_at || '');
+  return mocKhach ? mocXem > mocKhach : true;
+}
+
+function daGanNhanDone(cv) {
+  return (cv?.tags || []).some((t) => Number(t?.id ?? t) === NHAN_DONE);
+}
+
 async function geminiCham(name, snippet, laComment = false) {
   const model = getGeminiModel();
   if (!model) return { ngoai: null, pha_hoai: false, ly_do: 'không có GEMINI_API_KEY' };
@@ -527,7 +552,11 @@ export async function runVesi(opts = {}) {
     const cu = getState(cid);
     if (cu) {
       const moi = cv?.last_customer_interactive_at || '';
-      if (cu.action === 'chan' && moi && moi > (cu.ts || '9')) {
+      // Xử lại khi có tương tác MỚI hơn kết luận cũ. Gồm cả ca anh đã xem-mà-tha / hàng rào tha:
+      // khách im thì thôi, khách nhắn tiếp là tình huống mới, phải soi lại. Riêng ca anh đã
+      // CHẶN hoặc gắn DONE thì im vĩnh viễn, không dựng dậy nữa.
+      const xuLai = ['chan', 'anh_xem_tha', 'tha'].includes(cu.action);
+      if (xuLai && moi && moi > (cu.ts || '9')) {
         log(`CHẶN HỤT? ${cid} còn nhắn lúc ${moi} sau khi chặn ${cu.ts} — xử lại`);
         delState(cid);
       } else {
@@ -596,13 +625,30 @@ export async function runVesi(opts = {}) {
       else if (loai === 'NGHI_NGOAI') { verdict = `NGHI_NGOAI_THA(${g.ly_do})`; action = 'bo_qua'; }
     }
 
-    // ANH ĐÃ TỰ BẤM CHẶN TRONG PANCAKE → ca coi như xong, ghi sổ và IM.
-    // (Bệnh anh Trình bắt 07/08: "anh bấm link chặn rồi mà nó vẫn báo hoài".)
-    if (action === 'chan' && (await anhDaChan(cv))) {
-      setState(cid, { verdict: `ANH_DA_CHAN_TRONG_PANCAKE(${verdict})`, action: 'anh_da_chan', ts: nowIsoUtc() });
-      xoaSoDeXuat(cid);
-      log(`anh đã tự chặn ${name} trong Pancake → im, không báo lại`);
-      continue;
+    // ── BA ĐƯỜNG ANH KẾT LUẬN, MÁY IM (không cần thêm cú bấm nào ngoài việc anh vốn đã làm) ──
+    if (action === 'chan') {
+      // 1. Anh gắn nhãn "Done" → dứt điểm, im VĨNH VIỄN kể cả khách nhắn tiếp.
+      if (daGanNhanDone(cv)) {
+        setState(cid, { verdict: `ANH_GAN_DONE(${verdict})`, action: 'anh_done', ts: nowIsoUtc() });
+        xoaSoDeXuat(cid);
+        log(`anh gắn nhãn Done cho ${name} → im vĩnh viễn`);
+        continue;
+      }
+      // 2. Anh đã bấm chặn trong Pancake → xong việc, im.
+      if (await anhDaChan(cv)) {
+        setState(cid, { verdict: `ANH_DA_CHAN_TRONG_PANCAKE(${verdict})`, action: 'anh_da_chan', ts: nowIsoUtc() });
+        xoaSoDeXuat(cid);
+        log(`anh đã tự chặn ${name} trong Pancake → im, không báo lại`);
+        continue;
+      }
+      // 3. Anh mở xem sau tin cuối của khách mà KHÔNG chặn → kết luận "tha" → im tới khi
+      //    khách có tương tác mới (lúc đó mốc khách vượt mốc xem, state bị xoá, báo lại).
+      if (anhDaXemMaKhongChan(cv)) {
+        setState(cid, { verdict: `ANH_XEM_ROI_KHONG_CHAN(${verdict})`, action: 'anh_xem_tha', ts: nowIsoUtc() });
+        xoaSoDeXuat(cid);
+        log(`anh đã xem ${name} mà không chặn → hiểu là tha, im`);
+        continue;
+      }
     }
 
     if (action === 'chan' && chan.length < TRAN_CHAN) {
