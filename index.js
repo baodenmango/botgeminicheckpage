@@ -960,6 +960,58 @@ app.get('/admin/wakeup-pilot', async (req, res) => {
   }
 });
 
+// --- Admin: PILOT Y ĐẠO — bắn voucher 150k cho lô số NGOÀI (anh Trình chốt 08/08: pilot 100 đo
+// report 5-7 ngày rồi xả dần; KHÔNG bắn đại trà 4.098 một phát để giữ OA) ---
+// POST /admin/ydao-pilot?token=XXX  body: { ds: [{sdt,ten},...], dry: true|false }
+//   dry (mặc định true): chỉ validate + đếm, không gửi. dry=false: bắn NỀN 700ms/tin,
+//   sendZnsVoucher tự lo: sinh mã + sổ quầy + chống trùng + Tag3 + cờ -118.
+//   Ghi KV ydao_pilot:<sdt> đánh dấu tệp NGOÀI (tách mẫu số khi đo report/đến khám).
+//   Kết quả về Telegram + KV ydao_pilot_kq. Trần 120 số/lượt. Guard giờ 8-20h VN.
+app.post('/admin/ydao-pilot', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  if (!isVoucherLive()) return res.status(400).json({ ok: false, error: 'VOUCHER_LIVE chưa bật' });
+  const body = req.body || {};
+  const dry = body.dry !== false;
+  const dsRaw = Array.isArray(body.ds) ? body.ds.slice(0, 120) : [];
+  const ds = [];
+  const seen = new Set();
+  for (const r of dsRaw) {
+    let s = String(r?.sdt || '').replace(/\D/g, '');
+    if (/^84\d{9}$/.test(s)) s = '0' + s.slice(2);
+    if (!/^0\d{9}$/.test(s) || seen.has(s)) continue;
+    seen.add(s);
+    if (laSoKhongCoZalo(s)) continue;                       // đã -118 → bỏ
+    if (store.getKV(`ydao_pilot:${s}`)) continue;           // đã bắn đợt trước
+    ds.push({ sdt: s, ten: (r?.ten || '').toString().trim().slice(0, 30) || null });
+  }
+  if (dry) return res.status(200).json({ ok: true, dry: true, nhan: dsRaw.length, hop_le: ds.length });
+  const gio = (new Date(Date.now() + 7 * 3600e3)).getUTCHours();
+  if (gio < 8 || gio >= 20) return res.status(400).json({ ok: false, error: `ngoài khung 8-20h VN (đang ${gio}h)` });
+  res.status(200).json({ ok: true, dry: false, dang_ban: ds.length, ghi_chu: 'chạy nền — kết quả về Telegram + KV ydao_pilot_kq' });
+  setImmediate(async () => {
+    let okN = 0; const loi = {};
+    for (const c of ds) {
+      try {
+        const r = await sendZnsVoucher(c.sdt, { ten: c.ten || 'Quý khách', chuongTrinh: 'ct1' });
+        if (r?.ok) { okN++; store.setKV(`ydao_pilot:${c.sdt}`, 'p1'); }
+        else loi[r?.ly_do || '?'] = (loi[r?.ly_do || '?'] || 0) + 1;
+      } catch { loi.ngoai_le = (loi.ngoai_le || 0) + 1; }
+      await new Promise((rs) => setTimeout(rs, 700));
+    }
+    const kq = { luc: Math.floor(Date.now() / 1000), ban: ds.length, gui_ok: okN, loi };
+    store.setKV('ydao_pilot_kq', JSON.stringify(kq));
+    console.log('[ydao-pilot] xong:', JSON.stringify(kq));
+    notifyText(
+      `🧪 <b>PILOT Y ĐẠO xong vòng</b>\nBắn: ${ds.length} voucher 150k (lô số ngoài)\n` +
+      `✅ Zalo nhận: <b>${okN}</b> · ❌ lỗi: ${JSON.stringify(loi)}\n` +
+      `Theo dõi 5-7 ngày: tỉ lệ -118/report/khách đến quét /quay. Sạch → xả lô 500/tuần.`
+    ).catch(() => {});
+  });
+});
+
 // --- Admin: TEST FORM ĐÁNH GIÁ end-to-end (07/08 — chốt nghi án "100 gửi / 0 chấm về") ---
 // GET /admin/test-rating?token=XXX&phone=09xx[&force=1]
 // Bắn form 522230 tới 1 số thật → người nhận CHẤM SAO → webhook phải ghi rating_log
