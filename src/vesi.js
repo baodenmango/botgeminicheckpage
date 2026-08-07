@@ -325,6 +325,29 @@ function delState(cid) {
 function ghiSoChan(psid, obj) {
   store.setKV(`vesi:chan:${psid}`, JSON.stringify(obj));
 }
+// vesi:dexuat:<conv_id> → {ts(ISO UTC), moc}  — SỔ CHỐNG BÁO LẶP ca CHỜ ANH DUYỆT.
+// Bug anh Trình bắt 07/08/2026: ca chờ duyệt KHÔNG được lưu state (cố ý, để lượt sau còn xử
+// thật) → cứ 30' quét lại là báo Telegram y hệt, kể cả khi anh đã tự tay chặn ngoài FB
+// (vệ sĩ không nhìn thấy thao tác tay). Từ nay chỉ nhắc lại khi:
+//   (a) khách nhắn/comment MỚI hơn mốc lần đề xuất trước, hoặc
+//   (b) đã quá VESI_DEXUAT_NHAC_GIO giờ (mặc định 24) — để việc tồn không chìm hẳn.
+function canBaoDeXuat(cid, moc, nhacGio) {
+  const raw = store.getKV(`vesi:dexuat:${cid}`);
+  if (!raw) return true;
+  let cu = null;
+  try { cu = JSON.parse(raw); } catch { return true; }
+  if (!cu) return true;
+  if (moc && cu.moc && String(moc) > String(cu.moc)) return true; // khách vừa nhắn/comment tiếp
+  const truoc = isoToEpoch(cu.ts);
+  if (Number.isNaN(truoc)) return true;
+  return Date.now() - truoc >= nhacGio * 3600 * 1000;
+}
+function ghiSoDeXuat(cid, moc) {
+  store.setKV(`vesi:dexuat:${cid}`, JSON.stringify({ ts: nowIsoUtc(), moc: moc || '' }));
+}
+function xoaSoDeXuat(cid) {
+  store.delKV(`vesi:dexuat:${cid}`);
+}
 // dựng set psid từng chặn LỖI (ok===false) từ KV vesi:chan:*
 function loadDaBaoLoi() {
   const s = new Set();
@@ -432,8 +455,19 @@ export async function runVesi(opts = {}) {
   const CHAN_AUTO = process.env.VESI_CHAN_AUTO === '1';    // mặc định TẮT (chặn chờ duyệt)
   const AN_NGUONG = parseInt(process.env.VESI_AN_NGUONG || '95', 10);
 
+  //   VESI_DEXUAT_NHAC_GIO → bao lâu mới nhắc lại 1 ca chờ duyệt chưa xử (mặc định 24 giờ)
+  const NHAC_GIO = parseInt(process.env.VESI_DEXUAT_NHAC_GIO || '24', 10);
+
   const chan = [];      // [name, uid, verdict, ok, resp]
   const deXuat = [];    // [name, verdict, cid]  (chế độ đề-xuất khi dry vì thiếu token)
+  let imDeXuat = 0;     // số ca chờ duyệt đã báo trước đó → lượt này im (chống spam 30'/lần)
+  // gom 1 cửa: mọi đề xuất đều qua đây để đi qua sổ chống lặp vesi:dexuat:*
+  const themDeXuat = (n, v, c, moc) => {
+    if (!canBaoDeXuat(c, moc, NHAC_GIO)) { imDeXuat += 1; return false; }
+    deXuat.push([n, v, c]);
+    ghiSoDeXuat(c, moc);
+    return true;
+  };
   const leadMoi = [];   // [cid, name, uid, updated_at]
   const anCmt = [];     // [name, noi_dung]
 
@@ -456,6 +490,7 @@ export async function runVesi(opts = {}) {
 
     // lọc thời gian (bỏ tương tác cũ hơn NGAY_CU ngày). Parse lỗi thì vẫn xử (bám py).
     const ts = cv?.last_customer_interactive_at || cv?.updated_at || '';
+    const mocMoi = cv?.last_customer_interactive_at || ts; // mốc so "khách có nhắn tiếp không"
     const tsEpoch = isoToEpoch(ts);
     if (!Number.isNaN(tsEpoch) && tsEpoch < han) continue;
 
@@ -504,7 +539,7 @@ export async function runVesi(opts = {}) {
     if (action === 'chan' && chan.length < TRAN_CHAN) {
       // CHẾ ĐỘ ĐỀ-XUẤT (dry vì thiếu token FB): chỉ gom danh sách đề xuất, KHÔNG block/CAPI/nhãn.
       if (!ptCheck) {
-        deXuat.push([name, verdict, cid]);
+        themDeXuat(name, verdict, cid, mocMoi);
         continue; // không lưu state → lượt sau (có token) xử thật
       }
       const pt = await layPt();
@@ -522,7 +557,7 @@ export async function runVesi(opts = {}) {
         if (anThat && anOk && !ra.already_hidden) anCmt.push([name, noiDung.slice(0, 60)]);
         else if (kieu === 'COMMENT' && !anThat && !dry) {
           // đủ điều kiện chặn nhưng CHƯA đủ chắc để tự ẩn → đưa vào đề xuất cho anh xem
-          deXuat.push([name, `${verdict} · chắc ${chacCham}% (dưới ${AN_NGUONG}, chưa tự ẩn)`, cid]);
+          themDeXuat(name, `${verdict} · chắc ${chacCham}% (dưới ${AN_NGUONG}, chưa tự ẩn)`, cid, mocMoi);
         }
       }
 
@@ -532,7 +567,7 @@ export async function runVesi(opts = {}) {
       if (!chanThat) {
         // chưa tự chặn → đề xuất cho anh bấm (tránh trùng dòng đề xuất "chưa tự ẩn" ở trên)
         if (!(kieu === 'COMMENT' && AN_AUTO && !dry && !duChacDeAn)) {
-          deXuat.push([name, `${verdict}${chacCham ? ` · chắc ${chacCham}%` : ''} → CHỜ DUYỆT CHẶN`, cid]);
+          themDeXuat(name, `${verdict}${chacCham ? ` · chắc ${chacCham}%` : ''} → CHỜ DUYỆT CHẶN`, cid, mocMoi);
         }
         // vẫn ghi sổ để biết đã ẩn (nếu có), nhưng KHÔNG ghi state 'chan' → lượt sau anh còn xử được
         if (anThat && anOk) {
@@ -562,6 +597,8 @@ export async function runVesi(opts = {}) {
         verdict, ok, an_comment: anOk, chac: chacCham, noi_dung: noiDung.slice(0, 100), resp: r,
         go_chan: `runVesi({ unblock: '${uid}' })`,
       });
+
+      if (ok) xoaSoDeXuat(cid); // đã chặn thật → dọn sổ đề-xuất, khỏi nhắc lại
 
       // CHỐNG LẶP 16/07 (nguyên văn py 377-390): chặn OK là LƯU STATE NGAY, kể cả ẩn comment
       // còn trục trặc — nếu không sẽ chặn+báo mỗi 30' cho ca đã xử. Ẩn comment hụt tự retry
@@ -612,14 +649,19 @@ export async function runVesi(opts = {}) {
       msg.push('Gỡ nhầm: runVesi({ unblock: "<psid>" }) (sổ: KV vesi:chan:*)');
     }
     if (deXuat.length) {
-      msg.push(`⚠️ ĐỀ XUẤT anh xem ${deXuat.length} ca cần chặn (chưa cấp VESI_FB_TOKEN nên KHÔNG tự chặn):`);
+      // Câu lý do phải ĐÚNG với chốt đang khoá — bản cũ ghi cứng "chưa cấp VESI_FB_TOKEN"
+      // kể cả khi token đã có và chốt thật là VESI_CHAN_AUTO=0, làm anh Trình chẩn nhầm 07/08.
+      const vi_sao = !ptCheck
+        ? 'chưa cấp VESI_FB_TOKEN nên KHÔNG tự chặn'
+        : (CHAN_AUTO ? 'chưa đủ chắc để máy tự xử' : 'VESI_CHAN_AUTO=0 — máy KHÔNG tự chặn, chờ anh bấm');
+      msg.push(`⚠️ ĐỀ XUẤT anh xem ${deXuat.length} ca cần chặn (${vi_sao}):`);
       for (const [n, v, c] of deXuat) msg.push(`  • ${n} — ${v} — https://pancake.vn/${PAGE_ID}?c_id=${c}`);
     }
     if (capiOk) msg.push(`📤 Đã khai báo ${capiOk} lead thật cho FB (CAPI).`);
     if (capiSkip) msg.push(`ℹ️ ${capiSkip} lead chưa khai báo được — chưa có dataset/token CAPI.`);
     await tgSend(msg.join('\n'), dry);
   }
-  log(`Xong: quét ${convs.length} | chặn ${chan.length} | đề xuất ${deXuat.length} | lead CAPI ${capiOk} ok/${capiSkip} chờ`);
+  log(`Xong: quét ${convs.length} | chặn ${chan.length} | đề xuất ${deXuat.length} (im ${imDeXuat} ca đã báo trước) | lead CAPI ${capiOk} ok/${capiSkip} chờ`);
   return {
     quet: convs.length, chan: chan.length, de_xuat: deXuat.length,
     capi_ok: capiOk, capi_skip: capiSkip, dry,
