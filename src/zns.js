@@ -511,6 +511,57 @@ export async function flushRatingCho() {
   return n;
 }
 
+// ── KÉO KẾT QUẢ ĐÁNH GIÁ ZNS (phát hiện 08/08/2026) ─────────────────────────
+// Zalo KHÔNG push kết quả chấm sao của template rating qua webhook OA — phải chủ động
+// GỌI API rating/get kéo về. Bằng chứng: 100 form gửi OK + anh Trình tự chấm test →
+// webhook 0 event, sổ rating_log 0. handleZaloRating (follow.js) chờ 1 event không bao giờ tới.
+// Hàm này kéo về rồi đổ vào ĐÚNG sổ rating_log: mà /admin/danh-gia đang đọc (không đổi schema).
+const RATING_GET_API = 'https://business.openapi.zalo.me/rating/get';
+
+// Đọc linh hoạt vì tên field trả về của Zalo có thể khác tài liệu (rate/rating/star...).
+const docSo = (o, keys) => { for (const k of keys) { const v = o?.[k]; if (v != null && v !== '') return v; } return null; };
+
+/**
+ * Kéo đánh giá từ Zalo về sổ rating_log. Dedupe theo msg_id (hoặc phone+thời điểm chấm).
+ * @param {object} p  { fromDays: kéo lùi bao nhiêu ngày (mặc định 60) }
+ * @returns {object}  { keo, moi, loi, mau } — tổng bản ghi kéo được / mới ghi sổ / lỗi API / 1 bản ghi mẫu thô
+ */
+export async function pullZnsRatings({ fromDays = 60 } = {}) {
+  const toTime = Date.now();
+  const fromTime = toTime - fromDays * 86400e3;
+  let keo = 0, moi = 0, mau = null;
+  for (let offset = 0; offset < 2000; offset += 100) {
+    const goi = async () => axios.get(RATING_GET_API, {
+      params: { template_id: RATING_TEMPLATE, offset, limit: 100, from_time: fromTime, to_time: toTime },
+      headers: { access_token: getAccessTokenNow() }, timeout: 20000, validateStatus: () => true, httpsAgent: zaloAgentV4,
+    });
+    let r = await goi();
+    if ([-216, -124].includes(r.data?.error)) { await refreshAccessToken(); r = await goi(); }
+    if (r.data?.error !== 0) return { keo, moi, loi: r.data, mau };
+    const ds = Array.isArray(r.data?.data) ? r.data.data : [];
+    for (const dg of ds) {
+      keo++;
+      if (!mau) mau = dg;
+      const sao = Number(docSo(dg, ['rate', 'rating', 'star', 'stars', 'score', 'point']));
+      if (!(sao >= 1 && sao <= 5)) continue;
+      const phone = String(docSo(dg, ['phone', 'sdt', 'user_phone']) || '');
+      const gopY = docSo(dg, ['note', 'feedback', 'comment', 'content', 'message']) || null;
+      let luc = Number(docSo(dg, ['submit_date', 'submit_time', 'submitted_at', 'timestamp', 'time']) || 0);
+      if (luc > 1e12) luc = Math.floor(luc / 1000); // ms → s
+      if (!luc) luc = Math.floor(Date.now() / 1000);
+      const id = docSo(dg, ['msg_id', 'message_id', 'tracking_id']) || `${phone}:${luc}`;
+      const key = `rating_log:zns:${id}`;
+      if (store.getKV(key)) continue; // đã kéo lần trước
+      store.setKV(key, JSON.stringify({ sao, ten: null, phone: phone || null, gopY, luc }));
+      moi++;
+      if (sao <= 3) console.warn(`[zns] 🚨 kéo về ca ${sao}★ (${phone.slice(0, 5)}***) — cần gọi cứu`);
+    }
+    if (ds.length < 100) break;
+  }
+  if (moi) console.log(`[zns] ⭐ kéo đánh giá: ${keo} bản ghi, ${moi} mới vào sổ`);
+  return { keo, moi, loi: null, mau };
+}
+
 // ============================================================
 //  ĐÒN ② PHỄU TỰ ĐỘNG — MỜI QUAN TÂM OA (anh Trình chốt 15/07).
 //  Bắn KÈM voucher: voucher chỉ gõ cửa, tin này KÉO FOLLOW → khách follow OA

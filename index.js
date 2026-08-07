@@ -20,7 +20,7 @@ import { tagFollowerBenh, sendRequestInfo, broadcastTag, trongGioVang } from './
 import { broadcastJobsForNow, tuanTrongThang } from './src/broadcast-schedule.js';
 import { runPosIngest } from './src/posingest.js';
 import { baoCaoTuanZalo } from './src/baocao.js';
-import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive, laSoKhongCoZalo, sendZnsRating } from './src/zns.js';
+import { sendZnsNhacLich, isZnsEnabled, flushRatingCho, sendZnsVoucher, maHopLe, sendZnsXacNhanLich, sendZnsQuanTamOA, isQuanTamOAEnabled, isVoucherLive, laSoKhongCoZalo, sendZnsRating, pullZnsRatings } from './src/zns.js';
 import { lookupMedi, mapDiagnosis, getAllMediRecords, parseVisitDate, isMediConfigured } from './src/medi.js';
 import { runWakeup } from './src/wakeup.js';
 import { runSevenTouch } from './src/sevenTouch.js';
@@ -1037,6 +1037,28 @@ app.get('/admin/test-rating', async (req, res) => {
   });
 });
 
+// --- Admin: KÉO KẾT QUẢ ĐÁNH GIÁ ZNS từ Zalo về sổ (08/08 — chốt án "chấm sao mà sổ 0") ---
+// GET /admin/keo-danh-gia?token=XXX[&days=60][&raw=1]
+// Zalo KHÔNG push kết quả rating qua webhook OA — phải gọi API rating/get kéo về (đây là gốc
+// vụ 100 form gửi OK + anh Trình chấm test mà /admin/danh-gia vẫn 0). raw=1: kèm 1 bản ghi
+// thô Zalo trả để soi tên field khi cần. Cron POS 25/55 cũng tự kéo mỗi 30'.
+app.get('/admin/keo-danh-gia', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const kq = await pullZnsRatings({ fromDays: parseInt(req.query.days || '60', 10) });
+    res.status(200).json({
+      ok: !kq.loi, keo_duoc: kq.keo, moi_vao_so: kq.moi, loi_zalo: kq.loi,
+      ...(req.query.raw === '1' ? { ban_ghi_mau: kq.mau } : {}),
+      xem_so: '/admin/danh-gia',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || 'lỗi' });
+  }
+});
+
 app.get('/admin/test-quantam-oa', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken || req.query.token !== adminToken) {
@@ -1808,6 +1830,10 @@ cron.schedule('25,55 * * * *', async () => {
   try {
     await runPosIngest();
     await flushRatingCho(); // xả hàng đợi form đánh giá (ca thanh toán tối muộn → bắn khung 7h-21h)
+    // Kết quả chấm sao KHÔNG về qua webhook (Zalo bắt kéo bằng rating/get) → kéo mỗi 30',
+    // kéo lùi 2 ngày là đủ vì đã dedupe theo msg_id. Ca ≤3★ kéo về sẽ log 🚨 (chưa réo Telegram
+    // real-time được vì Zalo không push — chấp nhận trễ tối đa 30').
+    try { await pullZnsRatings({ fromDays: 2 }); } catch (e) { console.warn('[cron-pos] kéo đánh giá lỗi:', e?.message); }
   } catch (err) {
     console.error('[cron-pos] lỗi tự nạp ca từ POS:', err?.message || err);
   }
