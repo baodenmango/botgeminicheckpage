@@ -126,6 +126,15 @@ export const PERKS = {
 // Danh mục dịch vụ/công nghệ của phòng khám — bot dùng để cài vào tư vấn/chăm sóc đúng bệnh.
 // ⚠️ CHỈ nêu dịch vụ CÓ THẬT. Bệnh nào hợp dịch vụ nào → map ở SERVICE_BY_CONDITION.
 // Anh Trình bổ sung công nghệ mới (vd sóng xung kích, laser công suất cao...) vào đây.
+//
+// ⛔ TREO TỪ 10/08/2026 — LUẬT DMKT (Xay-Kenh-HiepLoi/05-OUTPUT/LUAT-DMKT-TOAN-HE.md).
+// Danh mục kỹ thuật được duyệt hiện CHỈ CÓ KHÁM BỆNH + KÊ TOA (hồ sơ bổ sung
+// H29.19-260729-180177 nộp 29/07, chưa duyệt, hạn ~07/10/2026). Cho tới khi duyệt:
+// **CẤM đưa các mục prp/ha/noikhop/vltl vào bất kỳ tin nhắn nào gửi khách** — nói phòng khám
+// CÓ/LÀM thủ thuật ngoài phạm vi là chào bán dịch vụ ngoài giấy phép.
+// Chỉ `sieuam` (siêu âm CHẨN ĐOÁN) còn được nêu. Bảng giữ nguyên để bật lại sau 07/10 —
+// không xoá (luật backup), nhưng ai định `import { SERVICES }` thì DỪNG, hỏi lại đã.
+// Đo 10/08: bảng này hiện có 0 caller ngoài file này ⇒ treo không đụng runtime.
 export const SERVICES = {
   prp:    { ten: 'Tiêm huyết tương giàu tiểu cầu (PRP)', mota: 'kích thích phục hồi mô tổn thương từ chính máu của mình' },
   ha:     { ten: 'Tiêm Acid Hyaluronic (chất nhờn khớp)', mota: 'bổ sung chất nhờn giúp khớp vận động êm hơn' },

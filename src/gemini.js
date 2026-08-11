@@ -84,6 +84,41 @@ const FALLBACK = {
   opt_out: false,
 };
 
+// ---------- CỔNG TỪ CẤM DMKT (cắm 10/08/2026) ----------
+// Luật gốc: Xay-Kenh-HiepLoi/05-OUTPUT/LUAT-DMKT-TOAN-HE.md — DMKT phòng khám hiện CHỈ CÓ
+// KHÁM BỆNH + KÊ TOA (hồ sơ bổ sung H29.19-260729-180177 chưa duyệt, hạn ~07/10/2026).
+// Prompt đã cấm bot chào bán thủ thuật; đây là LƯỚI THỨ HAI phòng model lỡ miệng.
+//
+// ⚠️ CHẶN HẸP CÓ CHỦ Ý — chỉ chặn câu CHÀO BÁN / BÁO GIÁ thủ thuật, KHÔNG chặn câu chăm sóc
+// sau điều trị ("sau mũi tiêm hôm trước mình đỡ hơn chưa ạ") vì đó là chăm sóc y khoa cho BN
+// đã làm, không phải quảng cáo. Chặn rộng = bỏ rơi bệnh nhân đang theo dõi.
+// Điều kiện nổ = TRONG CÙNG MỘT CÂU có từ cấm VÀ (lời chào bán HOẶC con tiền).
+const boDauDmkt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+const TU_CAM_DMKT = [
+  'tiem noi khop', 'tiem noi gan', 'tiem khop', 'tiem chat nhon', 'chat nhon', 'dich nhon',
+  'acid hyaluronic', 'hyaluronic', '\\bha\\b', '\\bprp\\b', '\\bprf\\b', 'huyet tuong giau tieu cau',
+  'te bao goc', 'corticoid', 'tiem duoi sieu am', 'sieu am dan duong', 'choc hut dich',
+  'nan chinh', 'bo bot', 'cat chi', 'thay bang', 'tieu phau', 'bom xi mang',
+  'song xung kich', 'shockwave', 'laser', 'dien xung', 'dien tri lieu', 'keo gian cot song',
+  'vat ly tri lieu', '\\bvltl\\b', 'do mat do xuong', 'noi soi khop', 'thay khop', 'ket hop xuong',
+];
+const _CAM = TU_CAM_DMKT.join('|');
+const RE_CAM_DMKT = new RegExp(`(${_CAM})`);
+const RE_CHAO_BAN = new RegExp(`(ben (em|minh|con)|phong kham|chung toi|o day)[^.!?\\n]{0,30}?(co|lam|thuc hien|trien khai|ap dung)[^.!?\\n]{0,25}?(${_CAM})`);
+const RE_TIEN_DMKT = /(\d[\d.,]*\s*(tr|trieu|k\b|nghin|dong|d\b)|gia bao nhieu|bao nhieu tien|chi phi la|gia la)/;
+
+export function viPhamDmkt(msg) {
+  // Gộp số có dấu phân cách nghìn (1.800.000 → 1800000) TRƯỚC khi tách câu — không thì dấu chấm
+  // trong số tự cắt câu, làm rời từ cấm khỏi con tiền (ép thử 10/08 lọt đúng ca này).
+  const t = boDauDmkt(msg).replace(/(\d)[.,](?=\d)/g, '$1');
+  for (const cau of t.split(/[.!?\n]+/)) {
+    if (!RE_CAM_DMKT.test(cau)) continue;
+    if (RE_CHAO_BAN.test(cau)) return 'chao_ban';
+    if (RE_TIEN_DMKT.test(cau)) return 'bao_gia';
+  }
+  return null;
+}
+
 // Làm sạch & ràng buộc output theo đúng định dạng brief (mục 5, 8).
 function sanitize(obj) {
   const out = { ...FALLBACK, ...(obj || {}) };
@@ -96,6 +131,14 @@ function sanitize(obj) {
   let msgs = Array.isArray(out.messages) ? out.messages : [String(out.messages || '')];
   msgs = msgs
     .filter((m) => typeof m === 'string' && m.trim().length > 0)
+    .filter((m) => {
+      // CỔNG DMKT: bỏ ô nào chào bán/báo giá thủ thuật ngoài KHÁM + KÊ TOA.
+      // Bỏ HẾT ô → rơi vào nhánh degraded phía dưới (câu treo + Telegram báo telesale),
+      // tức khách vẫn được trả lời và NGƯỜI THẬT được gọi vào — không im lặng.
+      const loi = viPhamDmkt(m);
+      if (loi) console.warn(`[dmkt] CHẶN ô tin vi phạm (${loi}) — DMKT chỉ có khám+kê toa:`, m);
+      return !loi;
+    })
     .slice(0, 3)
     .map((m) => (m.length > 300 ? m.slice(0, 297) + '…' : m));
   // VÁ 20/07/2026: model trả mảng RỖNG cũng là suy giảm (bot không nói được gì thật) →
