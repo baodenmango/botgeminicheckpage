@@ -10,7 +10,7 @@ import axios from 'axios';
 // pagesThieuToken: dùng cho tuCuuPageThieuToken() (vá 20/07 vòng 3 — tự cứu page rụng token).
 import { config, pagesThieuToken } from './config.js';
 import { isOpenApiEnabled, sendText as zaloSendText } from './zalo.js';
-import * as store from './store.js';
+import * as store from './store.js'; // + phanh giữa loạt: người thật vào là ngừng các ô còn lại (vá 13/08)
 
 const API_BASE = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_api/v1';
 const API_BASE_V1 = process.env.PANCAKE_API_BASE_V1 || 'https://pages.fm/api/v1';
@@ -767,15 +767,30 @@ async function sendOne(pageId, conversationId, text) {
 export async function sendMessages(pageId, conversationId, messages) {
   // TRẦN BÓNG CỨNG: gộp/cắt xuống ≤ MAX_BUBBLES ở tầng gửi (điểm nghẽn duy nhất) — chống dội bom.
   messages = capBubbles(messages);
+  const tBatDauSec = Math.floor(Date.now() / 1000);
   let sentOk = 0;
+  let dungChuDong = false;
   for (let i = 0; i < messages.length; i++) {
+    // PHANH GIỮA LOẠT (vá 13/08, ca cô Bướm): 1 lượt nay kéo dài 40-60s (giãn nhịp gõ tay) —
+    // người thật cầm cuộc / conv chuyển handover GIỮA loạt thì các ô còn lại phải NGỪNG,
+    // không để bot nói nốt đè lên người đang tư vấn.
+    if (i > 0) {
+      try {
+        const c = store.getConversation(conversationId);
+        if (c && ((c.human_taken_at && c.human_taken_at >= tBatDauSec) || c.status === 'handover')) {
+          console.log(`[pancake] ✋ ${conversationId} người thật vừa vào/đã handover giữa loạt → chủ động ngừng ${messages.length - i} ô còn lại`);
+          dungChuDong = true;
+          break;
+        }
+      } catch { /* lỗi đọc DB không được chặn luồng gửi */ }
+    }
     // Chờ "đọc + nghĩ + gõ" TRƯỚC khi gửi ô này (tin đầu = 0, gửi ngay).
     await sleep(humanDelay(messages[i], i));
     const ok = await sendOne(pageId, conversationId, messages[i]);
     if (!ok) break; // gửi lỗi thì dừng, tránh spam nửa vời
     sentOk++;
   }
-  if (sentOk < messages.length) {
+  if (sentOk < messages.length && !dungChuDong) {
     console.error(`[pancake] ❌ conv ${conversationId} chỉ gửi được ${sentOk}/${messages.length} ô → KHÔNG coi là gửi xong.`);
   }
   // Ngưỡng "> 0": gửi được ≥1 ô là coi như chạm đã tới khách (bộ lọc chống-lặp-nguyên-văn ở

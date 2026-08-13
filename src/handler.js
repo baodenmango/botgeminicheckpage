@@ -7,7 +7,7 @@ import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyT
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
 import { trongKhungGioGui } from './care-send.js';
 import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
-import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS } from './echoguard.js';
+import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS, giongTinBot } from './echoguard.js';
 import { lookupMedi, buildContextTag } from './medi.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
 import { buildCarePlanTag } from './careplan.js';
@@ -357,8 +357,15 @@ export async function handlePageMessage(ev) {
   // → vẫn coi là echo của bot, KHÔNG đánh telesale. Đây chính là ca đã làm rớt khách Nguyên.
   const agoMs = lastBotSentAgoMs(conversationId);
   if (agoMs !== null && agoMs < ECHO_GRACE_MS) {
-    console.log(`[handler] ${conversationId}: tin page về ${Math.round(agoMs/1000)}s sau khi bot gửi → coi là echo, KHÔNG đánh telesale`);
-    return;
+    // VÁ 13/08 (ca cô Bướm): cửa sổ này trước nuốt VÔ ĐIỀU KIỆN → người thật gõ chen ngay lúc
+    // bot đang bắn loạt ô (nay 1 lượt kéo dài 40-60s do giãn nhịp gõ) là bị nuốt sạch, cờ human
+    // không bao giờ bật. Giờ chỉ nuốt khi nội dung NA NÁ tin bot (echo thật = văn của chính bot);
+    // câu khác hẳn → cho rơi xuống các lớp dưới để đánh cờ human như thường.
+    if (giongTinBot(conversationId, messageText)) {
+      console.log(`[handler] ${conversationId}: tin page về ${Math.round(agoMs/1000)}s sau khi bot gửi + na ná tin bot → coi là echo, KHÔNG đánh telesale`);
+      return;
+    }
+    console.log(`[handler] ${conversationId}: tin page về ${Math.round(agoMs/1000)}s sau khi bot gửi NHƯNG nội dung khác hẳn tin bot → xét tiếp như người gõ tay`);
   }
   // LỚP 3 (chống đánh nhầm cờ human): telesale THẬT tư vấn bằng câu tử tế, không phải mẩu cụt
   // ("alo", "ok", emoji...). Tin page ngắn dưới ngưỡng → nhiều khả năng là echo/tin test/Pancake AI

@@ -59,6 +59,30 @@ export function wasSentByBot(conversationId, text) {
   return docKvList(conversationId).some((x) => khopEcho(x, n)); // echo trễ / sau restart
 }
 
+// TIN NÀY CÓ "NA NÁ" TIN BOT ĐÃ GỬI KHÔNG? (so mềm theo TỪ — cho cửa sổ echo-grace)
+// VÁ 13/08 (ca cô Bướm/Phan Thị Mỹ Linh): cửa sổ 30s nuốt VÔ ĐIỀU KIỆN → anh Trình gõ tay
+// "Để con chuyển lại lịch cho mình ạ" ngay lúc bot đang bắn tin → bị coi là echo → bot không
+// lui. Echo thật = văn CỦA CHÍNH BOT (Pancake chỉ sửa nhẹ) → trùng từ rất cao; người thật gõ
+// chen = câu khác hẳn. Ngưỡng 0.7 trên câu ngắn hơn (đo ca thật: câu người gõ cùng CHỦ ĐỀ
+// với câu bot — "giữ suất ưu tiên" vs "giữ suất khám" — trùng ~0.67, phải nằm DƯỚI ngưỡng;
+// echo thật Pancake chỉ sửa nhẹ nên trùng >0.8).
+export function giongTinBot(conversationId, text) {
+  const n = normalizeMsg(text);
+  if (!n) return true; // rỗng/ảnh → không phải người gõ chữ
+  const tuCua = (s) => new Set(s.split(' ').filter((w) => w.length > 1));
+  const A = tuCua(n);
+  if (!A.size) return true;
+  const cac = [...(botSent.get(conversationId) || []), ...docKvList(conversationId)]
+    .filter((x) => x.text && Date.now() - x.at < BOT_ECHO_WINDOW_MS);
+  return cac.some((x) => {
+    const B = tuCua(x.text);
+    if (!B.size) return false;
+    let chung = 0;
+    for (const w of A) if (B.has(w)) chung++;
+    return chung / Math.min(A.size, B.size) >= 0.7;
+  });
+}
+
 // Mốc thời gian bot gửi tin GẦN NHẤT cho mỗi hội thoại (epoch ms).
 // Dùng để loại echo: tin page về NGAY sau khi bot vừa gửi (vài giây) gần như chắc chắn là
 // echo của chính bot, KHÔNG phải telesale gõ tay. Telesale thật cần thời gian để đọc + gõ.
