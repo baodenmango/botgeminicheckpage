@@ -209,10 +209,17 @@ export async function lookupMedi(phone) {
     // 1) ƯU TIÊN cache local (cron local đẩy lên qua /admin/medi-upsert) — chuẩn + nhanh.
     const c = store.getMediByPhone(p);
     if (c) {
+      // CỜ TỰ KHAI (ca Quoc Huy Vo 13/08): bản ghi nguon='tu_khai' là LỜI KHÁCH KỂ QUA CHAT
+      // (upsertMediTuKhai, vá 27/07) — KHÔNG phải bệnh án bác sĩ. Caller phải phân biệt:
+      // dùng để cá nhân hoá nội dung thì ĐƯỢC, dùng làm bằng chứng "ĐÃ KHÁM" thì CẤM
+      // (lead vừa cho SĐT + kể bệnh mà lượt sau bị gọi "khách cũ, phí tái khám" → mất lead).
+      let tuKhai = false;
+      try { tuKhai = JSON.parse(c.raw || '{}').nguon === 'tu_khai'; } catch { /* raw hỏng → coi như hồ sơ thật */ }
       return {
         name: c.name || '', diagnosis: c.diagnosis || '',
         lastVisit: c.last_visit ? new Date(c.last_visit * 1000).toISOString() : '',
         treatment: c.treatment || '', sessionsDone: '', sessionsTotal: '', prescription: '',
+        tuKhai,
       };
     }
     // 2) fallback: Sheet công khai/riêng tư (nếu có cấu hình)
@@ -240,11 +247,16 @@ export async function getAllMediRecords() {
     // 1) ƯU TIÊN cache local (cron local đẩy lên) — nguồn chuẩn cho engine đánh thức BN ngủ.
     const cached = store.getAllMediCache();
     if (cached && cached.length) {
-      return cached.map((c) => ({
-        phone: c.phone, name: c.name || '', diagnosis: c.diagnosis || '',
-        lastVisit: c.last_visit ? new Date(c.last_visit * 1000).toISOString() : '',
-        treatment: c.treatment || '',
-      }));
+      return cached.map((c) => {
+        let tuKhai = false;
+        try { tuKhai = JSON.parse(c.raw || '{}').nguon === 'tu_khai'; } catch { /* raw hỏng → hồ sơ thật */ }
+        return {
+          phone: c.phone, name: c.name || '', diagnosis: c.diagnosis || '',
+          lastVisit: c.last_visit ? new Date(c.last_visit * 1000).toISOString() : '',
+          treatment: c.treatment || '',
+          tuKhai, // lead kể bệnh qua chat, CHƯA khám — engine đánh thức không được đụng
+        };
+      });
     }
     // 2) fallback Sheet
     const table = await getTable();

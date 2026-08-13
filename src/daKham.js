@@ -21,7 +21,16 @@ export async function lookupDaKham(phone) {
   if (!phone) return null;
   try {
     const medi = await lookupMedi(phone);
-    if (medi) return { source: 'medi', ...medi };
+    // VÁ 13/08 (ca Quoc Huy Vo — MẤT LEAD THẬT): vá 27/07 ghi bệnh khách TỰ KHAI qua chat vào
+    // cache MEDi (nguon='tu_khai') để chuỗi chăm sau bán hết unknown — nhưng chỗ này tra thấy
+    // "có hồ sơ MEDi" là kết luận ĐÃ KHÁM luôn → lead vừa cho SĐT + kể bệnh, 3 phút sau bị bot
+    // gọi "khách cũ, phí tái khám vài trăm nghìn" → khách: "Anh chưa hề khám bên em... Bye".
+    // Luật: bản ghi TỰ KHAI chỉ để cá nhân hoá nội dung, KHÔNG BAO GIỜ là bằng chứng đã khám.
+    // Bằng chứng đã khám = hồ sơ EMR bác sĩ (không tu_khai) HOẶC đơn POS đã đến/đã thu (nhánh dưới).
+    if (medi && !medi.tuKhai) return { source: 'medi', ...medi };
+    if (medi?.tuKhai) {
+      console.log(`[da-kham] SĐT ${String(phone).slice(0, 5)}*** chỉ có hồ sơ TỰ KHAI (lead kể bệnh qua chat, CHƯA khám) → không tính đã khám, tra POS tiếp`);
+    }
   } catch { /* fail-open, thử nguồn kế */ }
   try {
     return await lookupPosCustomer(phone);

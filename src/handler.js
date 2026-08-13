@@ -309,6 +309,20 @@ export function laTinNanBenhNhan(text, daKham) {
   return Boolean(daKham) && RE_NAN_LIEU_TRINH.test(n);
 }
 
+// --- KHÁCH PHẢN BÁC "TÔI CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) ---
+// Bot gọi nhầm lead là "khách cũ, tái khám" (hồ sơ tự khai / đơn POS tạo nhầm / nhãn gắn nhầm)
+// → khách vạch "Anh chưa hề khám bên em, mới chỉ nt thoi mà là khách cũ??". Lời KHÁCH tự nói về
+// chính họ là nguồn sự thật mạnh nhất → cắm VETO, mọi lớp nhận diện đã-khám phải lùi ngay.
+const RE_PHAN_BAC_DA_KHAM = new RegExp([
+  'chua (he |tung |co )?(di |den |toi |ghe )?kham',   // "chưa hề khám", "chưa từng đi khám"
+  '(co |da )?kham (bao gio )?dau',                     // "có khám đâu", "đã khám bao giờ đâu"
+  'moi (chi )?(nt|nhan tin|ib|inbox|nhan)( thoi)?',    // "mới chỉ nt thoi"
+  'khach cu (gi|dau|cai gi|hoi nao)',                  // "khách cũ gì", "khách cũ hồi nào"
+].join('|'));
+export function laTinPhanBacDaKham(text) {
+  return RE_PHAN_BAC_DA_KHAM.test(` ${boDauKham(text)} `);
+}
+
 /**
  * Xử lý tin TỪ PAGE: phân biệt BOT tự gửi (bỏ qua) vs TELESALE gõ tay (đánh dấu human → bot lui).
  */
@@ -558,6 +572,16 @@ export async function handleIncoming(ev) {
       return;
     }
 
+    // ===== KHÁCH PHẢN BÁC "CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) — cắm VETO nhận diện đã-khám =====
+    // KHÔNG return: bot vẫn trả lời lượt này, nhưng từ giờ mọi lớp "đã khám" (MEDi/POS/nhãn/KV)
+    // phải lùi — Gemini thấy history + hết thẻ [ĐÃ KHÁM] sẽ tự xin lỗi và tư vấn lại như khách mới.
+    if (laTinPhanBacDaKham(messageText)) {
+      store.setKV(`khong_phai_da_kham:${conversationId}`, String(Date.now()));
+      store.delKV(`da_kham_conv:${conversationId}`);
+      try { store.setMedi(conversationId, 'moi', null); } catch { /* cache cũ không có cũng được */ }
+      console.log(`[da-kham] ⛔ ${conversationId} khách PHẢN BÁC "chưa hề khám" → cắm veto, bỏ mọi nhận diện đã-khám`);
+    }
+
     // ===== BỆNH NHÂN NẢN LIỆU TRÌNH / CHÊ TRẢI NGHIỆM (ca Bé Tuyết 03/08) — CHỐT CHẶN SỐ 2 =====
     // Khách đang bực về CÁCH CHĂM (không ai tư vấn lúc khám / chỉ nhận tin máy / muốn bỏ liệu trình)
     // → mọi tin bot gửi thêm đều là "thêm 1 tin nhắn máy nữa" = đổ dầu vào lửa. Xoa dịu đúng 1 lần,
@@ -594,6 +618,7 @@ export async function handleIncoming(ev) {
     // "Chia sẻ thông tin" để nối hồ sơ (1 nút, không bắt gõ số). KHÔNG đi kịch bản lead.
     if (!store.isCaptured(conv) && !laConvDaKham(conversationId) && laTinDaKham(messageText)) {
       store.setKV(`da_kham_conv:${conversationId}`, String(Date.now()));
+      store.delKV(`khong_phai_da_kham:${conversationId}`); // khách TỰ BÁO đã khám → gỡ veto phản bác cũ
       // VÁ 01/08/2026 (ca Cương): phân biệt ĐÃ ĐẶT LỊCH (chưa tới khám, telesale ĐÃ cầm số)
       // với ĐÃ ĐẾN KHÁM. Khách đã cọc mà bot xin lại số = khách nổi cáu ("vô lý thế nầy...?").
       // Nhánh đã-đặt-lịch: XÁC NHẬN + trấn an, TUYỆT ĐỐI không xin số, không mời thẻ OA.
@@ -720,10 +745,13 @@ export async function handleIncoming(ev) {
     // → trước đây bot vẫn đối xử như lead lạ. Giờ: biết SĐT (khách gõ / lịch sử / đã lưu)
     // → tra MEDi + POS; trúng → GIAI ĐOẠN CHĂM SÓC (mode care + thẻ ngữ cảnh đổi vai bot).
     // Có cache trong pos.js/medi.js nên không gọi API mỗi tin. Fail-open toàn phần.
+    // VETO phản bác (ca Quoc Huy Vo 13/08): khách đã nói "chưa hề khám" → cấm mọi lớp dưới
+    // gắn lại vai đã-khám, kể cả khi MEDi/POS/nhãn vẫn trả hồ sơ (nguồn đó đang sai).
+    const vetoDaKham = Boolean(store.getKV(`khong_phai_da_kham:${conversationId}`));
     if (!isZaloPage(channel)) {
       const phoneKnown = phoneByRegex || conv.phone ||
         extractPhoneFromHistory(store.getConversation(conversationId).history);
-      if (phoneKnown) {
+      if (phoneKnown && !vetoDaKham) {
         try {
           const daKham = await lookupDaKham(phoneKnown);
           if (daKham) {
@@ -748,14 +776,14 @@ export async function handleIncoming(ev) {
       // Cache CHỈ tin khi đã ra BN_CŨ. Ra 'moi' thì TRA LẠI mỗi lượt (ca quét OA tại quầy:
       // khám hôm nay, hồ sơ MEDi/POS mai mới sync — cache 'moi' cứng làm BN bị coi khách lạ mãi).
       // Tra lại rẻ: cache local SQLite trước, Sheet/POS đã có TTL riêng trong medi.js/pos.js.
-      const cachedCu = freshZ.medi_status === 'cu' ? store.getMediRecord(freshZ) : null;
+      const cachedCu = (!vetoDaKham && freshZ.medi_status === 'cu') ? store.getMediRecord(freshZ) : null;
       if (cachedCu) {
         daKhamHoSo = { source: 'medi', ...cachedCu };
         contextTag = buildContextTag(cachedCu, conv.condition || null);
       } else {
         const phoneForLookup = phoneByRegex || freshZ.phone ||
           extractPhoneFromHistory(freshZ.history);
-        if (phoneForLookup) {
+        if (phoneForLookup && !vetoDaKham) {
           // MEDi trước (có bệnh án/liệu trình), POS vá lưới (khách lên đơn nhưng chưa vào EMR-sheet).
           const record = await lookupDaKham(phoneForLookup);
           if (record?.source === 'medi') store.setMedi(conversationId, 'cu', record);

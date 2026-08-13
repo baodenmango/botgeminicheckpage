@@ -53,6 +53,10 @@ export async function runWakeup() {
 
   for (const rec of records) {
     if (!rec.phone) continue;
+    // VÁ 13/08: hồ sơ TỰ KHAI (lead kể bệnh qua chat, CHƯA từng khám) không phải "BN ngủ" —
+    // đánh thức họ "lâu rồi mình chưa tái khám" là bịa lịch sử khám. Hiện tự khai không có
+    // lastVisit nên dòng dưới cũng chặn, nhưng cắm chốt tường minh kẻo sau này ai đổ thêm ngày.
+    if (rec.tuKhai) continue;
     const visit = parseVisitDate(rec.lastVisit);
     if (!visit) continue;
     const daysSince = Math.floor((now - visit) / DAY);
