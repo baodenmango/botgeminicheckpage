@@ -905,6 +905,38 @@ app.get('/admin/zns-dem', (req, res) => {
   });
 });
 
+// --- Admin (CHỈ ĐỌC): LIỆT KÊ số dính cờ -118 "không có Zalo" để giao telesale GỌI TAY ---
+// Vì sao cần: /admin/zns-dem chỉ ĐẾM (77 số), không nói SỐ NÀO — nên việc "giao telesale ủi 77 số"
+// không thi hành được, nằm treo trong danh sách chờ. Đo mà không xuất được danh sách = số chết.
+// LUẬT Z (16/08): ZNS mời OA đã chứng minh là van chết → đường duy nhất còn lại là NGƯỜI GỌI,
+// mà muốn gọi thì phải có danh sách. Route này chỉ ĐỌC KV, không gửi gì cho khách.
+// GET /admin/no-zalo-list?token=XXX
+app.get('/admin/no-zalo-list', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const P = 'zns_no_zalo:';
+  // Key lưu dạng 84xxxxxxxxx (phone84Raw), value = epoch giây lúc dính -118.
+  // Trả kèm dạng 0xxxxxxxxx để telesale bấm gọi thẳng, khỏi tự đổi đầu số.
+  const ds = store.listKVByPrefix(P).map((row) => {
+    const sdt84 = row.key.slice(P.length);
+    const giay = parseInt(row.value, 10);
+    return {
+      sdt: sdt84.startsWith('84') ? '0' + sdt84.slice(2) : sdt84,
+      sdt84,
+      danh_dau_luc: Number.isFinite(giay) ? new Date(giay * 1000).toISOString() : null,
+    };
+  }).sort((a, b) => String(b.danh_dau_luc).localeCompare(String(a.danh_dau_luc)));
+  res.status(200).json({
+    ok: true,
+    tong: ds.length,
+    ds,
+    ghi_chu: 'Mỗi dòng = 1 SĐT Zalo trả -118 (không có tài khoản Zalo) → ZNS vĩnh viễn không tới được. '
+      + 'Chỉ chạm được bằng GỌI ĐIỆN hoặc mời QUAN TÂM OA tại quầy.',
+  });
+});
+
 // --- Admin (CHỈ ĐỌC): kết quả vòng wakeup-pilot gần nhất (KV wakeup_pilot_kq) ---
 app.get('/admin/pilot-kq', (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
