@@ -253,8 +253,12 @@ const RE_XIN_NGUNG = new RegExp([
   // thiếu BIÊN TỪ nên "khong nhanh" khớp nhầm "khong nhan" → bot tự tắt vĩnh viễn với lead nóng
   // đang hỏi giá tiêm. Thêm (?![a-z]) chặn khớp giữa từ; (?! vien) chặn "không NHÂN VIÊN nào..."
   // (bỏ dấu "nhân"="nhan" — câu than phiền, không phải xin ngừng).
-  '(dung|khong|kh|ko|k|thoi) (nen )?(nhan(?! vien)|nhat|gui|goi|gio|gioi|ib|inbox|lam phien|phien|spam)(?![a-z])',
-  '(nhan|gui|goi|gio|gioi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
+  // VÁ 15/08 (ca Tran Thi Yen — khách hỏi bệnh "tay mình ko GIƠ cao lên được" bị bắn kịch bản
+  // xin-ngừng): 'gio'/'gioi' định bắt teen-speak "gởi" nhưng bỏ dấu đụng "giơ/giờ/giỏi" — từ quá
+  // phổ biến → BỎ HẲN ("gởi/gưởi" bỏ dấu = goi/guoi đã có 'gui|goi' cover). 'goi' thêm chắn
+  // "gọi ĐƯỢC" ("tôi không gọi được cho phòng khám" = khách THAN, không phải xin ngừng).
+  '(dung|khong|kh|ko|k|thoi) (nen )?(nhan(?! vien)|nhat|gui|goi(?! (duoc|dc))|ib|inbox|lam phien|phien|spam)(?![a-z])',
+  '(nhan|gui|goi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
   // "bỏ ý định", "không còn nhu cầu", "hủy lịch", "không chữa nữa"
   'bo (y dinh|dinh|nhu cau|kham|chua)(?![a-z])',
   '(khong|kh|ko|k) (con )?(nhu cau|y dinh)(?![a-z])',
