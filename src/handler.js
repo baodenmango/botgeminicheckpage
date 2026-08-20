@@ -56,7 +56,22 @@ function demSuatTuVan(text) {
   return /su[aâ]t tu van/.test(n);
 }
 // Câu chốt trung tính khi đã phải bỏ hết ô "suất tư vấn" (tránh gửi lượt rỗng).
-const CAU_CHOT_TRUNG_TINH = 'Dạ mình cứ nhắn em bất cứ lúc nào cần nha ạ 🙏';
+// PHAO TRUNG TÍNH XOAY VÒNG (vá 20/08, ca Duy Cường): phao cũ là 1 HẰNG SỐ → dispatch thả phao
+// 2 lần cách nhau 16 giây = 2 câu Y NGUYÊN liền nhau, khách vạch ngay là máy. Chọn câu CHƯA
+// nằm trong tin bot đã gửi của hội thoại; cạn sạch mới đành lặp câu đầu (thà thừa còn hơn im).
+const CAC_CAU_TRUNG_TINH = [
+  'Dạ mình cứ nhắn em bất cứ lúc nào cần nha ạ 🙏',
+  'Dạ em đây ạ, mình cần em hỗ trợ thêm gì cứ nói em nha.',
+  'Dạ có gì mình cứ hỏi thêm nha, em luôn sẵn sàng ạ.',
+  'Dạ em vẫn ở đây nè, mình cần gì cứ nhắn em ạ.',
+];
+function cauTrungTinh(freshConv) {
+  const daGui = ((freshConv?.history) || [])
+    .filter((h) => h.role === 'model')
+    .map((h) => chuanHoaCau(h.text))
+    .join('\n');
+  return CAC_CAU_TRUNG_TINH.find((c) => !daGui.includes(chuanHoaCau(c))) || CAC_CAU_TRUNG_TINH[0];
+}
 
 // Khách XIN tài liệu/cẩm nang/bài tập → gửi PDF ngay (không đợi chạm 4).
 const ASK_DOC_RE = /\b(gửi|cho|xin|share|sen)\b.*(tài liệu|tai lieu|cẩm nang|cam nang|bài tập|bai tap|file|pdf|hướng dẫn|huong dan|video)|(tài liệu|cẩm nang|bài tập|file|pdf).*(đâu|chưa|gửi|gui)/i;
@@ -311,6 +326,24 @@ export function laTinNanBenhNhan(text, daKham) {
   const n = ` ${boDauKham(text)} `;
   if (RE_CHE_TRAI_NGHIEM.test(n)) return true;
   return Boolean(daKham) && RE_NAN_LIEU_TRINH.test(n);
+}
+
+// --- KHÁCH ĐÒI HỎI/GẶP TRỰC TIẾP BÁC SĨ (ca Duy Cường 20/08) ---
+// BN hỏi y lệnh riêng (loại đai lưng), bot không biết cứ vòng vo; khách chốt "Chị hỏi bác sĩ
+// lại giúp e nhá" — yêu cầu ĐÍCH DANH mà không luật nào bắt → không Telegram, bot nói tiếp.
+// Phân biệt với cách XƯNG HÔ "bác sĩ cho em hỏi..." (rất phổ biến, KHÔNG phải đòi gặp) bằng
+// cấu trúc: động từ hỏi/nhờ/gặp + bác sĩ + giúp/giùm/hộ/lại...
+const RE_DOI_BAC_SI = new RegExp([
+  // "hỏi (lại) bác sĩ (lại) giúp/giùm/hộ/cho em", "nhờ bác sĩ check/xem lại giúp"
+  '(hoi|check|xac nhan|nho) (lai )?(bac si|bs)( truc tiep)?( check| xem| coi)?( lai)? (giup|gium|dum|ho|cho)(?![a-z])',
+  // "muốn/xin gặp bác sĩ", "cho em/tôi gặp bác sĩ", "nói chuyện với bác sĩ"
+  '(muon|xin)( duoc)? gap (bac si|bs)',
+  'cho (em|e|toi|tui|minh|chi|anh|c|co|chu) (gap|noi chuyen voi) (bac si|bs)',
+  // "bác sĩ trả lời/tư vấn trực tiếp giúp" — (?![a-z]) chặn 'ho' khớp giữa "HÔM qua" (bài học 15/08)
+  '(bac si|bs) (tra loi|tu van) (truc tiep|giup|gium|dum|ho)(?![a-z])',
+].join('|'));
+export function laTinDoiBacSi(text) {
+  return RE_DOI_BAC_SI.test(` ${boDauKham(text)} `);
 }
 
 // --- KHÁCH PHẢN BÁC "TÔI CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) ---
@@ -621,6 +654,32 @@ export async function handleIncoming(ev) {
         `→ Nguy cơ BỎ NGANG liệu trình. Cần NGƯỜI THẬT (ưu tiên Bác sĩ/CSKH) GỌI ĐIỆN trong hôm nay — đừng nhắn tin thêm.`
       ).catch(() => {});
       console.log(`[nan-benh-nhan] 🚨 ${conversationId} bệnh nhân nản/chê trải nghiệm → handover + báo người`);
+      return;
+    }
+
+    // ===== KHÁCH ĐÒI HỎI/GẶP TRỰC TIẾP BÁC SĨ (ca Duy Cường 20/08) — CHỐT CHẶN SỐ 3 =====
+    // Khách đã yêu cầu đích danh thì bot xác nhận 1 câu rồi LUI + báo người — càng cố tự trả lời
+    // càng lộ là không biết (ca thật: bot hỏi ngược BN "mình quên loại đai nào đúng không ạ?").
+    if (laTinDoiBacSi(messageText)) {
+      store.setHandover(conversationId);
+      const daBaoBS = store.getKV(`doibs_xacnhan:${conversationId}`);
+      if (!daBaoBS) {
+        store.setKV(`doibs_xacnhan:${conversationId}`, String(Date.now()));
+        const msgs = ['Dạ được ạ, để em hỏi lại Bác sĩ Trình rồi nhắn mình liền nha ạ 🙏'];
+        msgs.forEach((m) => noteBotSent(conversationId, m));
+        noteBotJustSent(conversationId);
+        const okBS = await sendMessages(pageId, conversationId, msgs);
+        if (okBS) store.appendHistory(conversationId, 'model', msgs.join('\n'));
+        else console.error(`[doi-bac-si] ❌ GỬI HỤT câu xác nhận cho ${conversationId}`);
+      }
+      notifyText(
+        `🙋 <b>KHÁCH YÊU CẦU HỎI/GẶP TRỰC TIẾP BÁC SĨ</b> (bot đã lui, chờ người thật)\n` +
+        `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
+        `• Hội thoại: https://pancake.vn/${pageId}?c_id=${conversationId}\n` +
+        `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 180)}"\n` +
+        `→ Cần Bác sĩ/CSKH trả lời trực tiếp câu này rồi nhắn lại khách (bot đã hứa "em hỏi lại Bác sĩ").`
+      ).catch(() => {});
+      console.log(`[doi-bac-si] 🙋 ${conversationId} khách đòi hỏi/gặp bác sĩ → handover + báo người`);
       return;
     }
 
@@ -1270,7 +1329,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     // Khách hỏi giá tiêm 19:47–20:05 (Hiên Thi Vu, Nguyễn Oanh, Rose Rose, Đặng Sáng, Cu Tủn, Xuân Ngọc)
     // đúng vì cái này. THÀ THỪA 1 CÂU TRUNG TÍNH CÒN HƠN IM — im là mất lead đã trả tiền quảng cáo.
     if (outMessages.length === 0 && truoc > 0) {
-      outMessages = [CAU_CHOT_TRUNG_TINH];
+      outMessages = [cauTrungTinh(freshConv)];
       console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
     }
   }
@@ -1296,7 +1355,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
           .map((m) => String(m).replace(/https?:\/\/\S+/gi, '').replace(/[ \t]{2,}/g, ' ').trim())
           .filter((m) => m.length > 0);
         // Cùng lắm vẫn rỗng (ô chỉ có mỗi link) → giữ 1 câu trung tính, KHÔNG im.
-        if (outMessages.length === 0) outMessages = [CAU_CHOT_TRUNG_TINH];
+        if (outMessages.length === 0) outMessages = [cauTrungTinh(freshConv)];
       }
       if (outMessages.length !== truoc) {
         console.log(`[dispatch] ${conversationId} lượt trả lời ĐẦU → gỡ link (30% vs 57% continuation, không để lượt rỗng)`);
@@ -1330,7 +1389,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       }
       // Sau khi bỏ mà rỗng lượt (chỉ toàn ô mời) → giữ lại 1 ô trung tính, đừng gửi lượt rỗng/im.
       if (!outMessages.length && truoc > 0) {
-        outMessages = [CAU_CHOT_TRUNG_TINH];
+        outMessages = [cauTrungTinh(freshConv)];
       }
     }
   }
