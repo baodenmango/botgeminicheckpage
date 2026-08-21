@@ -611,14 +611,19 @@ export function isOptedOut(conv) {
 //     chắc chắn người thật (người gõ tay hầu như luôn gõ >1 tin; echo tin chăm chỉ dội 1 lần/tin).
 //     Lúc này mới hold đủ dài (HUMAN_HOLD_HOURS) để không chen ngang telesale.
 // Thà bot trả lời thừa 1 lượt còn hơn bỏ rơi lead đã trả tiền quảng cáo.
-export function markHumanTaken(conversationId) {
+export function markHumanTaken(conversationId, opts = {}) {
   const cid = String(conversationId);
   const now = nowSec();
   const row = db.prepare('SELECT human_taken_at, human_confirmed_at FROM conversations WHERE conversation_id = ?').get(cid);
   // Tin page lạ THỨ HAI trong khi cờ tạm nghi còn hiệu lực → nâng lên ĐÃ XÁC NHẬN.
   // (Cờ cũ đã hết hạn tạm nghi thì coi như lượt mới, quay lại mức tạm nghi.)
   const conNghi = row && row.human_taken_at && row.human_taken_at > now - Math.floor(probationSec() * 2);
-  const len2 = Boolean(conNghi);
+  // VÁ 21/08/2026 (ca Lương Bích Tiền): opts.confirm = người gọi ĐÃ CHỨNG MINH đây là người thật
+  // gõ tay (tin page lọt hết 6 cửa lọc echo + dài ≥ HUMAN_MIN_CHARS) → xác nhận NGAY, khỏi chờ
+  // tin thứ hai. Trước đây 1 câu telesale dài chỉ giữ được 5' tạm nghi: khách nhắn tiếp ở phút
+  // thứ 6 là bot nhảy vào giữa lúc người đang tư vấn. Cờ oan vẫn có lưới: rescueLead gỡ + vớt sau
+  // ~5-8' nếu THẬT SỰ không ai rep (rescueLead.js RESCUE_HUMAN_OVERRIDE_MIN).
+  const len2 = Boolean(conNghi) || opts.confirm === true;
   db.prepare('UPDATE conversations SET human_taken_at = ?, human_confirmed_at = ? WHERE conversation_id = ?')
     .run(now, len2 ? now : (row?.human_confirmed_at || null), cid);
   return { confirmed: len2 };

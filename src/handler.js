@@ -409,7 +409,20 @@ export async function handlePageMessage(ev) {
   // sót → KHÔNG đánh cờ human. Ngưỡng chỉnh qua HUMAN_MIN_CHARS (mặc định 12 ký tự).
   const cleaned = normalizeMsg(messageText);
   if (cleaned.length < HUMAN_MIN_CHARS) {
-    console.log(`[handler] ${conversationId}: tin page quá ngắn ("${messageText.slice(0,20)}") → KHÔNG coi là telesale gõ tay`);
+    // VÁ 21/08/2026 — ca Lương Bích Tiền (anh Trình chỉ tận tay). Trước đây chỗ này `return`
+    // TRẮNG: telesale gõ "Dạ 19h ạ" (8 ký tự), "19h nha chị" (11), "Chị qua nhé" (11) — đúng
+    // kiểu người thật chốt giờ khám — đều bị vứt, bot KHÔNG biết có người vào, rồi xả tiếp
+    // 3 bóng xin số + link sale page ngay dưới câu người vừa trả lời khách.
+    // Nay: không khoá dài (vẫn sợ echo/tin auto ngắn), nhưng đánh cờ TẠM NGHI
+    // (HUMAN_PROBATION_MIN, mặc định 5') để bot lui vài phút. Cờ oan tự chết sau 5', và
+    // rescueLead gỡ + vớt nếu thật sự không ai rep → không có cửa bỏ rơi khách.
+    if (cleaned.length >= 2) {
+      store.ensureConversation(conversationId, pageId, null);
+      store.markHumanTaken(conversationId);
+      console.log(`[handler] 👤 ${conversationId}: tin page NGẮN (${cleaned.length} ký tự) lọt các cửa echo → cờ TẠM NGHI, bot lui tạm | trích: "${String(messageText).slice(0, 30)}"`);
+    } else {
+      console.log(`[handler] ${conversationId}: tin page rỗng chữ ("${messageText.slice(0,20)}") → bỏ qua, KHÔNG đánh telesale`);
+    }
     return;
   }
   // LỚP 4 (vá 20/07 — ca 13 hội thoại cờ human oan): tin page mang VÂN TAY chuỗi chăm/bot
@@ -423,8 +436,11 @@ export async function handlePageMessage(ev) {
   // LOG LÝ DO + TRÍCH 40 KÝ TỰ (vá 20/07): trước đây log chỉ ghi "telesale gõ tay" nên soi log
   // Render không biết tin nào đã đánh cờ → mất 85' mới lần ra thủ phạm là echo tin chăm.
   store.ensureConversation(conversationId, pageId, null);
-  store.markHumanTaken(conversationId);
-  console.log(`[handler] 👤 ${conversationId}: telesale gõ tay → bot LUI (giữ ${HUMAN_HOLD_HOURS}h) | LÝ DO: lọt cả 6 cửa lọc (không aiGenerated / không attachment / không auto-reply / không khớp sổ echo / ngoài ${ECHO_GRACE_MS}ms echo-grace / dài ${cleaned.length}≥${HUMAN_MIN_CHARS} ký tự / không vân tay bot) | trích: "${String(messageText).slice(0, 40)}"`);
+  // VÁ 21/08/2026: XÁC NHẬN NGAY (không chờ tin page lạ thứ hai). Tin này đã lọt cả 6 cửa lọc
+  // echo/auto-reply/vân tay bot → bằng chứng người thật đủ mạnh. Trước đây 1 câu telesale chỉ
+  // giữ 5' tạm nghi, khách nhắn tiếp ở phút thứ 6 là bot chen ngang giữa cuộc tư vấn của người.
+  store.markHumanTaken(conversationId, { confirm: true });
+  console.log(`[handler] 👤 ${conversationId}: telesale gõ tay → bot LUI (giữ ${HUMAN_HOLD_HOURS}h, xác nhận ngay) | LÝ DO: lọt cả 6 cửa lọc (không aiGenerated / không attachment / không auto-reply / không khớp sổ echo / ngoài ${ECHO_GRACE_MS}ms echo-grace / dài ${cleaned.length}≥${HUMAN_MIN_CHARS} ký tự / không vân tay bot) | trích: "${String(messageText).slice(0, 40)}"`);
 }
 // Ngưỡng ký tự tối thiểu để coi tin page là "telesale gõ tay thật" (lọc mẩu cụt/echo).
 const HUMAN_MIN_CHARS = parseInt(process.env.HUMAN_MIN_CHARS || '12', 10);

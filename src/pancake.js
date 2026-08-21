@@ -209,9 +209,20 @@ export function canonicalPageId(pageId) {
 // KHÔNG cho nhãn "đã mua / đã thu tiền / checkin" vào đây — vì khách ĐÃ MUA thì bot
 // KHÔNG im hẳn, mà CHUYỂN SANG chăm sóc (chạm CSKH). Việc "đã có số → không xin số nữa,
 // chỉ chăm" do isCaptured() + STOP_BOT_LABELS_SOFT điều khiển bên dưới, KHÔNG phải tắt bot.
-const STOP_BOT_LABELS_RAW = (process.env.STOP_BOT_LABELS ||
-  'đã đặt lịch,đã hẹn khám,đã hẹn,telesale xử lý,chốt lịch,đã chốt,không gửi bot,bot dừng'
-).split(',').map((s) => normalizeLabel(s)).filter(Boolean);
+// VÁ 21/08/2026 — ca Lương Bích Tiền (anh Trình chỉ tận tay: "người vào mà BOT không lui").
+// NHÃN THẬT đội đang bấm trên Pancake là "Đặt Lịch" — KHÔNG có chữ "đã". matchAnyLabel so theo
+// chiều `tên nhãn`.includes(`từ khoá`): "dat lich".includes("da dat lich") = FALSE ⇒ nhân viên
+// bấm nhãn chốt lịch mà bot không hề coi đó là cờ tắt, vẫn chen ngang xin số + dí link sale page
+// ngay dưới câu người thật vừa trả lời khách (khách lúc đó đã có đơn "Đã thu tiền").
+// Tên nhãn là DỮ LIỆU NGOÀI REPO (đội tự đặt trên Pancake, env Render lại chép theo file mẫu cũ)
+// → chốt danh sách LÕI trong code và HỢP NHẤT với env, thay vì để env ghi đè làm mất.
+const STOP_LABELS_CORE = ['đặt lịch', 'đặt hẹn', 'hẹn khám', 'đã hẹn'];
+const STOP_BOT_LABELS_RAW = [...new Set([
+  ...(process.env.STOP_BOT_LABELS ||
+    'đã đặt lịch,đã hẹn khám,đã hẹn,telesale xử lý,chốt lịch,đã chốt,không gửi bot,bot dừng'
+  ).split(','),
+  ...STOP_LABELS_CORE,
+])].map((s) => normalizeLabel(s)).filter(Boolean);
 
 // --- NHÃN "ĐÃ THÀNH KHÁCH" (đã mua/đã đến khám/đã thu tiền) ---
 // Khác STOP ở trên: gặp các nhãn này, bot KHÔNG im hẳn mà coi như khách ĐÃ CÓ SỐ →
