@@ -777,6 +777,40 @@ app.get('/admin/ma-tran', (req, res) => {
   res.status(200).json({ ok: true, tong: ds.length, co_kenh: ds.filter((x) => x.co_kenh_zalo).length, ds });
 });
 
+// --- ĐÒN 4 (21/08/2026): NỐI LẠI KÊNH cho ca ra bill mù kênh — quét TOÀN KHO, không gửi tin ---
+// Gốc bệnh (đo 21/08): kênh Zalo chỉ được tra lại đúng lúc engine GỬI CHẠM (care-send.js). Ca đã
+// qua hết mốc d0..d7 thì không ai đụng nữa ⇒ co_kenh_zalo đóng băng false vĩnh viễn, dù sau đó
+// khách có bấm Quan tâm OA / để lại số. Đoàn hệ 437 ca ra 0/437 CÓ KÊNH, nhóm chứng cũng 0 —
+// số của cái thước hỏng, không phải kết quả của đội gọi. Route này quét ngược toàn kho, tra lại
+// theo SĐT rồi ghi vào bill_care. CHỈ ghi DB nội bộ, KHÔNG gửi một tin nào cho khách.
+//   ?dry=1  → chỉ đếm, không ghi (mặc định: có ghi)
+app.get('/admin/noi-lai-kenh', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const dry = String(req.query.dry || '') === '1';
+  const kho = store.demKhoNoiKenh();
+  const ds = store.listBillCareMuKenh(parseInt(req.query.limit || '3000', 10));
+  let noiDuoc = 0; const viDu = [];
+  for (const r of ds) {
+    const zconv = store.getZaloConvByPhone(r.phone);
+    const uid = zconv ? (zconv.zalo_user_id || null) : store.getKV(`phone_zalo:${r.phone}`);
+    const conversation_id = zconv ? zconv.conversation_id : null;
+    const page_id = zconv ? zconv.page_id : null;
+    if (!((conversation_id && page_id) || uid)) continue;
+    noiDuoc += 1;
+    if (viDu.length < 10) viDu.push({ sdt: r.phone, ten: r.name, qua: zconv ? 'hội thoại Zalo' : 'kv phone_zalo' });
+    if (!dry) {
+      try { store.upsertBillCare({ id: r.id, conversation_id, page_id, zalo_user_id: uid }); }
+      catch (e) { console.error('[noi-lai-kenh] ghi hụt ca', r.id, e?.message); }
+    }
+  }
+  console.log(`[noi-lai-kenh] ${dry ? 'DRY — ' : ''}quét ${ds.length} ca mù kênh → nối được ${noiDuoc}`
+    + ` | kho: ${kho.zalo_conv_co_sdt} hội thoại Zalo có SĐT, ${kho.kv_phone_zalo} map phone→uid`);
+  res.status(200).json({ ok: true, dry, quet: ds.length, noi_duoc: noiDuoc, con_mu: ds.length - noiDuoc, kho, vi_du: viDu });
+});
+
 // --- Admin (CHỈ ĐỌC): soi engine ĐÁNH THỨC BN NGỦ có gửi được thật không (thêm 20/07) ---
 // Trả lời đúng câu hỏi "engine câm hay sống": bao nhiêu ca ĐÃ NHẬN TIN THẬT vs bao nhiêu
 // mới chỉ được liệt kê cho telesale, và bao nhiêu đã hết hạn mức gửi.

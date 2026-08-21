@@ -359,6 +359,31 @@ export function listBillCare(limit = 100) {
   `).all(Math.min(limit, 500));
 }
 
+// --- ĐÒN 4 (21/08/2026): ca ra bill MÙ KÊNH, quét TOÀN KHO (không trần 500 như listBillCare) ---
+// Vì sao cần: kênh Zalo của 1 ca bill chỉ được tra lại ĐÚNG LÚC ENGINE GỬI CHẠM (care-send.js
+// "NỐI LẠI KÊNH NGAY LÚC GỬI"). Ca đã qua hết mốc d0/d1/d3/d6/d7 thì không engine nào đụng tới
+// nữa ⇒ `co_kenh_zalo` ĐÓNG BĂNG ở false vĩnh viễn, kể cả khi khách bấm Quan tâm OA / để lại số
+// sau đó. Đo ngày 21/08: đoàn hệ 437 ca (đã gọi 302 · chưa gọi 135) ra 0/437 CÓ KÊNH — nhóm chứng
+// cũng 0 ⇒ đó là số của cái thước hỏng, không phải kết quả của đội telesale.
+export function listBillCareMuKenh(limit = 3000) {
+  return db.prepare(`
+    SELECT id, phone, name, bill_date FROM bill_care
+    WHERE (conversation_id IS NULL OR conversation_id = '')
+      AND (zalo_user_id IS NULL OR zalo_user_id = '')
+      AND phone IS NOT NULL AND phone <> ''
+    ORDER BY bill_date DESC LIMIT ?
+  `).all(Math.min(limit, 10000));
+}
+
+// Kho khoá dùng để nối kênh: hội thoại Zalo đã biết SĐT + map phone→zalo uid (nút Chia sẻ thông tin).
+// Hai số này là TRẦN của việc nối lại — kho rỗng thì có quét cả ngày cũng không nối được ca nào.
+export function demKhoNoiKenh() {
+  const a = db.prepare("SELECT COUNT(*) c FROM conversations WHERE channel = 'zalo' AND phone IS NOT NULL AND phone <> ''").get().c;
+  const b = db.prepare("SELECT COUNT(*) c FROM kv WHERE key LIKE 'phone_zalo:%'").get().c;
+  const t = db.prepare('SELECT COUNT(*) c FROM bill_care').get().c;
+  return { zalo_conv_co_sdt: a, kv_phone_zalo: b, tong_ca_bill: t };
+}
+
 // B7: số liệu tuần cho báo cáo Zalo (hội thoại Zalo mới 7 ngày + tổng ca trong chuỗi chăm).
 export function thongKeTuanZalo() {
   const tuanTruoc = Math.floor(Date.now() / 1000) - 7 * 86400;
