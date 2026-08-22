@@ -317,8 +317,17 @@ function commentIdThat(convId) {
 async function fbDocComment(pageToken, commentId) {
   const cid = commentIdThat(commentId);
   const u = `https://graph.facebook.com/${FB_VER}/${cid}?`
-    + `fields=${encodeURIComponent('message,from,is_hidden')}&access_token=${encodeURIComponent(pageToken)}`;
+    + `fields=${encodeURIComponent('message,from,is_hidden,permalink_url')}&access_token=${encodeURIComponent(pageToken)}`;
   return http(u);
+}
+
+// Link FB THẬT của comment — 21/08/2026, anh Trình: "anh không thấy link bấm vào
+// để xem người này nói gì". Báo chặn mà không dẫn bằng chứng thì anh không kiểm
+// chứng được máy chặn đúng hay oan.
+async function fbLinkComment(pageToken, convId) {
+  if (!pageToken) return null;
+  const r = await fbDocComment(pageToken, convId);
+  return r?.permalink_url || null;
 }
 
 async function fbAnComment(pageToken, convId, dry = false) {
@@ -529,14 +538,14 @@ export async function runVesi(opts = {}) {
   //   VESI_DEXUAT_NHAC_GIO → bao lâu mới nhắc lại 1 ca chờ duyệt chưa xử (mặc định 24 giờ)
   const NHAC_GIO = parseInt(process.env.VESI_DEXUAT_NHAC_GIO || '24', 10);
 
-  const chan = [];      // [name, uid, verdict, ok, resp]
+  const chan = [];      // [name, uid, verdict, ok, resp, cid, noi_dung, kieu]
   const thaThat = [];   // [name, verdict, cid] — tên ngoại nhưng ĐANG đối thoại thật → hàng rào giữ
-  const deXuat = [];    // [name, verdict, cid]  (chế độ đề-xuất khi dry vì thiếu token)
+  const deXuat = [];    // [name, verdict, cid, noi_dung, kieu]  (chế độ đề-xuất khi dry vì thiếu token)
   let imDeXuat = 0;     // số ca chờ duyệt đã báo trước đó → lượt này im (chống spam 30'/lần)
   // gom 1 cửa: mọi đề xuất đều qua đây để đi qua sổ chống lặp vesi:dexuat:*
-  const themDeXuat = (n, v, c, moc) => {
+  const themDeXuat = (n, v, c, moc, nd = '', k = '') => {
     if (!canBaoDeXuat(c, moc, NHAC_GIO)) { imDeXuat += 1; return false; }
-    deXuat.push([n, v, c]);
+    deXuat.push([n, v, c, nd, k]);
     ghiSoDeXuat(c, moc);
     return true;
   };
@@ -654,7 +663,7 @@ export async function runVesi(opts = {}) {
     if (action === 'chan' && chan.length < TRAN_CHAN) {
       // CHẾ ĐỘ ĐỀ-XUẤT (dry vì thiếu token FB): chỉ gom danh sách đề xuất, KHÔNG block/CAPI/nhãn.
       if (!ptCheck) {
-        themDeXuat(name, verdict, cid, mocMoi);
+        themDeXuat(name, verdict, cid, mocMoi, noiDung, kieu);
         continue; // không lưu state → lượt sau (có token) xử thật
       }
       const pt = await layPt();
@@ -672,7 +681,7 @@ export async function runVesi(opts = {}) {
         if (anThat && anOk && !ra.already_hidden) anCmt.push([name, noiDung.slice(0, 60)]);
         else if (kieu === 'COMMENT' && !anThat && !dry) {
           // đủ điều kiện chặn nhưng CHƯA đủ chắc để tự ẩn → đưa vào đề xuất cho anh xem
-          themDeXuat(name, `${verdict} · chắc ${chacCham}% (dưới ${AN_NGUONG}, chưa tự ẩn)`, cid, mocMoi);
+          themDeXuat(name, `${verdict} · chắc ${chacCham}% (dưới ${AN_NGUONG}, chưa tự ẩn)`, cid, mocMoi, noiDung, kieu);
         }
       }
 
@@ -682,7 +691,7 @@ export async function runVesi(opts = {}) {
       if (!chanThat) {
         // chưa tự chặn → đề xuất cho anh bấm (tránh trùng dòng đề xuất "chưa tự ẩn" ở trên)
         if (!(kieu === 'COMMENT' && AN_AUTO && !dry && !duChacDeAn)) {
-          themDeXuat(name, `${verdict}${chacCham ? ` · chắc ${chacCham}%` : ''} → CHỜ DUYỆT CHẶN`, cid, mocMoi);
+          themDeXuat(name, `${verdict}${chacCham ? ` · chắc ${chacCham}%` : ''} → CHỜ DUYỆT CHẶN`, cid, mocMoi, noiDung, kieu);
         }
         // vẫn ghi sổ để biết đã ẩn (nếu có), nhưng KHÔNG ghi state 'chan' → lượt sau anh còn xử được
         if (anThat && anOk) {
@@ -701,10 +710,10 @@ export async function runVesi(opts = {}) {
 
       if (!daBaoLoi.has(uid)) { // lần đầu → gắn nhãn + đưa vào báo cáo
         await pkGanNhan(pkToken, cid, ok ? `${nhan} ĐÃ CHẶN` : `${nhan} (chặn lỗi)`);
-        chan.push([name, uid, verdict, ok, JSON.stringify(r).slice(0, 150)]);
+        chan.push([name, uid, verdict, ok, JSON.stringify(r).slice(0, 150), cid, noiDung.slice(0, 200), kieu]);
       } else if (ok) { // chặn lỗi trước đây, giờ đã thông (token được cấp quyền)
         await pkGanNhan(pkToken, cid, `${nhan} ĐÃ CHẶN`);
-        chan.push([name, uid, verdict, ok, 'thử lại thành công']);
+        chan.push([name, uid, verdict, ok, 'thử lại thành công', cid, noiDung.slice(0, 200), kieu]);
       }
 
       ghiSoChan(uid, {
@@ -752,15 +761,30 @@ export async function runVesi(opts = {}) {
   // ---------- gom báo cáo Telegram bản gọn (py 410-427) ----------
   if (chan.length || deXuat.length || anCmt.length || thaThat.length) {
     const msg = ['🛡 VỆ SĨ HỘP THƯ' + (dry ? ' (ĐỀ-XUẤT/DRY)' : '')];
+    // 21/08/2026: mọi ca báo lên anh PHẢI kèm NỘI DUNG + LINK bấm được.
+    const ptLink = await layPt();
+    const dongBangChung = async (nd, kieu, cid) => {
+      const ra = [];
+      if (nd) ra.push(`     💬 «${String(nd).slice(0, 180)}»`);
+      if (kieu === 'COMMENT') {
+        const l = await fbLinkComment(ptLink, cid);
+        if (l) ra.push(`     🔗 Xem trên FB: ${l}`);
+      }
+      ra.push(`     🔗 Pancake: https://pancake.vn/${PAGE_ID}?c_id=${cid}`);
+      return ra;
+    };
     if (thaThat.length) {
       msg.push(`🤝 THA ${thaThat.length} ca tên ngoại nhưng ĐANG hỏi bệnh thật (hàng rào khách thật):`);
       for (const [n, v, c] of thaThat) msg.push(`  • ${n} — ${v} — https://pancake.vn/${PAGE_ID}?c_id=${c}`);
     }
     if (chan.length) {
       msg.push(`Đã ${dry ? 'ĐỀ XUẤT chặn' : 'chặn'} ${chan.length} tài khoản ngoại/ảo/phá hoại (không SĐT):`);
-      for (const [n, , v, ok, resp] of chan) {
+      for (const [n, , v, ok, resp, cid_, nd_, kieu_] of chan) {
         msg.push(`  ${ok ? '✅' : '❌'} ${n} — ${v}` + (ok ? '' : ` (lỗi: ${resp})`));
+        msg.push(...(await dongBangChung(nd_, kieu_, cid_)));
       }
+      msg.push("ℹ️ CHẶN = cấm nhắn tin page (tầng Messenger) + ẩn comment. KHÔNG phải "
+        + "'báo cáo vi phạm' lên Facebook — muốn report phải bấm tay trên FB.");
     }
     if (anCmt.length) {
       msg.push(`🙈 Đã ẩn ${anCmt.length} bình luận phá hoại/ngoại:`);
@@ -774,7 +798,10 @@ export async function runVesi(opts = {}) {
         ? 'chưa cấp VESI_FB_TOKEN nên KHÔNG tự chặn'
         : (CHAN_AUTO ? 'chưa đủ chắc để máy tự xử' : 'VESI_CHAN_AUTO=0 — máy KHÔNG tự chặn, chờ anh bấm');
       msg.push(`⚠️ ĐỀ XUẤT anh xem ${deXuat.length} ca cần chặn (${vi_sao}):`);
-      for (const [n, v, c] of deXuat) msg.push(`  • ${n} — ${v} — https://pancake.vn/${PAGE_ID}?c_id=${c}`);
+      for (const [n, v, c, nd_, kieu_] of deXuat) {
+        msg.push(`  • ${n} — ${v}`);
+        msg.push(...(await dongBangChung(nd_, kieu_, c)));
+      }
     }
     if (capiOk) msg.push(`📤 Đã khai báo ${capiOk} lead thật cho FB (CAPI).`);
     if (capiSkip) msg.push(`ℹ️ ${capiSkip} lead chưa khai báo được — chưa có dataset/token CAPI.`);
