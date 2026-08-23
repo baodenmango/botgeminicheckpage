@@ -273,6 +273,30 @@ app.get('/admin/reset-human', (req, res) => {
   res.status(200).json({ ok: true, scope: conv || 'all', cleared: changed, handoverCleared, optoutCleared });
 });
 
+// --- Admin: TẮT/MỞ BOT theo TỪNG hội thoại (anh Trình yêu cầu 23/08 — ca Hana Phượng công nợ 25tr,
+// để NV NGƯỜI chăm sóc + thu nợ, bot không được chen) ---
+// Cơ chế = cắm cờ handover: bot không tự trả lời (handler.js:~395), chuỗi chạm/retouch né,
+// và MỖI TIN khách nhắn vẫn bắn Telegram nhắc người thật vào — hợp ca người-chăm-toàn-phần.
+// Vì sao không dùng nhãn Pancake: page Zalo đang MÙ NHÃN (log "ĐANG MÙ NHÃN" fail-open) → nhãn không tắt được.
+// GET /admin/bot-tat?token=XXX&conv=<id>        → TẮT bot cho conv
+// GET /admin/bot-tat?token=XXX&conv=<id>&mo=1   → MỞ lại (gỡ handover)
+app.get('/admin/bot-tat', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const conv = String(req.query.conv || '');
+  if (!conv) return res.status(400).json({ ok: false, error: 'thiếu conv' });
+  if (req.query.mo === '1' || req.query.mo === 'true') {
+    const n = store.clearHandover(conv);
+    console.log(`[admin] 🔔 MỞ lại bot cho conv ${conv} (gỡ handover ${n})`);
+    return res.status(200).json({ ok: true, conv, bot: 'MỞ', cleared: n });
+  }
+  store.setHandover(conv);
+  console.log(`[admin] 🔕 TẮT bot cho conv ${conv} (cắm handover — NV người chăm; khách nhắn sẽ có Telegram nhắc)`);
+  res.status(200).json({ ok: true, conv, bot: 'TẮT (handover — khách nhắn vẫn có Telegram nhắc người thật)' });
+});
+
 // --- Admin: ÉP bot trả lời lại 1 hội thoại bị bỏ lửng (khách chưa nhắn mới) ---
 // GET /admin/poke?token=XXX&page=<pageId>&conv=<conversationId>
 // Đọc tin cuối của KHÁCH trong conv đó rồi đẩy vào handleIncoming như webhook thật.
