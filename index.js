@@ -297,6 +297,40 @@ app.get('/admin/bot-tat', (req, res) => {
   res.status(200).json({ ok: true, conv, bot: 'TẮT (handover — khách nhắn vẫn có Telegram nhắc người thật)' });
 });
 
+// --- Admin: THỐNG KÊ KHU VỰC KHÁCH (anh Trình 24/08) ---
+// GET /admin/khu-vuc?token=XXX
+// Vì sao cần: Meta KHÔNG trả `actions` khi breakdowns=region ⇒ phía ads chỉ đo được CHI theo vùng,
+// KHÔNG đo được số TIN NHẮN theo vùng. Nhãn khu_vuc của bot là nguồn DUY NHẤT biết được
+// bao nhiêu % hội thoại đến từ tỉnh xa — số này đẩy ngược về HiepLoi-Ads để quyết siết geo.
+app.get('/admin/khu-vuc', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const rows = store.listKVByPrefix('khu_vuc:') || [];
+  const dem = { gan: 0, xa: 0 };
+  const theoTinh = {};
+  for (const r of rows) {
+    try {
+      const v = JSON.parse(r.value ?? r.v ?? r);
+      if (v && v.nhom) {
+        dem[v.nhom] = (dem[v.nhom] || 0) + 1;
+        theoTinh[v.tinh] = (theoTinh[v.tinh] || 0) + 1;
+      }
+    } catch { /* dòng hỏng thì bỏ, không làm sập route */ }
+  }
+  const tong = dem.gan + dem.xa;
+  res.status(200).json({
+    ok: true,
+    tong_hoi_thoai_da_gan_nhan: tong,
+    gan: dem.gan,
+    xa: dem.xa,
+    ty_le_xa: tong ? `${(dem.xa / tong * 100).toFixed(1)}%` : '—',
+    theo_tinh: Object.fromEntries(Object.entries(theoTinh).sort((a, b) => b[1] - a[1])),
+    ghi_chu: 'Nhãn là TỰ KHAI của khách, chỉ dùng định tuyến. Tỉ lệ xa >15% ⇒ cân nhắc siết geo ở ads.',
+  });
+});
+
 // --- Admin: ÉP bot trả lời lại 1 hội thoại bị bỏ lửng (khách chưa nhắn mới) ---
 // GET /admin/poke?token=XXX&page=<pageId>&conv=<conversationId>
 // Đọc tin cuối của KHÁCH trong conv đó rồi đẩy vào handleIncoming như webhook thật.

@@ -346,6 +346,45 @@ export function laTinDoiBacSi(text) {
   return RE_DOI_BAC_SI.test(` ${boDauKham(text)} `);
 }
 
+// --- KHÁCH Ở XA, KHÔNG TỚI PHÒNG KHÁM ĐƯỢC (anh Trình 24/08/2026) ---
+// Nguyên văn: "dạo này toàn văng khách ở xa, khách tính không tới phòng khám được nha em."
+// Số đo phía ads (Graph breakdowns=region, 30 ngày): 4.924.780đ = 6,5% chi FB bắn ra tỉnh
+// KHÔNG thể tới PK Tân Phú (có cả Hà Nội, Thanh Hóa, Đà Nẵng). Ads đã siết geo phần làm được,
+// NHƯNG Meta dùng location_types=[home,recent] nên người Phan Thiết đang ở TP.HCM vẫn thấy QC
+// và vẫn nhắn tin ⇒ lớp lọc thứ hai BẮT BUỘC nằm ở bot.
+//
+// ⚠️ ĐÂY KHÔNG PHẢI CHỐT CHẶN — anh Trình dặn rõ "KHÔNG đuổi khách".
+// Không setHandover, không cắt máy, không đổi mode. Chỉ GẮN NHÃN + đưa gợi ý vào contextTag
+// để bộ não tư vấn cho đúng (gom lịch 1 buổi / hẹn khi nào khách vào TP.HCM).
+// Nhãn là TỰ KHAI ⇒ chỉ dùng cá nhân hoá + định tuyến, không bao giờ là bằng chứng gì khác
+// (luật đã vá 13/08, xem laTinPhanBacDaKham).
+const TINH_XA = [
+  'binh thuan','phan thiet','ba ria','vung tau','tien giang','my tho','an giang','long xuyen',
+  'binh dinh','quy nhon','bac giang','can tho','da nang','hai phong','ha noi','hanoi','hai duong',
+  'khanh hoa','nha trang','kien giang','rach gia','lam dong','da lat','nam dinh','nghe an','vinh',
+  'quang ngai','thanh hoa','thai binh','tay ninh','dak lak','buon ma thuot','dong thap','cao lanh',
+  'vinh long','ben tre','soc trang','ca mau','bac lieu','tra vinh','hau giang','phu yen','tuy hoa',
+  'gia lai','pleiku','kon tum','quang nam','hoi an','hue','quang tri','quang binh','ha tinh',
+  'ninh thuan','phan rang','binh phuoc','dong xoai','hai phong','quang ninh','ha long','phu quoc',
+];
+// GẦN = tới khám trong ngày được (TP.HCM + 3 tỉnh giáp ranh). Liệt kê để chặn nhận nhầm.
+const TINH_GAN = [
+  'ho chi minh','hcm','sai gon','saigon','tphcm','tp hcm','thu duc','binh duong','di an','thuan an',
+  'thu dau mot','dong nai','bien hoa','long an','tan an','tan phu','tan binh','binh tan','go vap',
+  'phu nhuan','binh thanh','quan 1','quan 2','quan 3','quan 4','quan 5','quan 6','quan 7','quan 8',
+  'quan 9','quan 10','quan 11','quan 12','hoc mon','cu chi','nha be','binh chanh','can gio',
+];
+// Chỉ bắt khi khách ĐANG KHAI NƠI Ở — tránh nhận nhầm khi khách kể chuyện ("em ra Hà Nội chơi").
+const RE_KHAI_NOI_O = /(o|song|nha|tu|ben|minh|em|toi|chi|anh|con|nay|dang)\s/;
+export function nhanDienKhuVuc(text) {
+  const n = ` ${boDauKham(text)} `;
+  const hitGan = TINH_GAN.find((t) => n.includes(` ${t} `) || n.includes(` ${t},`));
+  if (hitGan) return { tinh: hitGan, nhom: 'gan' };
+  const hitXa = TINH_XA.find((t) => n.includes(` ${t} `) || n.includes(` ${t},`));
+  if (hitXa && RE_KHAI_NOI_O.test(n)) return { tinh: hitXa, nhom: 'xa' };
+  return null;
+}
+
 // --- KHÁCH PHẢN BÁC "TÔI CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) ---
 // Bot gọi nhầm lead là "khách cũ, tái khám" (hồ sơ tự khai / đơn POS tạo nhầm / nhãn gắn nhầm)
 // → khách vạch "Anh chưa hề khám bên em, mới chỉ nt thoi mà là khách cũ??". Lời KHÁCH tự nói về
@@ -957,6 +996,46 @@ export async function handleIncoming(ev) {
     if (channel !== 'zalo' && PAGE_AUDIENCE[pageId]) {
       contextTag = contextTag ? `${contextTag}\n${PAGE_AUDIENCE[pageId]}` : PAGE_AUDIENCE[pageId];
     }
+
+    // ===== KHU VỰC KHÁCH (anh Trình 24/08) — GẮN NHÃN, KHÔNG cắt máy =====
+    // Ghi nhãn 1 lần khi khách tự khai nơi ở; nhãn sau ĐÈ nhãn trước (khách nói lại thì lời
+    // khách thắng dữ liệu cũ — cùng luật với VETO "chưa hề khám" 13/08).
+    try {
+      const kv = nhanDienKhuVuc(messageText);
+      if (kv) {
+        const cu = store.getKV(`khu_vuc:${conversationId}`);
+        store.setKV(`khu_vuc:${conversationId}`, JSON.stringify({ ...kv, luc: Date.now() }));
+        if (!cu || JSON.parse(cu).nhom !== kv.nhom) {
+          console.log(`[khu-vuc] 🗺️ ${conversationId} → ${kv.nhom.toUpperCase()} (${kv.tinh})`);
+          if (kv.nhom === 'xa') {
+            notifyText(
+              `🗺️ <b>KHÁCH Ở XA</b> — nhiều khả năng không tới khám được\n` +
+              `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
+              `• Khai vùng: <b>${kv.tinh}</b>\n` +
+              `• Hội thoại: https://pancake.vn/${pageId}?c_id=${conversationId}\n` +
+              `→ Bot VẪN tư vấn bình thường. Telesale cân nhắc trước khi tốn cuộc gọi.`
+            ).catch(() => {});
+          }
+        }
+      }
+    } catch (e) { console.error('[khu-vuc] lỗi nhận diện:', e.message); }
+
+    // Thẻ ngữ cảnh KHÁCH Ở XA — gợi ý cho bộ não, KHÔNG phải lệnh cắt.
+    try {
+      const raw = store.getKV(`khu_vuc:${conversationId}`);
+      if (raw && JSON.parse(raw).nhom === 'xa') {
+        contextTag = (contextTag ? contextTag + '\n' : '') +
+          '[KHÁCH Ở TỈNH XA] Khách tự khai đang ở tỉnh xa TP.HCM, đi lại tới phòng khám rất tốn công. ' +
+          'TUYỆT ĐỐI KHÔNG từ chối, KHÔNG nói "xa quá bên em không hỗ trợ", KHÔNG khuyên khách đi khám chỗ khác — ' +
+          'khách ở xa vẫn là khách, nhiều người sẵn sàng vào TP.HCM khám nếu thấy đáng. ' +
+          'Cách tư vấn ĐÚNG: (a) tư vấn kiến thức bệnh đầy đủ như mọi khách; ' +
+          '(b) nếu khách có ý đi khám → CHỦ ĐỘNG gom gọn vào MỘT buổi (khám + chụp phim + nghe kết quả cùng ngày), ' +
+          'dặn trước cần mang gì (phim/kết quả cũ nếu có) để khách đi một lần là xong việc, không phải đi lại nhiều lần; ' +
+          '(c) nếu khách nói chưa đi được → KHÔNG thúc, hẹn mở "khi nào mình vào TP.HCM thì báo em sắp lịch trước cho mình" ' +
+          'rồi tiếp tục tư vấn kiến thức bình thường. ' +
+          'KHÔNG nhắc đi nhắc lại chuyện xa xôi — nói một lần là đủ, nhắc nhiều khách thấy bị chê.';
+      }
+    } catch { /* nhãn hỏng thì bỏ qua, không chặn luồng trả lời */ }
 
     // Chọn mode: khách ĐÃ ĐẶT LỊCH chưa tới khám → prebooked (xác nhận + trấn an, CẤM xin số);
     // khách ĐÃ KHÁM (hồ sơ/tự báo) → aftercare (chăm sau khám, cấm kịch bản lead);
