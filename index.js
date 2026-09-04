@@ -992,8 +992,10 @@ app.get('/admin/zns-dem', (req, res) => {
     so_khong_co_zalo: dem('zns_no_zalo:'),         // cờ -118
     voucher_phat: dem('voucher:'),                 // sổ voucher
     nhaclich_tai_kham: dem('zns_nhaclich_sent:'),  // ZNS nhắc lịch 603887/500295 (d6/d7 fallback, đếm từ 07/08)
-    rating_log_ve: dem('rating_log:'),             // khách CHẤM SAO gửi về (chiều về webhook)
-    ghi_chu: 'Mỗi key = 1 SĐT/1 tin Zalo đã NHẬN (error=0), trừ voucher_phat là sổ phát. ZNS nhắc lịch 603887 không có KV riêng — đếm qua log Render [bill] ZNS nhắc tái khám.',
+    rating_log_ve: dem('rating_log:'),             // khách CHẤM SAO gửi về (kéo rating/get)
+    da_moi_review_google: dem('moi_review_maps:'), // NGƯỜI đã nhận tin mời review Maps (1 lần/đời)
+    cho_moi_review_cho_follow: dem('cho_moi_maps:'), // chấm ≥4★ có SĐT nhưng CHƯA có kênh OA — chờ follow+chia sẻ SĐT mới mời được
+    ghi_chu: 'Mỗi key = 1 SĐT/1 tin Zalo đã NHẬN (error=0), trừ voucher_phat là sổ phát. da_moi_review_google đếm theo uid Zalo. cho_moi_review = mắt xích kẹt: cần khách follow OA + bấm Chia sẻ thông tin.',
   });
 });
 
