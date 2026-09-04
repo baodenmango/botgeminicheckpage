@@ -126,12 +126,23 @@ function coSdtVN(s) {
   return /(?:\+?84|0)\d{9}(?!\d)/.test(goc);
 }
 
+// CẤU TRÚC ÂM TIẾT TIẾNG VIỆT (port từ bản Mac 03/09/2026 — anh Trình bắt:
+// "HUY LUONG là tên Việt Nam đó chứ, đâu phải tên ngoại").
+// VN_SYL chỉ có 146 âm tiết / ~2400 âm tiết không dấu của tiếng Việt — thiếu cả
+// 'huy', 'luong', 'hien', 'khach' ⇒ tên Việt không dấu rơi vào NGHI_NGOAI và MẤT
+// lớp bảo vệ "người Việt chỉ đề xuất". Nghiệm 22/22 tên Việt đúng, 15/15 ngoại loại đúng.
+const AM_TIET_VIET = new RegExp(
+  '^(?:ngh|ng|nh|ch|gh|gi|kh|ph|th|tr|qu|b|c|d|g|h|k|l|m|n|p|r|s|t|v|x)?'
+  + '[aeiouy]{1,3}(?:ngh|ng|nh|ch|c|m|n|p|t)?$');
+
 function phanLoaiTen(name) {
   if (!name || !String(name).trim()) return 'NGHI_NGOAI';
   if (coDauViet(name)) return 'KHACH';
   if (chuNgoaiHe(name)) return 'NGOAI_CHAC';
   const toks = (stripDia(name).match(/[a-z]+/g)) || [];
   if (toks.length === 0) return 'NGOAI_CHAC'; // toàn emoji/ký hiệu
+  // MỌI âm tiết đọc được theo cấu trúc tiếng Việt → người Việt, dù không dấu.
+  if (toks.every((t) => AM_TIET_VIET.test(t))) return 'KHACH';
   const hit = toks.filter((t) => VN_SYL.has(t)).length;
   if (hit >= Math.max(1, Math.floor(toks.length / 2))) return 'KHACH';
   return 'NGHI_NGOAI';
@@ -243,6 +254,25 @@ async function geminiCham(name, snippet, laComment = false) {
     + '- "chac" = độ CHẮC CHẮN của phán đoán (0-100). CHỈ ghi ≥95 khi CỰC KỲ rõ ràng, không '
     + 'còn chút nghi ngờ nào (chửi thề tục tĩu, tố lừa đảo trắng trợn, tên rác hiển nhiên). '
     + 'Còn mập mờ, mỉa mai, cộc lốc, tiếng lóng vùng miền → để chac THẤP (dưới 80).\n'
+    + '- ⭐ CÂU HỎI GỐC (anh Trình chốt 04/09/2026): người này đang ĐÁNH VÀO BỆNH hay '
+    + 'đang ĐÁNH VÀO PHÒNG KHÁM?\n'
+    + '  · Bàn về BỆNH và HƯỚNG ĐIỀU TRỊ — dù nêu ý kiến trái, dù khuyên mổ, khuyên tập, '
+    + 'khuyên cân nhắc — là NGƯỜI BỆNH THẢO LUẬN VỚI NHAU → pha_hoai=FALSE. Đây là thứ TỐT '
+    + 'cho trang, PHẢI ĐỂ LẠI: làm bài sống, có tương tác, người đọc thấy có người thật bàn '
+    + 'chuyện thật.\n'
+    + '  · Chỉ khi ĐÁNH VÀO PHÒNG KHÁM / BÁC SĨ mới là pha_hoai=true: tố lừa đảo, tố quảng '
+    + "cáo bịp, chửi bới, quy kết động cơ ('bác sĩ làm vì tiền, bất chấp rủi ro bệnh nhân'), "
+    + 'kêu gọi người khác ĐỪNG ĐẾN KHÁM ở đây, seeding đối thủ, giới thiệu nơi khác kèm giá.\n'
+    + '- 🚫 CA THẬT ĐÃ CẮT OAN 04/09/2026 — HỌC THUỘC, ĐỪNG LẶP LẠI:\n'
+    + '  «Đứt rồi phải mổ nối chứ ko đầu gối lỏng lẻo dễ ngã. hỏng sụn chêm. thoái hóa khớp '
+    + 'gối phải thay khớp là mệt»\n'
+    + "  Máy chấm nhầm 'phủ định phương pháp + hù doạ' rồi ẩn. SAI: người này nói KIẾN THỨC "
+    + 'ĐÚNG về đứt dây chằng và còn KHUYÊN NÊN CAN THIỆP. Nêu hậu quả tự nhiên của bệnh là '
+    + 'MÔ TẢ DIỄN TIẾN, KHÔNG phải hù doạ. → pha_hoai=false.\n'
+    + '- Kể TRẢI NGHIỆM CỦA CHÍNH MÌNH = khách thật → pha_hoai=false '
+    + "('tôi tiêm rồi tuần sau đau lại', 'đã tiêm đỡ chưa được 1 tháng thì đau lại như cũ').\n"
+    + '- Ý kiến trái chiều VỀ CHUYÊN MÔN không phải chống phá. Chỉ Ý ĐỊNH CHỐNG PHÁ nhắm vào '
+    + 'cơ sở mới là chống phá.\n'
     + '- QUAN TRỌNG: khách THẬT phàn nàn về trải nghiệm (chờ lâu, giá cao, hỏi lại kết quả '
     + "điều trị, chửi thề vì BỨC XÚC do không ai bắt máy...) KHÔNG phải phá hoại → pha_hoai=false, ly_do ghi 'khách phàn nàn'.\n"
     + '- QUAN TRỌNG: nếu nội dung là tin do PHÒNG KHÁM/bot của phòng khám gửi (mở đầu '
