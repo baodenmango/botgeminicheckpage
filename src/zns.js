@@ -130,9 +130,20 @@ function danhDauKhongCoZalo(sdt) {
   store.setKV(NO_ZALO_KEY(sdt), String(Math.floor(Date.now() / 1000)));
   console.warn(`[zns] 🚫 ${sdt.slice(0, 5)}*** KHÔNG có tài khoản Zalo (-118) → ngừng gửi ZNS cho số này`);
 }
-// Soi đáp án Zalo: nếu -118 thì ghi cờ. Trả về true nếu là lỗi "không có Zalo".
+// Soi đáp án Zalo: lỗi VĨNH VIỄN theo số thì ghi cờ ngừng gửi. Trả về true nếu đã cắm cờ.
+// -118 = số không có tài khoản Zalo. -141 = "User refused to receive this message via phone"
+// (khách đã BẤM TỪ CHỐI nhận ZNS) — Zalo trả mãi mãi cho số đó, gửi lại chỉ tốn lượt.
+// VÁ 04/09/2026: đo log 28/08→04/09 thấy 63/63 lỗi nhắc lịch đều -141, cùng ca quay lại
+// ĐÚNG MỖI GIỜ phút :10 (y hệt bệnh -118 đã vá 19/07) vì thiếu cờ chặn cho mã này.
 function xuLyLoiZalo(sdt, data) {
   if (data?.error === -118) { danhDauKhongCoZalo(sdt); return true; }
+  if (data?.error === -141) {
+    if (sdt && !store.getKV(NO_ZALO_KEY(sdt))) {
+      store.setKV(NO_ZALO_KEY(sdt), `tu-choi-141:${Math.floor(Date.now() / 1000)}`);
+      console.warn(`[zns] 🚫 ${sdt.slice(0, 5)}*** ĐÃ TỪ CHỐI nhận ZNS (-141) → ngừng gửi ZNS cho số này (đường chăm còn lại: gọi điện)`);
+    }
+    return true;
+  }
   return false;
 }
 
