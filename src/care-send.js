@@ -54,6 +54,22 @@ export function khachDaOptOut({ conversation_id, zalo_user_id, phone } = {}) {
   return false;
 }
 
+// ── TẮT BOT THEO CA (route /admin/bot-tat, anh Trình 04/09 — ca Thiều Anh Phan + chú Văn Cư
+// "để đội người tự chăm"): conv đã cắm handover thì MỌI engine chăm cũng phải im, không riêng
+// bot trả lời. Trước vá: bot-tat chỉ chặn đường hội thoại, chuỗi chạm bill/tái bill/voucher
+// vẫn dội → "giao người chăm" mà máy vẫn chen tin tự động.
+export function convDaGiaoNguoi({ conversation_id, zalo_user_id } = {}) {
+  try {
+    if (conversation_id && store.isHandover(store.getConversation(conversation_id))) return true;
+    if (zalo_user_id) {
+      const oaId = process.env.ZALO_OA_ID || '3136814239074246132';
+      const uid = String(zalo_user_id).replace(/^zl_/i, '');
+      if (store.isHandover(store.getConversation(`zl_${oaId}_${uid}`))) return true;
+    }
+  } catch { /* đọc hụt → không chặn oan */ }
+  return false;
+}
+
 // ── TRẦN TIN CHĂM/NGÀY/KHÁCH (vá 02/08) — chống DỘI TIN từ nhiều engine cùng lúc.
 // Ca Phuong Ngoc: "1 ngày mà Gởi tới 10 tn hết hồn luôn" → mất hẳn 1 bệnh nhân. Gốc: mỗi engine
 // (7 chạm / bill / tái bill / voucher / wakeup / rescue) tự thấy mình chỉ gửi "1-2 tin", không
@@ -157,6 +173,12 @@ export async function sendCareMessages(target, messages, opts = {}) {
   // mọi engine đi qua đều dính, khỏi phải nhớ sửa từng file (bài học "vá 1 nơi, sót 8 nơi").
   if (khachDaOptOut({ conversation_id, zalo_user_id, phone: target?.phone })) {
     console.warn(`[care-send] 🛑 BỎ gửi${opts.code ? ` ${opts.code}` : ''}: khách đã xin NGỪNG nhận tin (opt_out).`);
+    return false;
+  }
+  // TẮT BOT THEO CA (04/09): conv giao người chăm (handover / /admin/bot-tat) → engine chăm cũng im.
+  // HOÃN chứ không đánh dấu đã gửi — khi nào mở bot lại (&mo=1) thì chuỗi tự chạy tiếp.
+  if (convDaGiaoNguoi({ conversation_id, zalo_user_id })) {
+    console.warn(`[care-send] ✋ BỎ gửi${opts.code ? ` ${opts.code}` : ''}: ca đã GIAO NGƯỜI THẬT chăm (handover/bot-tat) — máy không chen.`);
     return false;
   }
   if (!conDuTranNgay({ conversation_id, zalo_user_id, phone: target?.phone }, messages.length)) {

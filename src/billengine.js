@@ -148,6 +148,20 @@ export async function runBillTouches() {
   let sent = 0;
   for (const { rec, code } of chon.values()) {
     try {
+      // CA TIÊM LIỆU TRÌNH — nhóm 2 (PRP/biogen/TBG), anh Trình chốt 04/09: "ca tiêm lớn thì
+      // tái khám 1 THÁNG 1 lần rồi tiêm lại, KHÔNG phải 7 ngày như ca thông thường."
+      // Trước vá: ca nhóm 2 ăn CẢ HAI chuỗi — d6/d7 "nhắc tái khám tuần này + khan hiếm giữ suất"
+      // đè lên phác đồ 1 tháng = giục bệnh nhân sai lịch tiêm. Nay: chỉ giữ d0/d1 (dặn an toàn
+      // sau tiêm); d3/d6/d7 đánh dấu xong luôn — nhịp nhắc đúng của họ do engine tái bill nhóm 2
+      // lo (g2_pre3/g2_pre1 nhắc TRƯỚC buổi hẹn theo next_session_at = bill_date + 30 ngày).
+      const laLieuTrinh = Number(rec.group_no) === 2 || isLieuTrinh(rec.treatment);
+      if (laLieuTrinh && code !== 'd0' && code !== 'd1') {
+        for (const t of BILL_TOUCHES) {
+          if (t.code !== 'd0' && t.code !== 'd1') store.markBillChamDone(rec.id, t.code);
+        }
+        console.log(`[bill] ⏭️ ${rec.id} ca TIÊM LIỆU TRÌNH (1 tháng/buổi) → bỏ d3/d6/d7, nhường engine tái bill g2 nhắc theo lịch tiêm`);
+        continue;
+      }
       // billAmount: ca vào hàng đợi này ĐỀU đã qua bộ lọc tiền>0 của posingest (dòng 113)
       // hoặc /admin/bill-ingest, nên bill_date có = có bill thật đã thu. Truyền xuống để
       // chốt an toàn trong buildBillMessages xét (anh Trình 20/07: "ca nào TIỀN là có tiêm").
