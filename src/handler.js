@@ -3,7 +3,7 @@ import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageChannel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
-import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyText, isUrgent } from './telegram.js';
+import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyLeadAm, notifyText, isUrgent } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
 import { trongKhungGioGui } from './care-send.js';
 import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
@@ -55,15 +55,34 @@ function demSuatTuVan(text) {
     .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   return /su[aâ]t tu van/.test(n);
 }
+// Ô này có phải LỜI XIN SỐ ĐIỆN THOẠI không? (bỏ dấu; 'đ' phải đổi thành 'd' — bẫy đã cắn khi
+// đo: NFD KHÔNG tách được 'đ' nên "để lại số" ra "de lai so" hay "để lai so" tuỳ cách chuẩn hoá,
+// và bản đo đầu tiên vì thiếu 1 dòng replace đã đếm hụt lời-xin-số 45% (273 thay vì 498).)
+function laOXinSo(text) {
+  const n = String(text || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase();
+  return /(xin (so|sdt)|cho em (xin )?(so|sdt)|de lai (so|sdt)|so dien thoai|\bsdt\b|nhan (em )?so|gui em so|de so lai|em xin so|cho em so)/.test(n);
+}
+
 // Câu chốt trung tính khi đã phải bỏ hết ô "suất tư vấn" (tránh gửi lượt rỗng).
 // PHAO TRUNG TÍNH XOAY VÒNG (vá 20/08, ca Duy Cường): phao cũ là 1 HẰNG SỐ → dispatch thả phao
 // 2 lần cách nhau 16 giây = 2 câu Y NGUYÊN liền nhau, khách vạch ngay là máy. Chọn câu CHƯA
 // nằm trong tin bot đã gửi của hội thoại; cạn sạch mới đành lặp câu đầu (thà thừa còn hơn im).
+// ⛔ VÁ 06/09/2026 — 4 CÂU CŨ LÀ NGÕ CỤT, ĐÃ THAY.
+// Đo 783 hội thoại INBOX 30/08→05/09 (pages.fm, USER token): riêng câu
+// 'Dạ mình cứ nhắn em bất cứ lúc nào cần nha ạ 🙏' gửi 395 ô / 363 hội thoại;
+// nhóm hội thoại dính nó ra SĐT 6,4% so với nền 11,0%, và 226/608 hội thoại (37,2%)
+// KẾT THÚC bằng đúng câu đó. Lượt có câu trung tính: khách nhắn tiếp 24,9% vs 72,2%.
+// Gốc bệnh: cả 4 câu đều ĐÓNG — không hỏi gì, không mời gì, đẩy việc quyết định
+// sang người đang lưỡng lự. Phao vẫn cần (thà thừa 1 câu còn hơn im khi khách đang
+// chờ — luật 20/07), nhưng phao phải LUÔN ĐỂ LẠI MỘT CÂU HỎI MỞ.
+// LUẬT khi sửa danh sách này: mỗi câu PHẢI kết bằng dấu hỏi hoặc một lời mời cụ thể,
+// và TUYỆT ĐỐI KHÔNG được là câu xin số (luật xin-đúng-1-lần, system-prompt mục 2 A.4).
 const CAC_CAU_TRUNG_TINH = [
-  'Dạ mình cứ nhắn em bất cứ lúc nào cần nha ạ 🙏',
-  'Dạ em đây ạ, mình cần em hỗ trợ thêm gì cứ nói em nha.',
-  'Dạ có gì mình cứ hỏi thêm nha, em luôn sẵn sàng ạ.',
-  'Dạ em vẫn ở đây nè, mình cần gì cứ nhắn em ạ.',
+  'Dạ mình đang khó chịu nhất ở chỗ nào ạ, để em nắm rồi hỏi Bác sĩ giúp mình?',
+  'Dạ mình bị lâu chưa ạ? Em hỏi để Bác sĩ Trình xem đúng hướng cho mình.',
+  'Dạ chỗ đau đó có làm mình khó ngủ hay khó đi lại không ạ?',
+  'Dạ mình còn thắc mắc gì về tình trạng của mình không ạ, em giải đáp giúp mình?',
 ];
 function cauTrungTinh(freshConv) {
   const daGui = ((freshConv?.history) || [])
@@ -1177,7 +1196,7 @@ export async function handleRetouch(conv) {
     }
     const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
-    await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name);
+    await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name, { chuDong: true });
     store.incRetouch(conversationId);
     store.setKV(`retouch_at:${conversationId}`, String(Date.now())); // mốc giãn nhịp lần sau
     console.log(`[retouch] đã chạm lại ${conversationId} (lần ${fresh.retouch_count + 1})`);
@@ -1352,7 +1371,12 @@ export async function handleBotTouch(conv, touchNo) {
 }
 
 // Gửi phản hồi + xử lý SĐT / handover + lưu lịch sử bot.
-async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName) {
+async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName, opts = {}) {
+  // VÁ 06/09/2026 — `chuDong: true` = lượt BOT TỰ DẬP khi khách đang im (retouch / 7-chạm),
+  // KHÁC hẳn lượt trả lời tin khách. Đo 30/08→05/09: 1.516/3.001 lượt bot (50,5%) là dập chủ
+  // động, khách quay lại chỉ 14,4–20,6%. Ở lượt dập, THẢ CÂU TRUNG TÍNH LÀ SPAM THUẦN —
+  // xem 3 cửa phao bên dưới.
+  const chuDong = Boolean(opts.chuDong);
   // Phân loại bệnh để thống kê — chỉ lưu khi nhận diện được (khác unknown),
   // để KHÔNG ghi đè condition đã biết ở lượt trước bằng 'unknown' của lượt cuối.
   if (reply.condition && reply.condition !== 'unknown') {
@@ -1424,8 +1448,19 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     // Khách hỏi giá tiêm 19:47–20:05 (Hiên Thi Vu, Nguyễn Oanh, Rose Rose, Đặng Sáng, Cu Tủn, Xuân Ngọc)
     // đúng vì cái này. THÀ THỪA 1 CÂU TRUNG TÍNH CÒN HƠN IM — im là mất lead đã trả tiền quảng cáo.
     if (outMessages.length === 0 && truoc > 0) {
-      outMessages = [cauTrungTinh(freshConv)];
-      console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
+      // VÁ 06/09/2026 — PHAO CHỈ THẢ KHI KHÁCH ĐANG CHỜ, KHÔNG THẢ KHI BOT TỰ DẬP.
+      // Luật gốc 20/07 "thà thừa 1 câu trung tính còn hơn im" ĐÚNG cho lượt TRẢ LỜI (khách vừa
+      // nhắn, im là bỏ rơi lead đã trả tiền quảng cáo) — GIỮ NGUYÊN. Nhưng nó đang bị dùng cả ở
+      // lượt DẬP CHỦ ĐỘNG, và ở đó nó là spam: đo 30/08→05/09 bot gửi 494 ô câu-trung-tính,
+      // 226/608 hội thoại (37,2%) KẾT THÚC bằng chính câu này = ngõ cụt không mời gì; lượt có
+      // câu trung tính chỉ được khách nhắn tiếp 24,9% so với 72,2% ở lượt không có.
+      // Khách đang im mà bot thả "Dạ em vẫn ở đây nè" = đúng thứ đã mất khách ca Phuong Ngoc 02/08.
+      if (chuDong) {
+        console.log(`[dispatch] ${conversationId} lượt DẬP CHỦ ĐỘNG mà mọi ô (${truoc}) trùng tin cũ → KHÔNG gửi gì (không spam câu trung tính)`);
+      } else {
+        outMessages = [cauTrungTinh(freshConv)];
+        console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
+      }
     }
   }
 
@@ -1483,7 +1518,8 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
         console.log(`[dispatch] ${conversationId} đã nhắc "suất tư vấn" ${daNhac} lần → bỏ ${truoc - outMessages.length} ô mời trùng (chống lặp đòn)`);
       }
       // Sau khi bỏ mà rỗng lượt (chỉ toàn ô mời) → giữ lại 1 ô trung tính, đừng gửi lượt rỗng/im.
-      if (!outMessages.length && truoc > 0) {
+      // VÁ 06/09/2026: chỉ khi khách ĐANG CHỜ. Lượt bot tự dập thì im hẳn (xem phao cửa 1).
+      if (!outMessages.length && truoc > 0 && !chuDong) {
         outMessages = [cauTrungTinh(freshConv)];
       }
     }
@@ -1548,6 +1584,13 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
         const truoc = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
         store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
       }
+      // VÁ 06/09/2026 — SỔ ĐẾM SỐ LẦN BOT XIN SĐT (đếm theo LƯỢT, không theo ô).
+      // Dùng cho 2 việc: (a) báo LEAD ẤM gọi người ở dưới; (b) trần dí — prompt chỉ cho xin
+      // 1 lần, sổ này là cổng máy chặn nếu Gemini vẫn xin thêm.
+      if (outMessages.some((m) => laOXinSo(m))) {
+        const tr = parseInt(store.getKV(`xinso_count:${conversationId}`) || '0', 10) || 0;
+        store.setKV(`xinso_count:${conversationId}`, String(tr + 1));
+      }
     }
   } else {
     console.log(`[dispatch] ${conversationId} mọi ô đều trùng tin cũ → không gửi gì (tránh lộ bot)`);
@@ -1573,6 +1616,38 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     });
     console.log(`[lead] 🔥 ${conversationId} có SĐT ${phone} → đã báo Telegram`);
     return;
+  }
+
+  // ── VÁ 06/09/2026 — LEAD ẤM: BOT ĐÃ XIN SỐ MÀ KHÁCH NÉ → GỌI NGƯỜI, ĐỪNG DÍ TIẾP ──
+  // ĐO THẬT 783 hội thoại INBOX 30/08→05/09 (pages.fm/api/v1, USER token):
+  //   • lane CÓ người thật gõ tay : 211 ca → 48 SĐT = 22,7%
+  //   • lane BOT GEMINI ĐƠN ĐỘC   : 397 ca → 19 SĐT =  4,8%   ⇒ người chốt gấp 4,7 lần
+  //   • DÍ THÊM KHÔNG CỨU ĐƯỢC: cùng mức tương tác (khách ≥2 tin, bot đơn độc),
+  //     bot xin 1 lượt → 5,6%; xin 2 lượt → 4,3%. Xin lần 3 → 0/1. Càng dí càng tệ.
+  //   • Vùng tác động: 173 hội thoại/7 ngày là bot đơn độc + khách ≥3 tin + chưa ra SĐT.
+  // ⇒ Bot đã xin 1 lần mà khách vẫn nhắn tiếp nhưng không cho số = ĐÚNG LÚC gọi telesale.
+  // CHỈ BÁO TELEGRAM NỘI BỘ — không nhắn khách, không đổi nhãn, không đổi trạng thái đơn.
+  // Chống spam: đúng 1 lần/hội thoại (KV `leadam_notified:`), và không báo nếu đã có số /
+  // đã handover / đã báo booking (những đường đó đã gọi người rồi).
+  if (!captured && !alreadyCaptured && !reply.handover && !laConvDaKham(conversationId)) {
+    try {
+      const kAm = `leadam_notified:${conversationId}`;
+      const soTinKhach = (freshConv?.history || []).filter((h) => h.role === 'user').length;
+      const daXinSo = parseInt(store.getKV(`xinso_count:${conversationId}`) || '0', 10) || 0;
+      const nguongTin = parseInt(process.env.LEADAM_MIN_KHACH_MSG || '3', 10);
+      if (daXinSo >= 1 && soTinKhach >= nguongTin && knownCondition !== 'unknown' && !store.getKV(kAm)) {
+        store.setKV(kAm, String(Date.now()));
+        await notifyLeadAm({
+          name: reply.name || customerName,
+          condition: knownCondition,
+          summary: knownSummary,
+          pageId,
+          conversationId,
+          soLuotKhach: soTinKhach,
+        }).catch((e) => console.error(`[leadam] ${conversationId} báo hụt: ${e?.message || e}`));
+        console.log(`[leadam] 🟡 ${conversationId} bot đã xin số ${daXinSo} lần, khách nhắn ${soTinKhach} tin mà chưa cho số → ĐÃ GỌI NGƯỜI`);
+      }
+    } catch (e) { console.warn('[leadam] lỗi (bỏ qua, không chặn):', e?.message); }
   }
 
   // HANDOVER (khiếu nại / hỏi sâu chuyên môn)

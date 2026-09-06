@@ -1,0 +1,447 @@
+diff --git a/VA-TANG-RA-SDT-2026-09-06.md b/VA-TANG-RA-SDT-2026-09-06.md
+new file mode 100644
+index 0000000..954c9d1
+--- /dev/null
++++ b/VA-TANG-RA-SDT-2026-09-06.md
+@@ -0,0 +1,139 @@
++# BẢN VÁ TĂNG TỈ LỆ RA SĐT — soạn 06/09/2026, **CHƯA DEPLOY, CHƯA PUSH**
++
++Nhánh: `va-tang-ra-sdt-06-09` (local) · file diff: `VA-TANG-RA-SDT-2026-09-06.patch`
++Ranh giới: Mục 6 #8 hiến pháp — deploy Render **chờ anh Trình/anh Bảo bấm**. Bản vá KHÔNG nhắn khách,
++KHÔNG đổi nhãn, KHÔNG đổi trạng thái đơn. Phần thêm duy nhất có tác dụng ra ngoài là **1 tin Telegram
++nội bộ** báo telesale.
++
++---
++
++## 1. Số liệu bản vá dựng trên (nguồn: `pages.fm/api/v1`, USER token `poscake-hieploi`)
++
++Cửa sổ **30/08 → 05/09/2026**, lọc `type=INBOX`, quét hết tới trần rồi mới lọc `inserted_at`
++(3.961 hội thoại CXK + 4.000 Dr Nhật Trình quét ra **783** trong cửa sổ). Tách bot/người bằng
++`from.admin_name`: `Public API` = bot Gemini · tên người = telesale gõ tay · rỗng = tin hệ thống Meta.
++
++| Lane | Hội thoại | Ra SĐT | |
++|---|---|---|---|
++| Có người thật gõ tay | 211 | 48 | **22,7%** |
++| **Bot Gemini đơn độc** | 397 | 19 | **4,8%** |
++
++**71,6% số SĐT của cả tuần đến từ 34,5% hội thoại mà người thật xen vào.**
++
++**Dí thêm KHÔNG cứu được** (chỉ đếm lượt xin xảy ra TRƯỚC khi khách cho số):
++
++| Mức tương tác | xin 1 lượt | xin 2 lượt | xin 3+ |
++|---|---|---|---|
++| khách gõ 2 tin | 2,4% | 0,0% (n=3) | — |
++| khách gõ 3–4 tin | 8,4% | 2,6% | 0/3 |
++| khách gõ ≥5 tin | 27,4% | 10,3% | — |
++| bot đơn độc, khách ≥2 tin | 5,6% | 4,3% | 0/1 |
++
++Continuation (khách còn nhắn tiếp) trên **1.485 lượt TRẢ LỜI THẬT**:
++1 ô 65,6% · 2 ô 65,0% · 3 ô 55,4% · 4 ô 56,6% · 5+ ô 36,4%.
++Theo độ dài: <150 ký tự 64,8% · 150–299 63,0% · 300–449 60,2% · **450–599 43,3%** · ≥600 45,5%.
++
++**1.516/3.001 lượt bot (50,5%) là DẬP CHỦ ĐỘNG lúc khách đang im** — khách quay lại 14,4–20,6%.
++**494 ô "câu trung tính"** (`Dạ em vẫn ở đây nè`…) đã gửi; **226/608 hội thoại (37,2%) KẾT THÚC**
++bằng chính nó. Lượt có câu trung tính: continuation **24,9%** vs **72,2%** ở lượt không có.
++
++---
++
++## 2. Bốn thay đổi
++
++### VÁ 1 — `system-prompt.md` mục 2 luật A.4: **xin số ĐÚNG 1 LẦN**, khách né thì thôi
++Bỏ luật cũ *"lì đòn, xin 1–2 lần, đổi góc"*. Số liệu bác bỏ nó ở cả 3 mức tương tác.
++Thay bằng: xin 1 lần đúng lượt khách vừa kể xong bệnh → khách né thì chuyển sang cho giá trị + mời Zalo OA.
++
++**Phép tính kỳ vọng:** 387 lượt xin-lần-2-trở-đi trong 7 ngày biến mất. Nhóm "xin 2 lượt" (89 ca, ra SĐT
++20,2% *thô*) — nhưng kiểm soát theo mức tương tác thì 2 lượt **luôn kém** 1 lượt (bảng trên) ⇒ kỳ vọng
++là **giữ nguyên hoặc tăng nhẹ tỉ lệ ra SĐT, và tiết kiệm ~387 lượt dí/tuần**. ⚠️ **Đây là quan hệ
++TƯƠNG QUAN, không phải nhân quả đã chứng minh** — không loại được khả năng bot xin lần 2 vì cảm nhận
++khách đang nguội. Vì vậy vá này phải **đo lại sau 7–10 ngày** bằng đúng bộ thước ở mục 4.
++
++### VÁ 2 — `handler.js`: bot xin số rồi mà khách vẫn nhắn tiếp → **BÁO NGƯỜI**, đừng dí
++Thêm `notifyLeadAm()` (telegram.js) + cổng trong `dispatch`: `xinso_count ≥ 1` **và** khách đã nhắn
++≥3 tin **và** đã biết bệnh **và** chưa có SĐT **và** chưa handover/booking → bắn **1 tin Telegram/hội
++thoại** cho telesale vào gõ tay. Chống spam bằng KV `leadam_notified:<convId>`.
++
++**Phép tính kỳ vọng (nêu rõ giả định):** vùng tác động = **173 hội thoại/7 ngày** (bot đơn độc + khách
++≥3 tin + chưa ra SĐT). Chênh lệch lane người − lane bot = 22,7% − 4,8% = **17,9 điểm**.
++
++| Telesale vào được | Thêm SĐT/7 ngày | Thêm điểm KPI#6 (nền 611) |
++|---|---|---|
++| 10% số ca | +3,1 | +0,51 điểm |
++| 20% số ca | +6,2 | +1,01 điểm |
++| 30% số ca | +9,3 | +1,52 điểm |
++
++⚠️ **Chỗ chưa chắc (cổng ⑤):** con số 22,7% của lane người là **quan sát**, không phải thí nghiệm —
++telesale hiện vào những ca đã nóng sẵn, nên tỉ lệ đó **sẽ tụt** khi phải nhận thêm ca nguội. Bảng trên
++là **trần trên**, không phải cam kết. Và nó chỉ thành tiền nếu **telesale thật sự gọi** — 173 ca/tuần
++≈ 25 ca/ngày là gánh nặng thật, cần anh Bảo chốt ai nhận.
++
++### VÁ 3 — `pancake.js`: hạ trần **4 → 3 ô/lượt** + thêm **trần 420 ký tự/lượt**
++`capChars()` cắt theo Ô (không bao giờ cắt giữa câu), luôn giữ ô link, luôn giữ ≥1 ô.
++
++**Phép tính kỳ vọng:** trong 7 ngày có **89 lượt trả lời ≥450 ký tự** (67 lượt 450–599 + 22 lượt ≥600),
++continuation trung bình **43,9%**; nhóm <450 ký tự là **63,3%**. Kéo 89 lượt đó về nhóm ngắn ⇒
++**+19,4 điểm × 89 ≈ +17 lượt khách còn nói tiếp/tuần**. Đây là **chỉ số trung gian**, KHÔNG quy thẳng
++ra SĐT được — ghi rõ để khỏi thổi phồng.
++
++### VÁ 4 — `config.js` + `handler.js`: cắt spam dập chủ động
++- `RETOUCH_MAX_COUNT` 3 → **2**; `RETOUCH_MIN_IDLE_HOURS` 0,4h → **0,75h**.
++- `dispatch(..., { chuDong: true })` cho `handleRetouch`: ở lượt dập chủ động, khi cửa chống-lặp xoá
++  sạch ô thì **KHÔNG thả câu trung tính nữa — im hẳn**. Luật gốc 20/07 *"thà thừa 1 câu còn hơn im"*
++  **GIỮ NGUYÊN cho lượt TRẢ LỜI** (khách đang chờ, im là bỏ rơi lead đã trả tiền quảng cáo).
++
++**Phép tính kỳ vọng:** bỏ được phần lớn **494 ô câu-trung-tính/tuần** và ~1/3 số lượt dập chủ động
++(1.516 → ~1.000). Lợi ích chính là **giảm rủi ro mất khách vì phiền** (ca Phuong Ngoc 02/08 mất khách
++thật), không phải tăng SĐT trực tiếp.
++
++---
++
++## 3. Giả thuyết ĐÃ KIỂM VÀ BỊ BÁC — đừng vá theo hướng này
++
++1. **"Bot không hỏi số"** → SAI. Bot mở lời xin số ở **498/783 (63,6%)** hội thoại, tức **81,9%** số
++   hội thoại nó có trả lời. *(Bản đo đầu ra 34,9% là SAI: hàm bỏ dấu thiếu `replace('đ','d')` nên
++   "để lại số" không khớp regex — bẫy đã ghi vào code.)*
++2. **"Đưa địa chỉ xong hội thoại chết"** → SAI. 153/611 (25,0%) khách có hỏi địa chỉ/giờ; trong nhóm
++   đó bot vẫn xin số ở **95,4%** và tỉ lệ ra SĐT là **11,8% — CAO HƠN** nền chung 11,0%. Con số 25%
++   khớp memory `[[inbox-cxk-hoi-dia-chi-25-phan-tram]]` (CXK riêng: 28,1%), nhưng **kết luận "van khoá"
++   thì không đứng được**.
++3. **"Câu chào Meta *Chúng tôi có thể giúp gì cho bạn?* lọt cửa `AUTO_REPLY_MARKERS` → bot bị chấm là
++   telesale gõ tay → câm 2h."** Về CODE thì đúng (`ai_generated:false`, 42 ký tự > `HUMAN_MIN_CHARS`
++   12, không khớp marker/exact/pattern nào, không vân tay bot ⇒ rơi vào nhánh `markHumanTaken({confirm:true})`).
++   **Nhưng ĐO THẬT thì KHÔNG xảy ra**: 318 hội thoại dính câu chào → bot im **0,0%**, trễ trả lời lần
++   đầu **trung vị 25 giây** — y hệt 293 hội thoại không dính (24 giây). Nhiều khả năng Pancake không
++   đẩy tin đó qua webhook. **KHÔNG vá.** Ghi lại để lần sau khỏi đi đường cụt.
++
++---
++
++## 4. Bộ thước nghiệm thu (chạy lại sau 7–10 ngày chạy thật)
++
++Script đo: cùng đường của skill `do-ra-sdt-va-cau-moi-gia`, cộng thêm `from.admin_name` để tách lane.
++
++| Thước | Mốc 30/08→05/09 | Đích |
++|---|---|---|
++| KPI#6 ra SĐT (nền 783) | 8,6% | ≥ 12% |
++| Ra SĐT nền "khách có nói" (611) | 11,0% | ≥ 15% |
++| **Ra SĐT lane bot đơn độc** | **4,8%** | ≥ 7% |
++| Lượt dập chủ động / tổng lượt bot | 50,5% | ≤ 35% |
++| Ô "câu trung tính" gửi đi | 494 | ≤ 100 |
++| Hội thoại kết bằng câu trung tính | 37,2% | ≤ 15% |
++| Lượt trả lời ≥450 ký tự | 89 (6,0%) | ≤ 20 (1,5%) |
++| Lượt xin số lần 2+ | 387 | ≤ 50 |
++| Số tin `LEAD ẤM` telesale nhận & gọi | 0 | đo được, ≥60% được gọi |
++
++---
++
++## 5. VIỆC CHO ANH — nằm NGOÀI code, máy không tự làm được
++
++1. 🔴 **Kịch bản Pancake đang bắn "📍 Cơ sở 2: Quận 10 — Phòng khám Đa khoa Y Đạo — 46–48 Ngô Quyền"
++   (77 lần/7 ngày) và "Hiện tại bên em đang có hai cơ sở ở quận 10 và Tân Phú" (80 lần)** — gửi dưới
++   `admin_name = "Phan Nhật Trình"`, **không nằm trong code bot** (bot đã bị cấm 2 chuỗi này ở mục 12
++   system-prompt). Đây là quick-reply/kịch bản cài trong Pancake. Cụm `2 cơ sở` / `chi nhánh` là chuỗi
++   **CẤM CẢ 2 NHÓM** theo hiến pháp (khối 15/08 tối). Đang chạy trên page CXK = **NHÓM 1**.
++   → Cần anh vào Pancake sửa chữ. Máy không có quyền sửa kịch bản Pancake.
++2. **Ai nhận 173 ca "LEAD ẤM"/tuần?** Đội telesale hiện 3 người (Thắng · Hana · Yến). ~25 ca/ngày.
++   Không chốt người nhận thì tin Telegram của VÁ 2 chỉ là thêm chuông.
++3. **Duyệt deploy** nhánh `va-tang-ra-sdt-06-09` lên Render (Mục 6 #8).
+diff --git a/src/config.js b/src/config.js
+index 1bdb953..c8dffe9 100644
+--- a/src/config.js
++++ b/src/config.js
+@@ -94,8 +94,15 @@ export const config = {
+     // Nhịp "NÓNG VỪA" (anh Bảo chốt 11/07): khách chat rồi im ~25' là dập lại để đốn hạ lúc còn
+     // lưỡng lự, tối đa 3 lần. Trước đây 2h/2 lần → lỡ mất lúc khách nóng. Mỗi lần vẫn 1 ô, giữ
+     // giờ vàng 8-22h (handler.js chặn). Chỉnh qua env nếu muốn xoay nhịp mà không sửa code.
+-    minIdleHours: parseFloat(process.env.RETOUCH_MIN_IDLE_HOURS || '0.4'),  // ~24 phút
+-    maxCount: parseInt(process.env.RETOUCH_MAX_COUNT || '3', 10),
++    // ⚠️ VÁ 06/09/2026 — HẠ SỐ LẦN DÍ 3 → 2, GIÃN MỐC ĐẦU 24' → 45'.
++    // ĐO 30/08→05/09 (783 hội thoại INBOX): 1.516/3.001 lượt bot (50,5%) là DẬP CHỦ ĐỘNG lúc
++    // khách đang im; khách quay lại chỉ 14,4% (lượt 1 ô) – 20,6% (lượt 2 ô). Tức một nửa lời bot
++    // đang nói vào chỗ không ai nghe. Đây đúng cơ chế đã MẤT KHÁCH THẬT ca Phuong Ngoc 02/08
++    // ("1 ngày mà gởi tới 10 tn hết hồn luôn... tui đã bỏ ý định đến chữa bệnh rồi").
++    // Cộng cả engine: retouch 3 + 7-chạm (3/4/6) + care ⇒ tối đa 7 lần dập/khách. Hạ retouch
++    // xuống 2 và giãn mốc đầu ra 45' để lần dập đầu rơi đúng lúc khách còn nhớ mình đang hỏi gì.
++    minIdleHours: parseFloat(process.env.RETOUCH_MIN_IDLE_HOURS || '0.75'), // ~45 phút
++    maxCount: parseInt(process.env.RETOUCH_MAX_COUNT || '2', 10),
+   },
+ };
+ 
+diff --git a/src/handler.js b/src/handler.js
+index b777fc8..42ee477 100644
+--- a/src/handler.js
++++ b/src/handler.js
+@@ -3,7 +3,7 @@ import { generateReply } from './gemini.js';
+ import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageChannel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
+ import * as store from './store.js';
+ import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
+-import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyText, isUrgent } from './telegram.js';
++import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyLeadAm, notifyText, isUrgent } from './telegram.js';
+ import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
+ import { trongKhungGioGui } from './care-send.js';
+ import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
+@@ -55,6 +55,15 @@ function demSuatTuVan(text) {
+     .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+   return /su[aâ]t tu van/.test(n);
+ }
++// Ô này có phải LỜI XIN SỐ ĐIỆN THOẠI không? (bỏ dấu; 'đ' phải đổi thành 'd' — bẫy đã cắn khi
++// đo: NFD KHÔNG tách được 'đ' nên "để lại số" ra "de lai so" hay "để lai so" tuỳ cách chuẩn hoá,
++// và bản đo đầu tiên vì thiếu 1 dòng replace đã đếm hụt lời-xin-số 45% (273 thay vì 498).)
++function laOXinSo(text) {
++  const n = String(text || '')
++    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase();
++  return /(xin (so|sdt)|cho em (xin )?(so|sdt)|de lai (so|sdt)|so dien thoai|\bsdt\b|nhan (em )?so|gui em so|de so lai|em xin so|cho em so)/.test(n);
++}
++
+ // Câu chốt trung tính khi đã phải bỏ hết ô "suất tư vấn" (tránh gửi lượt rỗng).
+ // PHAO TRUNG TÍNH XOAY VÒNG (vá 20/08, ca Duy Cường): phao cũ là 1 HẰNG SỐ → dispatch thả phao
+ // 2 lần cách nhau 16 giây = 2 câu Y NGUYÊN liền nhau, khách vạch ngay là máy. Chọn câu CHƯA
+@@ -1177,7 +1186,7 @@ export async function handleRetouch(conv) {
+     }
+     const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
+     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
+-    await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name);
++    await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name, { chuDong: true });
+     store.incRetouch(conversationId);
+     store.setKV(`retouch_at:${conversationId}`, String(Date.now())); // mốc giãn nhịp lần sau
+     console.log(`[retouch] đã chạm lại ${conversationId} (lần ${fresh.retouch_count + 1})`);
+@@ -1352,7 +1361,12 @@ export async function handleBotTouch(conv, touchNo) {
+ }
+ 
+ // Gửi phản hồi + xử lý SĐT / handover + lưu lịch sử bot.
+-async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName) {
++async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName, opts = {}) {
++  // VÁ 06/09/2026 — `chuDong: true` = lượt BOT TỰ DẬP khi khách đang im (retouch / 7-chạm),
++  // KHÁC hẳn lượt trả lời tin khách. Đo 30/08→05/09: 1.516/3.001 lượt bot (50,5%) là dập chủ
++  // động, khách quay lại chỉ 14,4–20,6%. Ở lượt dập, THẢ CÂU TRUNG TÍNH LÀ SPAM THUẦN —
++  // xem 3 cửa phao bên dưới.
++  const chuDong = Boolean(opts.chuDong);
+   // Phân loại bệnh để thống kê — chỉ lưu khi nhận diện được (khác unknown),
+   // để KHÔNG ghi đè condition đã biết ở lượt trước bằng 'unknown' của lượt cuối.
+   if (reply.condition && reply.condition !== 'unknown') {
+@@ -1424,8 +1438,19 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
+     // Khách hỏi giá tiêm 19:47–20:05 (Hiên Thi Vu, Nguyễn Oanh, Rose Rose, Đặng Sáng, Cu Tủn, Xuân Ngọc)
+     // đúng vì cái này. THÀ THỪA 1 CÂU TRUNG TÍNH CÒN HƠN IM — im là mất lead đã trả tiền quảng cáo.
+     if (outMessages.length === 0 && truoc > 0) {
+-      outMessages = [cauTrungTinh(freshConv)];
+-      console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
++      // VÁ 06/09/2026 — PHAO CHỈ THẢ KHI KHÁCH ĐANG CHỜ, KHÔNG THẢ KHI BOT TỰ DẬP.
++      // Luật gốc 20/07 "thà thừa 1 câu trung tính còn hơn im" ĐÚNG cho lượt TRẢ LỜI (khách vừa
++      // nhắn, im là bỏ rơi lead đã trả tiền quảng cáo) — GIỮ NGUYÊN. Nhưng nó đang bị dùng cả ở
++      // lượt DẬP CHỦ ĐỘNG, và ở đó nó là spam: đo 30/08→05/09 bot gửi 494 ô câu-trung-tính,
++      // 226/608 hội thoại (37,2%) KẾT THÚC bằng chính câu này = ngõ cụt không mời gì; lượt có
++      // câu trung tính chỉ được khách nhắn tiếp 24,9% so với 72,2% ở lượt không có.
++      // Khách đang im mà bot thả "Dạ em vẫn ở đây nè" = đúng thứ đã mất khách ca Phuong Ngoc 02/08.
++      if (chuDong) {
++        console.log(`[dispatch] ${conversationId} lượt DẬP CHỦ ĐỘNG mà mọi ô (${truoc}) trùng tin cũ → KHÔNG gửi gì (không spam câu trung tính)`);
++      } else {
++        outMessages = [cauTrungTinh(freshConv)];
++        console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
++      }
+     }
+   }
+ 
+@@ -1483,7 +1508,8 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
+         console.log(`[dispatch] ${conversationId} đã nhắc "suất tư vấn" ${daNhac} lần → bỏ ${truoc - outMessages.length} ô mời trùng (chống lặp đòn)`);
+       }
+       // Sau khi bỏ mà rỗng lượt (chỉ toàn ô mời) → giữ lại 1 ô trung tính, đừng gửi lượt rỗng/im.
+-      if (!outMessages.length && truoc > 0) {
++      // VÁ 06/09/2026: chỉ khi khách ĐANG CHỜ. Lượt bot tự dập thì im hẳn (xem phao cửa 1).
++      if (!outMessages.length && truoc > 0 && !chuDong) {
+         outMessages = [cauTrungTinh(freshConv)];
+       }
+     }
+@@ -1548,6 +1574,13 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
+         const truoc = parseInt(store.getKV(`suattuvan_count:${conversationId}`) || '0', 10) || 0;
+         store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
+       }
++      // VÁ 06/09/2026 — SỔ ĐẾM SỐ LẦN BOT XIN SĐT (đếm theo LƯỢT, không theo ô).
++      // Dùng cho 2 việc: (a) báo LEAD ẤM gọi người ở dưới; (b) trần dí — prompt chỉ cho xin
++      // 1 lần, sổ này là cổng máy chặn nếu Gemini vẫn xin thêm.
++      if (outMessages.some((m) => laOXinSo(m))) {
++        const tr = parseInt(store.getKV(`xinso_count:${conversationId}`) || '0', 10) || 0;
++        store.setKV(`xinso_count:${conversationId}`, String(tr + 1));
++      }
+     }
+   } else {
+     console.log(`[dispatch] ${conversationId} mọi ô đều trùng tin cũ → không gửi gì (tránh lộ bot)`);
+@@ -1575,6 +1608,38 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
+     return;
+   }
+ 
++  // ── VÁ 06/09/2026 — LEAD ẤM: BOT ĐÃ XIN SỐ MÀ KHÁCH NÉ → GỌI NGƯỜI, ĐỪNG DÍ TIẾP ──
++  // ĐO THẬT 783 hội thoại INBOX 30/08→05/09 (pages.fm/api/v1, USER token):
++  //   • lane CÓ người thật gõ tay : 211 ca → 48 SĐT = 22,7%
++  //   • lane BOT GEMINI ĐƠN ĐỘC   : 397 ca → 19 SĐT =  4,8%   ⇒ người chốt gấp 4,7 lần
++  //   • DÍ THÊM KHÔNG CỨU ĐƯỢC: cùng mức tương tác (khách ≥2 tin, bot đơn độc),
++  //     bot xin 1 lượt → 5,6%; xin 2 lượt → 4,3%. Xin lần 3 → 0/1. Càng dí càng tệ.
++  //   • Vùng tác động: 173 hội thoại/7 ngày là bot đơn độc + khách ≥3 tin + chưa ra SĐT.
++  // ⇒ Bot đã xin 1 lần mà khách vẫn nhắn tiếp nhưng không cho số = ĐÚNG LÚC gọi telesale.
++  // CHỈ BÁO TELEGRAM NỘI BỘ — không nhắn khách, không đổi nhãn, không đổi trạng thái đơn.
++  // Chống spam: đúng 1 lần/hội thoại (KV `leadam_notified:`), và không báo nếu đã có số /
++  // đã handover / đã báo booking (những đường đó đã gọi người rồi).
++  if (!captured && !alreadyCaptured && !reply.handover && !laConvDaKham(conversationId)) {
++    try {
++      const kAm = `leadam_notified:${conversationId}`;
++      const soTinKhach = (freshConv?.history || []).filter((h) => h.role === 'user').length;
++      const daXinSo = parseInt(store.getKV(`xinso_count:${conversationId}`) || '0', 10) || 0;
++      const nguongTin = parseInt(process.env.LEADAM_MIN_KHACH_MSG || '3', 10);
++      if (daXinSo >= 1 && soTinKhach >= nguongTin && knownCondition !== 'unknown' && !store.getKV(kAm)) {
++        store.setKV(kAm, String(Date.now()));
++        await notifyLeadAm({
++          name: reply.name || customerName,
++          condition: knownCondition,
++          summary: knownSummary,
++          pageId,
++          conversationId,
++          soLuotKhach: soTinKhach,
++        }).catch((e) => console.error(`[leadam] ${conversationId} báo hụt: ${e?.message || e}`));
++        console.log(`[leadam] 🟡 ${conversationId} bot đã xin số ${daXinSo} lần, khách nhắn ${soTinKhach} tin mà chưa cho số → ĐÃ GỌI NGƯỜI`);
++      }
++    } catch (e) { console.warn('[leadam] lỗi (bỏ qua, không chặn):', e?.message); }
++  }
++
+   // HANDOVER (khiếu nại / hỏi sâu chuyên môn)
+   if (reply.handover) {
+     store.setHandover(conversationId);
+diff --git a/src/pancake.js b/src/pancake.js
+index 7327a75..a07d745 100644
+--- a/src/pancake.js
++++ b/src/pancake.js
+@@ -31,7 +31,15 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+ // VÁCH ĐÁ ở bóng thứ 5 → cắt cứng ≤ MAX_BUBBLES ô ở đây là chặn được TẤT CẢ nguồn (dispatch,
+ // giaoCamNang, chuỗi chạm, care) vì mọi tin bot gửi đều đi qua sendMessages/sendPrivateReply.
+ // MAX mặc định 4, KHÔNG để thấp hơn 3 kẻo cắt mất ô xin số.
+-const MAX_BUBBLES = Math.max(3, parseInt(process.env.BOT_MAX_BUBBLES || '4', 10));
++// VÁ 06/09/2026 — HẠ TRẦN 4 → 3 Ô/LƯỢT. Đo continuation trên LƯỢT TRẢ LỜI THẬT (bot rep ngay
++// sau tin khách, 30/08→05/09, n=1.485 lượt): 1 ô 65,6% · 2 ô 65,0% · 3 ô 55,4% · 4 ô 56,6% ·
++// 5+ ô 36,4%. Mỗi ô thêm vào là một nhịp khách phải chịu; trần 3 giữ được ô chữ + ô link.
++const MAX_BUBBLES = Math.max(3, parseInt(process.env.BOT_MAX_BUBBLES || '3', 10));
++// TRẦN KÝ TỰ CẢ LƯỢT — cửa này quan trọng hơn trần ô, vì 3 ô dài 200 ký tự vẫn là 600 ký tự dội
++// vào mặt khách. Đo cùng bộ dữ liệu, theo TỔNG độ dài lượt: <150 ký tự → khách nhắn tiếp 64,8% ·
++// 150–299 → 63,0% · 300–449 → 60,2% · 450–599 → 43,3% · ≥600 → 45,5%. VÁCH ĐÁ ở 450 ⇒ trần 420.
++// (Khách gõ trung vị 24 ký tự/tin, bot gõ trung vị 102 — bot đang nói gấp 3 lần khách.)
++const MAX_CHARS_PER_TURN = Math.max(150, parseInt(process.env.BOT_MAX_CHARS_PER_TURN || '420', 10));
+ 
+ // Gộp THÔNG MINH mảng ô về tối đa `max` ô, KHÔNG chặt cụt mất ý:
+ //  - ≤ max: giữ nguyên.
+@@ -63,6 +71,30 @@ function capBubbles(messages, max = MAX_BUBBLES) {
+     out = [...head, tail];
+   }
+   if (keepLink) out.push(keepLink); // link xuống cuối, đứng riêng để bung preview
++  return capChars(out);
++}
++
++// TRẦN KÝ TỰ CẢ LƯỢT (vá 06/09/2026). CẮT THEO Ô, TUYỆT ĐỐI KHÔNG cắt giữa câu — cắt cụt chữ là
++// lộ máy còn nhanh hơn nói dài. Giữ các ô ĐẦU cho tới khi chạm trần; ô link luôn được giữ (nó là
++// thứ khách bấm). Luôn giữ tối thiểu 1 ô để không sinh lượt rỗng (= bot im, lỗi 20/07).
++function capChars(arr, max = MAX_CHARS_PER_TURN) {
++  const tong = arr.reduce((a, m) => a + String(m).length, 0);
++  if (tong <= max) return arr;
++  const link = arr.find((m) => /https?:\/\//i.test(m)) || null;
++  const chuDaiLink = link ? String(link).length : 0;
++  const out = [];
++  let dem = 0;
++  for (const m of arr) {
++    if (link && m === link) continue;
++    const d = String(m).length;
++    if (out.length > 0 && dem + d + chuDaiLink > max) break;
++    out.push(m); dem += d;
++  }
++  if (!out.length) out.push(arr[0]);
++  if (link) out.push(link);
++  if (out.length < arr.length) {
++    console.log(`[capChars] lượt dài ${tong} ký tự > trần ${max} → giữ ${out.length}/${arr.length} ô (bỏ ô cuối, không cắt giữa câu)`);
++  }
+   return out;
+ }
+ 
+diff --git a/src/telegram.js b/src/telegram.js
+index 4c039ed..4b01ce6 100644
+--- a/src/telegram.js
++++ b/src/telegram.js
+@@ -124,6 +124,28 @@ export async function notifyBooking({ name, condition, summary, pageId, conversa
+   await send(text);
+ }
+ 
++// ── VÁ 06/09/2026 — BÁO "LEAD ẤM" ĐỂ NGƯỜI VÀO GÕ TAY ───────────────────────────
++// CĂN CỨ ĐO (783 hội thoại INBOX 30/08→05/09, pages.fm/api/v1):
++//   • Hội thoại CÓ người thật gõ tay  : 211 ca → ra SĐT 48 = 22,7%
++//   • Hội thoại BOT GEMINI ĐƠN ĐỘC    : 397 ca → ra SĐT 19 =  4,8%   (kém 4,7 lần)
++//   • Bot xin số THÊM lần 2 KHÔNG cứu được: cùng mức tương tác, xin 1 lượt 5,6% →
++//     xin 2 lượt 4,3% (bot đơn độc, khách ≥2 tin). Dí thêm KHÔNG phải lời giải.
++// ⇒ Việc đúng của bot khi khách đã kể bệnh mà chưa cho số là GỌI NGƯỜI, không phải dí tiếp.
++// Chỉ BÁO NỘI BỘ (Telegram) — KHÔNG nhắn khách, KHÔNG đổi trạng thái. Đảo ngược được.
++export async function notifyLeadAm({ name, condition, summary, pageId, conversationId, soLuotKhach }) {
++  const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
++  let text =
++    `🟡 <b>LEAD ẤM — BOT ĐÃ XIN SỐ MÀ KHÁCH CHƯA CHO</b>\n` +
++    `👤 Tên: ${escapeHtml(name) || '(chưa rõ)'}\n` +
++    `🩺 Bệnh: ${benh}\n` +
++    `💬 Khách đã nhắn ${soLuotKhach || '?'} tin, kể bệnh rõ — bot xin số rồi mà khách né.\n` +
++    `⚡️ VÀO GÕ TAY: người thật chốt gấp 4,7 lần bot (22,7% vs 4,8%). Đừng để bot dí thêm.\n`;
++  if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
++  text += `${await nguonLine(pageId, conversationId)}\n`;
++  text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
++  await send(text);
++}
++
+ // Báo CHẠM TELESALE (2/5/7) cho ca ĐÃ có SĐT → telesale gọi. Kèm nút "Đã chạm".
+ // callback_data c7:<convId>:done khớp listener nút bấm cloud (bot-nut-bam).
+ function nutChamLead(convId) {
+diff --git a/system-prompt.md b/system-prompt.md
+index 6134f67..b684fd1 100644
+--- a/system-prompt.md
++++ b/system-prompt.md
+@@ -55,7 +55,8 @@ Mỗi hội thoại Facebook đẩy tới đủ **3 ĐÍCH** (đi qua CẢM XÚC
+ > 1. **Khách ĐÃ kể bệnh/vùng đau/tình trạng** (vd "thoái hóa L4 L5", "tràn dịch gối", "đau vai 3 năm") → lượt trả lời ĐÓ **PHẢI có 1 ô xin SĐT**. ĐỪNG chỉ hỏi thăm "còn đau nhiều không / sao rồi ạ" rồi dừng — biết đủ bệnh rồi mà không xin số = bỏ rơi lead vàng.
+ > 2. **KHÔNG hỏi đi hỏi lại "mình sao rồi / còn khó chịu không"** khi khách đã trả lời. Khai thác thêm tối đa **1 câu**, rồi xin số.
+ > 3. **TUYỆT ĐỐI KHÔNG lặp gần như y nguyên 1 câu** đã gửi ở lượt trước (đọc lại các tin model gần nhất trước khi viết). Mỗi lượt phải MỚI, tiến thêm 1 bước về phía xin số.
+-> 4. Đã xin số 1–2 lần mà khách né → đừng bỏ cuộc: đổi góc, hạ rào cản ("để lại số thôi, Bác sĩ gọi miễn phí, không hợp thì thôi"), vẫn lịch sự, không spam.
++> 4. ⛔ **SỬA 06/09/2026 — XIN SỐ ĐÚNG 1 LẦN, KHÁCH NÉ THÌ THÔI.** Câu cũ *"đã xin số 1–2 lần mà khách né → đừng bỏ cuộc, đổi góc, lì đòn"* **ĐÃ BỎ — số liệu bác bỏ nó**. Đo 783 hội thoại INBOX 30/08→05/09 (pages.fm/api/v1), cùng mức tương tác (khách ≥2 tin, không có người thật xen vào): bot xin **1 lượt → ra SĐT 5,6%**; xin **2 lượt → 4,3%**; xin **3 lượt → 0/1**. Chia theo độ nồng: khách gõ 3–4 tin thì 1 lượt 8,4% · 2 lượt 2,6%; khách gõ ≥5 tin thì 1 lượt 27,4% · 2 lượt 10,3%. **Xin lại KHÔNG cứu được ca nào — nó chỉ làm khách rút.** (Đây là chỗ nguy hiểm: cả 2 phía đều "hợp lý", nhưng số liệu chỉ về một phía.)
++>    **Làm đúng:** xin **ĐÚNG 1 LẦN**, vào đúng lượt khách vừa kể xong bệnh, câu ngắn, hạ rào cản ("mình để lại số thôi, Bác sĩ gọi miễn phí, không hợp thì thôi ạ"). Khách né / lảng / im → **KHÔNG xin lại dưới mọi cách diễn đạt**. Chuyển sang: trả lời tiếp cái khách hỏi · cho 1 mẹo chăm tại nhà · mời Zalo OA. Hệ thống sẽ tự báo telesale vào gõ tay — **người thật chốt gấp 4,7 lần bot** (22,7% vs 4,8% trên cùng cửa sổ), nên giữ khách ở lại nói chuyện có giá trị hơn nhiều so với dí thêm một câu xin số.
+ >
+ > **B. Khi khách ĐÃ cho số / ĐÃ là khách của phòng khám** (hệ thống báo MODE: CARE):
+ > - **TUYỆT ĐỐI KHÔNG xin số nữa, KHÔNG chào như người lạ.** Đây là khách đã tin tưởng/đã đến khám.
+@@ -218,6 +219,27 @@ Khách nhắn: *"tui rất sợ giả tạo... **Người thật nói ít bệnh
+ > - Chỉ gửi link **SAU KHI khách đã kể bệnh của mình** (đã biết đúng bệnh để trỏ đúng trang).
+ > - **Mỗi lượt TỐI ĐA 1 link.** Không gắn 2 link (sale page + tài liệu) cùng lúc. Đừng lặp lại link đã gửi ở lượt trước.
+ 
++## 6B. ⚠️ ĐỘ DÀI LƯỢT — LUẬT CỨNG (VÁ 06/09/2026, đo trên 1.485 lượt trả lời thật)
++
++Khách gõ trung vị **24 ký tự**/tin. Bot đang gõ trung vị **102 ký tự**/ô và **gấp 3 lần số ô của khách**. Đo tỉ lệ khách CÒN NHẮN TIẾP ngay sau 1 lượt của bot (cửa sổ 30/08→05/09):
++
++| Tổng độ dài lượt | Khách nhắn tiếp | | Số ô trong lượt | Khách nhắn tiếp |
++|---|---|---|---|---|
++| < 150 ký tự | **64,8%** | | 1 ô | **65,6%** |
++| 150–299 | **63,0%** | | 2 ô | **65,0%** |
++| 300–449 | 60,2% | | 3 ô | 55,4% |
++| **450–599** | **43,3%** ⬅ vách đá | | 4 ô | 56,6% |
++| ≥ 600 | 45,5% | | 5+ ô | **36,4%** |
++
++**Luật:**
++1. **Mặc định 2 ô/lượt. Tối đa 3 ô** (hệ thống cắt cứng ô thứ 4 trở đi).
++2. **Mỗi ô ≤ 90 ký tự.** Cả lượt ≤ 300 ký tự — hệ thống bỏ ô cuối khi lượt vượt 420 ký tự.
++3. **Lượt ĐẦU tiên ngắn nhất**: 1 câu chào + 1 câu hỏi triệu chứng. KHÔNG kèm giới thiệu Bác sĩ, KHÔNG kèm giá, KHÔNG kèm link.
++4. **Câu giới thiệu Bác sĩ Trình / "nhiều cô chú cải thiện" chỉ nói 1 LẦN cả hội thoại**, và chỉ khi khách đã kể bệnh.
++5. Khách trả lời cụt ("dạ", "ok", "ừ", "👍", "đợi xíu", "để em xem lại") → **đáp đúng 1 ô ngắn**, đừng đổ thêm 3 ô. Ca thật 31/08: khách nhắn *"Đợi xíu — Chị đang ngoài đường"*, bot đáp liền 3 ô trong đó có *"em vẫn đang chờ số điện thoại của mình nha ạ"* → mất khách.
++
++---
++
+ ## 7. GIỌNG & CÁCH NHẮN (kỹ thuật — quan trọng)
+ - **Người thật, ấm áp, đời thường:** có "dạ/ạ", xưng **"em"** gọi **"anh/chị"**, tối đa 1 emoji nhẹ khi hợp. KHÔNG văn vẻ, KHÔNG liệt kê khô khan, KHÔNG lặp câu máy móc.
+ - **NGẮN — như người thật nhắn điện thoại.** Mỗi lượt CHỈ **1–2 tin**, mỗi tin **1 câu ngắn** (lý tưởng dưới ~15 từ). **TUYỆT ĐỐI KHÔNG quá 3 bong bóng trong 1 lượt**, mỗi bong bóng chỉ **1 ý ngắn** — thà 1–2 bóng còn hơn nhồi cho đủ. Đây là LUẬT CỨNG: đo thực tế trên khách thật cho thấy loạt tin **≥5 bong bóng thì khách bỏ đi** (người thật chỉ nhắn ~1,9 bóng/lượt), một loạt tin dội xuống là khách biết ngay "máy trả lời". Người thật gõ chậm, nhắn ít, gọn.
+@@ -306,8 +328,13 @@ Khách hay hỏi đặt lịch ("mai khám được không", "thứ mấy trốn
+ ## 9. CHẠM LẠI TỰ ĐỘNG (re-touch)
+ Khi có tín hiệu `MODE: RETOUCH` (khách im 2–3 tiếng, **chưa cho SĐT**): gửi **1–2 tin ngắn nhẹ**, KHÔNG lặp y nguyên tin cũ, thêm 1 lý do mới để khách quay lại (chạm lại đúng nỗi đau họ đã kể nếu biết, hoặc khan hiếm/ưu đãi/tư vấn miễn phí):
+ - "Dạ anh/chị ơi, cái [đau gối/đau lưng…] của mình sao rồi ạ, còn khó chịu nhiều không? 😊"
+-- Xoay câu chốt số, ĐỪNG lặp y nguyên (mỗi lần một cách): "mình để lại số em nhờ Bác sĩ gọi xem giúp cho nha ạ" / "cho em xin số, Bác sĩ gọi tư vấn miễn phí, không hợp thì thôi mình nhé" / (nếu CHƯA từng nhắc khan hiếm trong hội thoại này) "Bác sĩ vẫn còn suất tư vấn cho mình, để lại số em book giúp nha ạ".
+-KHÔNG spam. Tối đa 2 lần chạm lại trong 48h. **Cụm "suất tư vấn" chỉ 1 lần/hội thoại** (xem 5B) — đã nhắc rồi thì chốt số bằng câu khác.
++- ⛔ **SỬA 06/09/2026 — CHẠM LẠI KHÔNG ĐƯỢC XIN SỐ NỮA nếu hội thoại đã xin 1 lần.** Câu cũ *"xoay câu chốt số, mỗi lần một cách"* đã bỏ: nó chính là cỗ máy đẻ ra lần-xin-thứ-hai mà số liệu chứng minh là có hại (mục 2, luật A.4). Chạm lại phải mang **THỨ MỚI CHO KHÁCH**, không phải đòi lại thứ cũ:
++  - 1 mẹo chăm tại nhà đúng bệnh họ kể ("chườm ấm 15 phút buổi tối cho gót chân đỡ thốn nha ạ")
++  - 1 câu hỏi thăm CỤ THỂ đúng triệu chứng họ đã kể (không hỏi chung chung "mình sao rồi ạ")
++  - lời mời Zalo OA để nhận cẩm nang + video bài tập
++- **TỐI ĐA 2 lần chạm lại/48h** (hạ từ 3 — đo 30/08→05/09: 50,5% lượt bot là dập lúc khách đang im, khách quay lại chỉ 14–21%).
++- ⛔ **TUYỆT ĐỐI KHÔNG gửi câu rỗng kiểu "Dạ em vẫn ở đây nè" / "mình cứ nhắn em bất cứ lúc nào cần"** ở lượt chạm lại. Đo được **494 ô** loại này trong 7 ngày, **226/608 hội thoại (37,2%) KẾT THÚC bằng chính nó** — ngõ cụt, không mời gì, và lượt có nó chỉ được khách nhắn tiếp **24,9%** so với **72,2%** ở lượt không có. Không có gì mới để nói thì **IM**, đừng gửi.
++- **Cụm "suất tư vấn" chỉ 1 lần/hội thoại** (xem 5B).
+ 
+ ## 10. ĐỊNH DẠNG ĐẦU RA — BẮT BUỘC (JSON, không kèm chữ nào khác)
+ Luôn trả về DUY NHẤT một object JSON hợp lệ (không markdown, không giải thích):

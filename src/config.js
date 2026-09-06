@@ -94,8 +94,15 @@ export const config = {
     // Nhịp "NÓNG VỪA" (anh Bảo chốt 11/07): khách chat rồi im ~25' là dập lại để đốn hạ lúc còn
     // lưỡng lự, tối đa 3 lần. Trước đây 2h/2 lần → lỡ mất lúc khách nóng. Mỗi lần vẫn 1 ô, giữ
     // giờ vàng 8-22h (handler.js chặn). Chỉnh qua env nếu muốn xoay nhịp mà không sửa code.
-    minIdleHours: parseFloat(process.env.RETOUCH_MIN_IDLE_HOURS || '0.4'),  // ~24 phút
-    maxCount: parseInt(process.env.RETOUCH_MAX_COUNT || '3', 10),
+    // ⚠️ VÁ 06/09/2026 — HẠ SỐ LẦN DÍ 3 → 2, GIÃN MỐC ĐẦU 24' → 45'.
+    // ĐO 30/08→05/09 (783 hội thoại INBOX): 1.516/3.001 lượt bot (50,5%) là DẬP CHỦ ĐỘNG lúc
+    // khách đang im; khách quay lại chỉ 14,4% (lượt 1 ô) – 20,6% (lượt 2 ô). Tức một nửa lời bot
+    // đang nói vào chỗ không ai nghe. Đây đúng cơ chế đã MẤT KHÁCH THẬT ca Phuong Ngoc 02/08
+    // ("1 ngày mà gởi tới 10 tn hết hồn luôn... tui đã bỏ ý định đến chữa bệnh rồi").
+    // Cộng cả engine: retouch 3 + 7-chạm (3/4/6) + care ⇒ tối đa 7 lần dập/khách. Hạ retouch
+    // xuống 2 và giãn mốc đầu ra 45' để lần dập đầu rơi đúng lúc khách còn nhớ mình đang hỏi gì.
+    minIdleHours: parseFloat(process.env.RETOUCH_MIN_IDLE_HOURS || '0.75'), // ~45 phút
+    maxCount: parseInt(process.env.RETOUCH_MAX_COUNT || '2', 10),
   },
 };
 

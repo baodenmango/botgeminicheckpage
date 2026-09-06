@@ -31,7 +31,15 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // VÁCH ĐÁ ở bóng thứ 5 → cắt cứng ≤ MAX_BUBBLES ô ở đây là chặn được TẤT CẢ nguồn (dispatch,
 // giaoCamNang, chuỗi chạm, care) vì mọi tin bot gửi đều đi qua sendMessages/sendPrivateReply.
 // MAX mặc định 4, KHÔNG để thấp hơn 3 kẻo cắt mất ô xin số.
-const MAX_BUBBLES = Math.max(3, parseInt(process.env.BOT_MAX_BUBBLES || '4', 10));
+// VÁ 06/09/2026 — HẠ TRẦN 4 → 3 Ô/LƯỢT. Đo continuation trên LƯỢT TRẢ LỜI THẬT (bot rep ngay
+// sau tin khách, 30/08→05/09, n=1.485 lượt): 1 ô 65,6% · 2 ô 65,0% · 3 ô 55,4% · 4 ô 56,6% ·
+// 5+ ô 36,4%. Mỗi ô thêm vào là một nhịp khách phải chịu; trần 3 giữ được ô chữ + ô link.
+const MAX_BUBBLES = Math.max(3, parseInt(process.env.BOT_MAX_BUBBLES || '3', 10));
+// TRẦN KÝ TỰ CẢ LƯỢT — cửa này quan trọng hơn trần ô, vì 3 ô dài 200 ký tự vẫn là 600 ký tự dội
+// vào mặt khách. Đo cùng bộ dữ liệu, theo TỔNG độ dài lượt: <150 ký tự → khách nhắn tiếp 64,8% ·
+// 150–299 → 63,0% · 300–449 → 60,2% · 450–599 → 43,3% · ≥600 → 45,5%. VÁCH ĐÁ ở 450 ⇒ trần 420.
+// (Khách gõ trung vị 24 ký tự/tin, bot gõ trung vị 102 — bot đang nói gấp 3 lần khách.)
+const MAX_CHARS_PER_TURN = Math.max(150, parseInt(process.env.BOT_MAX_CHARS_PER_TURN || '420', 10));
 
 // Gộp THÔNG MINH mảng ô về tối đa `max` ô, KHÔNG chặt cụt mất ý:
 //  - ≤ max: giữ nguyên.
@@ -63,6 +71,30 @@ function capBubbles(messages, max = MAX_BUBBLES) {
     out = [...head, tail];
   }
   if (keepLink) out.push(keepLink); // link xuống cuối, đứng riêng để bung preview
+  return capChars(out);
+}
+
+// TRẦN KÝ TỰ CẢ LƯỢT (vá 06/09/2026). CẮT THEO Ô, TUYỆT ĐỐI KHÔNG cắt giữa câu — cắt cụt chữ là
+// lộ máy còn nhanh hơn nói dài. Giữ các ô ĐẦU cho tới khi chạm trần; ô link luôn được giữ (nó là
+// thứ khách bấm). Luôn giữ tối thiểu 1 ô để không sinh lượt rỗng (= bot im, lỗi 20/07).
+function capChars(arr, max = MAX_CHARS_PER_TURN) {
+  const tong = arr.reduce((a, m) => a + String(m).length, 0);
+  if (tong <= max) return arr;
+  const link = arr.find((m) => /https?:\/\//i.test(m)) || null;
+  const chuDaiLink = link ? String(link).length : 0;
+  const out = [];
+  let dem = 0;
+  for (const m of arr) {
+    if (link && m === link) continue;
+    const d = String(m).length;
+    if (out.length > 0 && dem + d + chuDaiLink > max) break;
+    out.push(m); dem += d;
+  }
+  if (!out.length) out.push(arr[0]);
+  if (link) out.push(link);
+  if (out.length < arr.length) {
+    console.log(`[capChars] lượt dài ${tong} ký tự > trần ${max} → giữ ${out.length}/${arr.length} ô (bỏ ô cuối, không cắt giữa câu)`);
+  }
   return out;
 }
 
