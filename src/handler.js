@@ -3,7 +3,7 @@ import { generateReply } from './gemini.js';
 import { sendMessages, isPageEnabled, hasStopLabel, hasCustomerLabel, getPageChannel } from './pancake.js'; // sendMessages dùng cả khi xin lại SĐT sai
 import * as store from './store.js';
 import { extractPhone, extractPhoneFromHistory, diagnoseBadPhone } from './utils.js';
-import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyLeadAm, notifyText, isUrgent } from './telegram.js';
+import { notifyLead, notifyHandover, notifyHandoverNudge, notifyBooking, notifyLeadAm, notifyText, isUrgent, baoLeadChuaSo } from './telegram.js';
 import { buildTouchMessages, loiMoiZaloOA } from './touches.js';
 import { trongKhungGioGui } from './care-send.js';
 import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
@@ -1047,7 +1047,9 @@ export async function handleIncoming(ev) {
         store.setKV(`khu_vuc:${conversationId}`, JSON.stringify({ ...kv, luc: Date.now() }));
         if (!cu || JSON.parse(cu).nhom !== kv.nhom) {
           console.log(`[khu-vuc] 🗺️ ${conversationId} → ${kv.nhom.toUpperCase()} (${kv.tinh})`);
-          if (kv.nhom === 'xa') {
+          // Luật 06/09 (anh Trình): chưa có số thì KHÔNG phiền group — telesale cũng không
+          // gọi được ai. Bot vẫn tự tư vấn bình thường, nhãn khu vực vẫn ghi để dùng sau.
+          if (kv.nhom === 'xa' && baoLeadChuaSo()) {
             notifyText(
               `🗺️ <b>KHÁCH Ở XA</b> — nhiều khả năng không tới khám được\n` +
               `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
@@ -1635,8 +1637,9 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
         store.setKV(`suattuvan_count:${conversationId}`, String(truoc + soOMoi));
       }
       // VÁ 06/09/2026 — SỔ ĐẾM SỐ LẦN BOT XIN SĐT (đếm theo LƯỢT, không theo ô).
-      // Dùng cho 2 việc: (a) báo LEAD ẤM gọi người ở dưới; (b) trần dí — prompt chỉ cho xin
-      // 1 lần, sổ này là cổng máy chặn nếu Gemini vẫn xin thêm.
+      // Dùng cho 2 việc: (a) báo LEAD ẤM (đã TẮT 06/09 20:59, còn sau env BAO_LEAD_CHUA_SO);
+      // (b) SỔ ĐO trần dí — prompt cho xin tối đa 2 lần (luật A.5), sổ này để đo có vượt không.
+      // ⚠️ Đây là SỔ ĐẾM, KHÔNG phải cổng chặn cứng — trần dí do prompt giữ.
       if (outMessages.some((m) => laOXinSo(m))) {
         const tr = parseInt(store.getKV(`xinso_count:${conversationId}`) || '0', 10) || 0;
         store.setKV(`xinso_count:${conversationId}`, String(tr + 1));
@@ -1679,7 +1682,10 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   // CHỈ BÁO TELEGRAM NỘI BỘ — không nhắn khách, không đổi nhãn, không đổi trạng thái đơn.
   // Chống spam: đúng 1 lần/hội thoại (KV `leadam_notified:`), và không báo nếu đã có số /
   // đã handover / đã báo booking (những đường đó đã gọi người rồi).
-  if (!captured && !alreadyCaptured && !reply.handover && !laConvDaKham(conversationId)) {
+  // 🔴 SỬA 06/09/2026 20:59 — anh Trình TẮT tin LEAD ẤM ("bot tự làm, tới người là có số").
+  // Giữ nguyên khối để bật lại bằng env BAO_LEAD_CHUA_SO=1, nhưng mặc định thoát sớm cho
+  // khỏi tốn công dựng tin + khỏi ghi log "ĐÃ GỌI NGƯỜI" sai sự thật.
+  if (baoLeadChuaSo() && !captured && !alreadyCaptured && !reply.handover && !laConvDaKham(conversationId)) {
     try {
       const kAm = `leadam_notified:${conversationId}`;
       const soTinKhach = (freshConv?.history || []).filter((h) => h.role === 'user').length;

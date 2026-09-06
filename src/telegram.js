@@ -73,6 +73,23 @@ function nutDaGoi(phone) {
   ]] };
 }
 
+// ── LUẬT 06/09/2026 20:59 — ANH TRÌNH CHỐT: KHÔNG BÁO GROUP KHI CHƯA CÓ SỐ ────────
+// Nguyên văn: "Bỏ cái vụ báo lead ấm cho anh, BOT xin số tốt hơn người, thông minh hơn
+// người. Hãy tự làm, tới người là có số chốt khách thôi, hoặc là có gì cực kỳ khó,
+// cực kỳ gấp thì mới báo group thôi."
+//
+// ⇒ Group telesale CHỈ nhận 3 loại tin:
+//    ① CÓ SĐT (notifyLead, notifyCallTouch)  → người vào GỌI, có việc làm ngay
+//    ② CỰC KỲ KHÓ (handover: khiếu nại · đòi gặp Bác sĩ · nản liệu trình · Gemini chết)
+//    ③ CỰC KỲ GẤP (isUrgent: dấu hiệu y tế nguy hiểm)
+// Mọi tin "khách chưa cho số" (LEAD ẤM · MUỐN ĐẶT LỊCH chưa số · khách ở xa) → BOT TỰ LO.
+//
+// Bật lại KHÔNG cần deploy: đặt env BAO_LEAD_CHUA_SO=1 trên Render rồi restart.
+// Mặc định '0' = tắt. Cổng đặt NGAY TRONG hàm gửi để không đường gọi nào lách được.
+export function baoLeadChuaSo() {
+  return String(process.env.BAO_LEAD_CHUA_SO || '0') === '1';
+}
+
 // Báo có LEAD mới (đã cho SĐT).
 // Nhãn kiểu khách (tâm lý) cho telesale biết cách tiếp cận.
 const CUSTOMER_TYPE_VI = {
@@ -112,6 +129,10 @@ export async function notifyLead({ name, phone, condition, summary, customerType
 // Báo ca MUỐN CHỐT LỊCH nhưng CHƯA để số → telesale vào chốt nóng (khách nóng, dễ mất).
 // Chỉ báo 1 lần/ca (handler dùng flag booking_notified chống trùng).
 export async function notifyBooking({ name, condition, summary, pageId, conversationId }) {
+  if (!baoLeadChuaSo()) {
+    console.log(`[telegram] ⏹️ BỎ báo "muốn đặt lịch (chưa số)" ${conversationId} — luật 06/09: bot tự lo, chưa có số thì không phiền group`);
+    return;
+  }
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
   let text =
     `📅 <b>KHÁCH MUỐN ĐẶT LỊCH (chưa có SĐT)</b>\n` +
@@ -133,6 +154,10 @@ export async function notifyBooking({ name, condition, summary, pageId, conversa
 // ⇒ Việc đúng của bot khi khách đã kể bệnh mà chưa cho số là GỌI NGƯỜI, không phải dí tiếp.
 // Chỉ BÁO NỘI BỘ (Telegram) — KHÔNG nhắn khách, KHÔNG đổi trạng thái. Đảo ngược được.
 export async function notifyLeadAm({ name, condition, summary, pageId, conversationId, soLuotKhach }) {
+  if (!baoLeadChuaSo()) {
+    console.log(`[telegram] ⏹️ BỎ báo LEAD ẤM ${conversationId} — luật 06/09: bot tự giữ khách, không đẩy sang người khi chưa có số`);
+    return;
+  }
   const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
   let text =
     `🟡 <b>LEAD ẤM — BOT ĐÃ XIN SỐ MÀ KHÁCH CHƯA CHO</b>\n` +
