@@ -9,6 +9,8 @@ import { trongKhungGioGui } from './care-send.js';
 import { isZaloPage, stripZaloPrefix, tagFollowerBenh, sendRequestInfo, sendFileByUrl, isOpenApiEnabled } from './zalo.js';
 import { normalizeMsg, noteBotSent, wasSentByBot, noteBotJustSent, lastBotSentAgoMs, ECHO_GRACE_MS, giongTinBot } from './echoguard.js';
 import { lookupMedi, buildContextTag } from './medi.js';
+import { napBang as napSoLieuTrinh, theLieuTrinh } from './lieutrinh.js';
+import { chanTinChuDong } from './gac20tr.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
 import { buildCarePlanTag } from './careplan.js';
 import { SALE_PAGE } from './conditions.js';
@@ -884,6 +886,21 @@ export async function handleIncoming(ev) {
     // + gắn quy trình chăm sóc + chặn link sale page (khối chung phía dưới).
     let daKhamHoSo = null;
 
+    // ===== SỔ LIỆU TRÌNH CỦA THẢO (anh Trình giao 06/09/2026) — xem src/lieutrinh.js =====
+    // Nạp 1 lần/lượt (có cache 15', fail-soft: sổ lỗi thì bỏ qua, bot chạy như cũ), rồi tra
+    // ĐỒNG BỘ ở mọi nhánh bên dưới. Đây là thứ vá đúng cái bệnh "thẻ ngữ cảnh chỉ có mỗi TÊN":
+    // sổ này là nơi DUY NHẤT ghi ca tiêm lớn đã làm gì, mấy lần, ngày nào.
+    try { await napSoLieuTrinh(); } catch { /* fail-soft */ }
+    /**
+     * Thẻ liệu trình cho ca này. Tra theo SĐT trước; sổ của Thảo hay bỏ trống SĐT
+     * (58/180 dòng mới có số) nên cho phép tra theo TÊN — nhưng CHỈ tên đã xác thực
+     * từ hồ sơ POS/MEDi, KHÔNG lấy tên khách tự gõ trong chat.
+     */
+    const theLTChoCa = (sdt, tenDaXacThuc) => {
+      try { return theLieuTrinh({ sdt, ten: tenDaXacThuc || null }); }
+      catch (e) { console.warn('[lieutrinh] dựng thẻ lỗi (bỏ qua):', e?.message); return null; }
+    };
+
     // ===== KHÁCH ĐÃ KHÁM theo SĐT — kênh FB (anh Trình chốt 02/07) =====
     // Nhiều ca ĐÃ ĐẾN KHÁM (đơn bắn trên Facebook / có hồ sơ EMR) nhưng hội thoại KHÔNG có nhãn
     // → trước đây bot vẫn đối xử như lead lạ. Giờ: biết SĐT (khách gõ / lịch sử / đã lưu)
@@ -902,6 +919,9 @@ export async function handleIncoming(ev) {
             isCustomer = true;
             daKhamHoSo = daKham;
             contextTag = buildDaKhamTag(daKham);
+            // Nối sổ liệu trình của Thảo (tên ở đây đến từ POS/MEDi → đã xác thực).
+            const ltFb = theLTChoCa(phoneKnown, daKham.name);
+            if (ltFb) contextTag += '\n' + ltFb;
             console.log(`[da-kham] 🧡 ${conversationId} SĐT ${phoneKnown} trùng ${daKham.source.toUpperCase()} (${daKham.name || '?'}) → chuyển CHĂM SÓC SAU KHÁM`);
           }
         } catch { /* fail-open */ }
@@ -923,7 +943,7 @@ export async function handleIncoming(ev) {
       const cachedCu = (!vetoDaKham && freshZ.medi_status === 'cu') ? store.getMediRecord(freshZ) : null;
       if (cachedCu) {
         daKhamHoSo = { source: 'medi', ...cachedCu };
-        contextTag = buildContextTag(cachedCu, conv.condition || null);
+        contextTag = buildContextTag(cachedCu, conv.condition || null, theLTChoCa(cachedCu?.phone || freshZ.phone, cachedCu?.name));
       } else {
         const phoneForLookup = phoneByRegex || freshZ.phone ||
           extractPhoneFromHistory(freshZ.history);
@@ -934,16 +954,17 @@ export async function handleIncoming(ev) {
           else if (!freshZ.medi_status) store.setMedi(conversationId, 'moi', null);
           if (record) {
             daKhamHoSo = record;
+            const ltZl = theLTChoCa(phoneForLookup, record.name);
             contextTag = record.source === 'medi'
-              ? buildContextTag(record, conv.condition || null)
-              : buildDaKhamTag(record);
+              ? buildContextTag(record, conv.condition || null, ltZl)
+              : buildDaKhamTag(record) + (ltZl ? '\n' + ltZl : '');
           } else {
-            contextTag = buildContextTag(null, conv.condition || null);
+            contextTag = buildContextTag(null, conv.condition || null, theLTChoCa(phoneForLookup, null));
           }
           console.log(`[enrich] ${conversationId} SĐT ${phoneForLookup} → ${record ? `BN_CŨ/${record.source} (${record.name || '?'})` : 'BN_MỚI'}`);
         } else {
           // chưa có số → chưa tra được, coi là BN mới tạm thời (bot Zalo sẽ khéo xin số để tra)
-          contextTag = buildContextTag(null, conv.condition || null);
+          contextTag = buildContextTag(null, conv.condition || null, theLTChoCa(phoneForLookup, null));
         }
       }
 
@@ -1194,6 +1215,21 @@ export async function handleRetouch(conv) {
       console.log(`[retouch] ${conversationId} khách ĐÃ KHÁM → bỏ chạm lead, để bill-care lo`);
       return;
     }
+    // ===== CỔNG CA LỚN ≥20 TRIỆU (anh Trình chốt 06/09/2026) — xem src/gac20tr.js =====
+    // Khách đã chi ≥20tr mà bot còn thiếu bệnh / dịch vụ đã làm / ngày làm → KHÔNG tự dập,
+    // đẩy telesale gõ tay. KHÔNG đốt lượt retouch: bổ sung hồ sơ xong là chuỗi chạy tiếp.
+    // Chỉ chặn lượt CHỦ ĐỘNG này; khách nhắn trước thì handleIncoming vẫn trả lời như thường.
+    {
+      const sdtCa = fresh.phone || extractPhoneFromHistory(fresh.history);
+      const g = await chanTinChuDong({
+        phone: sdtCa, ten: fresh.customer_name, conversation_id: conversationId,
+        page_id: pageId, nguon: 'retouch (chạm lại)', san: { benh: fresh.condition },
+      });
+      if (g.chan) {
+        console.warn(`[retouch] 🛑 ${conversationId} CA LỚN thiếu hồ sơ (${g.thieuVi.join(', ')}) → telesale gõ tay, bot im`);
+        return;
+      }
+    }
     const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
     await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name, { chuDong: true });
@@ -1250,6 +1286,20 @@ export async function handleBotTouch(conv, touchNo) {
       for (const n of [2, 3, 4, 5, 6, 7]) store.markTouchDone(conversationId, n);
       console.log(`[cham${touchNo}] ${conversationId} khách ĐÃ KHÁM → thoát chuỗi chạm lead`);
       return;
+    }
+    // ===== CỔNG CA LỚN ≥20 TRIỆU (anh Trình chốt 06/09/2026) — xem src/gac20tr.js =====
+    // KHÔNG markTouchDone: đây là HOÃN, không phải "đã chạm". Bổ sung hồ sơ xong thì cron
+    // sau chạm lại. Đánh dấu xong ở đây là mất luôn mốc chạm của một ca 50 triệu.
+    {
+      const sdtCa = fresh.phone || extractPhoneFromHistory(fresh.history);
+      const g = await chanTinChuDong({
+        phone: sdtCa, ten: fresh.customer_name, conversation_id: conversationId,
+        page_id: pageId, nguon: `7 chạm — chạm ${touchNo}`, san: { benh: fresh.condition },
+      });
+      if (g.chan) {
+        console.warn(`[cham${touchNo}] 🛑 ${conversationId} CA LỚN thiếu hồ sơ (${g.thieuVi.join(', ')}) → telesale gõ tay, bot im`);
+        return;
+      }
     }
 
     const daCoSo = store.isCaptured(fresh);

@@ -15,6 +15,7 @@ import { getAccessTokenNow, refreshAccessToken, zaloAgentV4, sendTexts } from '.
 // VÁ 20/07/2026: ZNS phải ghi sổ chống echo như mọi đường gửi khác — xem ghiSoEchoZns() bên dưới.
 import { noteBotSent, noteBotJustSent } from './echoguard.js';
 import { notifyText } from './telegram.js';
+import { chanTinChuDong } from './gac20tr.js';
 
 // Sinh mã voucher NGẪU NHIÊN THẬT + ký tự checksum (bảo mật — vá 10/07: mã cũ tính được từ SĐT).
 // Chỉ [A-Z0-9] (loại "Mã số" của ZNS + để Zalo render QR đúng), độ dài 9: tiền tố theo chương trình
@@ -358,6 +359,14 @@ export async function sendZnsVoucher(phone, { ten, maHoSo, ngayKham, chuongTrinh
   if (!VOUCHER_TEMPLATE) return { ok: false, ly_do: 'chua_cau_hinh_template' };
   const key = `zns_voucher_sent:${sdt}`;
   if (store.getKV(key)) return { ok: false, ly_do: 'da_gui_roi' };
+  // ===== CỔNG CA LỚN ≥20 TRIỆU (anh Trình chốt 06/09/2026) — xem src/gac20tr.js =====
+  // Voucher là tin TIẾP THỊ chủ động. Bắn phiếu giảm giá tầm soát 150k cho người vừa chi
+  // 50 triệu mà bot còn không biết họ tiêm gì = dội. Chặn thì telesale được báo để gõ tay.
+  // KHÔNG ghi cờ đã-gửi → bổ sung hồ sơ xong vẫn phát voucher được.
+  {
+    const g = await chanTinChuDong({ phone, ten, nguon: 'ZNS voucher' });
+    if (g.chan) return { ok: false, ly_do: 'ca_lon_thieu_ho_so', ghi_chu: `Thiếu: ${g.thieuVi.join(', ')} — đã báo telesale gõ tay.` };
+  }
   // Chống -1472: số đã nhận đủ 4 tin Tag3/tháng (voucher/rating/quan-tâm) → KHÔNG gửi thêm (khỏi tốn phí + tránh dội trần).
   if (!tag3ConQuota(sdt)) return { ok: false, ly_do: 'cham_tran_tag3_thang', ghi_chu: `${sdt.slice(0, 5)}*** đã nhận đủ ${TAG3_TRAN_THANG} tin Hậu mãi tháng ${thangVN()}` };
 
@@ -666,6 +675,14 @@ export async function sendZnsQuanTamOA(phone, { ten } = {}) {
   const sdt = phone84(phone);
   if (!sdt) return false;
   if (!tag3ConQuota(sdt)) return false; // chống -1472: đã đủ 4 tin Tag3/tháng
+  // ===== CỔNG CA LỚN ≥20 TRIỆU (anh Trình chốt 06/09/2026) — xem src/gac20tr.js =====
+  {
+    const g = await chanTinChuDong({ phone, ten, nguon: 'ZNS mời quan tâm OA' });
+    if (g.chan) {
+      console.warn(`[zns] 🛑 CA LỚN thiếu hồ sơ (${g.thieuVi.join(', ')}) → không mời OA tự động, telesale gõ tay`);
+      return false;
+    }
+  }
   const goi = async () => axios.post(ZNS_API, {
     phone: sdt,
     template_id: QUANTAM_OA_TEMPLATE,

@@ -15,6 +15,7 @@ import { sendTexts, isOpenApiEnabled } from './zalo.js';
 import { noteBotSent, noteBotJustSent } from './echoguard.js';
 import * as quota from './quota.js';
 import * as store from './store.js';
+import { chanTinChuDong } from './gac20tr.js';
 
 // Đọc mốc khách nhắn cuối (last_customer_msg_at) để biết tin gửi có trong cửa sổ 48h miễn phí không.
 // Thử 3 đường: conv theo id → conv Zalo suy từ user_id → conv theo SĐT. Đọc-không-được → null (TÍNH PHÍ).
@@ -184,6 +185,24 @@ export async function sendCareMessages(target, messages, opts = {}) {
   if (!conDuTranNgay({ conversation_id, zalo_user_id, phone: target?.phone }, messages.length)) {
     console.warn(`[care-send] 🚧 BỎ gửi${opts.code ? ` ${opts.code}` : ''}: khách đã nhận đủ ${TRAN_TIN_NGAY} tin hôm nay (chống dội tin).`);
     return false;
+  }
+
+  // ===== CỔNG CA LỚN ≥20 TRIỆU (anh Trình chốt 06/09/2026) =====
+  // Khách đã chi ≥20tr mà hồ sơ bot còn trống (thiếu bệnh / dịch vụ đã làm / ngày làm)
+  // → MÁY KHÔNG TỰ NHẮN, đẩy telesale gõ tay. Gác Ở ĐÂY vì care-send là chốt chặn chung
+  // của billengine + rebillengine + wakeup — chặn 1 chỗ, cả 3 engine đều dính.
+  // HOÃN (return false), KHÔNG đánh dấu đã gửi: bổ sung hồ sơ xong thì chuỗi tự chạy tiếp.
+  // Chỉ chặn tin CHỦ ĐỘNG — đường bot trả lời tin khách không đi qua đây.
+  {
+    const g = await chanTinChuDong({
+      phone: target?.phone, ten: target?.name,
+      conversation_id, page_id, nguon: `care-send${opts.code ? ` ${opts.code}` : ''}`,
+      san: { benh: target?.condition, dichVu: target?.treatment, ngayLam: target?.bill_date },
+    });
+    if (g.chan) {
+      console.warn(`[care-send] 🛑 BỎ gửi${opts.code ? ` ${opts.code}` : ''}: CA LỚN thiếu hồ sơ (${g.thieuVi.join(', ')}) → telesale gõ tay.`);
+      return false;
+    }
   }
 
   // TÁCH TIN GIAO DỊCH: nếu tin gửi trong cửa sổ 48h kể từ lần khách nhắn cuối → MIỄN PHÍ,

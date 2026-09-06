@@ -18,6 +18,10 @@ import https from 'node:https';
 import * as store from './store.js';
 import { CONDITION_VI } from './conditions.js';
 import { noteBotSent, noteBotJustSent } from './echoguard.js';
+// CỔNG GÁC ĐẦU RA — kênh Zalo OpenAPI là đường gửi ĐỘC LẬP với Pancake (care-send, chuỗi
+// follow, mời review, gửi link cẩm nang đều đi lối này) ⇒ phải có cổng riêng, không thì
+// nửa số tin bot gửi ra ngoài không ai gác. Đặt trong sendText = điểm cuối cùng của lối này.
+import { locMotO } from './conggac.js';
 
 // ÉP IPv4 cho MỌI call tới hạ tầng Zalo. Bắt tận tay 08/07 trong container Render:
 // oauth.zaloapp.com có bản ghi IPv6 nhưng mạng Render không đi được IPv6 tới đó →
@@ -155,8 +159,16 @@ async function oaCall(method, pathName, { params, data, v2 } = {}) {
  */
 export async function sendText(userId, text) {
   if (!isOpenApiEnabled()) return false;
+  // CỔNG GÁC: soi trước khi đẩy ra Zalo. Tin đi qua pancake.sendOne đã được soi một lần —
+  // soi lại ở đây là VÔ HẠI (chữ đã sạch thì cổng trả nguyên trạng) và bịt được các lối gọi
+  // thẳng sendText/sendTexts (follow.js, care-send.js, zns.js:563, index.js mời review).
+  const textSach = locMotO(text, { conversationId: convIdPancake(userId) });
+  if (!textSach) {
+    console.warn(`[zalo] ⛔ cổng gác chặn sạch tin gửi uid ${userId} → không gửi.`);
+    return false;
+  }
   const body = await oaCall('post', 'message/cs', {
-    data: { recipient: { user_id: String(userId) }, message: { text: String(text || '').slice(0, 2000) } },
+    data: { recipient: { user_id: String(userId) }, message: { text: String(textSach).slice(0, 2000) } },
   });
   const ok = Boolean(body && body.error === 0);
   // Ghi sổ chống echo: tin OpenAPI cũng dội về webhook Pancake dưới dạng tin page —
@@ -164,7 +176,9 @@ export async function sendText(userId, text) {
   // khách follow, bot chào + hỏi vùng đau, rồi tự khoá mồm vì echo chính mình).
   if (ok) {
     const cid = convIdPancake(userId);
-    if (cid) { noteBotSent(cid, text); noteBotJustSent(cid); }
+    // ⚠️ GHI SỔ ECHO BẰNG `textSach` — chữ THẬT SỰ đã gửi. Ghi chữ gốc thì echo Pancake dội về
+    // không khớp sổ → handler tưởng telesale gõ tay → bot tự khoá 6h (đúng ca Loan Le 07/07).
+    if (cid) { noteBotSent(cid, textSach); noteBotJustSent(cid); }
   }
   return ok;
 }

@@ -1,6 +1,9 @@
 // Gemini client: nạp system prompt (bộ não), ép trả JSON, hỗ trợ mode retouch.
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config, SYSTEM_PROMPT, SYSTEM_PROMPT_ZALO } from './config.js';
+// docTien/GIA_THAT: cổng DMKT dưới đây phải BIẾT 5 mức giá anh Trình đã duyệt 06/09, nếu không
+// nó xoá đúng những câu mà bảng giá vừa dạy bot nói (xem chú thích "VÁ 06/09" ở viPhamDmkt).
+import { docTien, GIA_THAT } from './conggac.js';
 
 const genAI = new GoogleGenerativeAI(config.gemini.apiKey || 'MISSING_KEY');
 
@@ -107,14 +110,61 @@ const RE_CAM_DMKT = new RegExp(`(${_CAM})`);
 const RE_CHAO_BAN = new RegExp(`(ben (em|minh|con)|phong kham|chung toi|o day)[^.!?\\n]{0,30}?(co|lam|thuc hien|trien khai|ap dung)[^.!?\\n]{0,25}?(${_CAM})`);
 const RE_TIEN_DMKT = /(\d[\d.,]*\s*(tr|trieu|k\b|nghin|dong|d\b)|gia bao nhieu|bao nhieu tien|chi phi la|gia la)/;
 
+// 5 mức tiền anh Trình đã duyệt (gia-va-uu-dai.md). Câu chỉ chứa các mức này thì KHÔNG phải
+// "báo giá bừa" — nó chính là câu bảng giá dạy bot nói.
+const TIEN_DA_DUYET = new Set(Object.values(GIA_THAT));
+
 export function viPhamDmkt(msg) {
   // Gộp số có dấu phân cách nghìn (1.800.000 → 1800000) TRƯỚC khi tách câu — không thì dấu chấm
   // trong số tự cắt câu, làm rời từ cấm khỏi con tiền (ép thử 10/08 lọt đúng ca này).
   const t = boDauDmkt(msg).replace(/(\d)[.,](?=\d)/g, '$1');
+
+  // 🔴 VÁ 06/09/2026 — CỔNG NÀY ĐANG XOÁ CHÍNH CÂU BẢNG GIÁ VỪA DẠY BOT NÓI.
+  // Cổng dựng 10/08, lúc đó DMKT chỉ có khám + kê toa nên MỌI câu có "dịch nhờn/PRP" + con tiền
+  // đều bị xoá. Ngày 06/09 anh Trình cấp bảng giá (`gia-va-uu-dai.md`) và chốt: "Phòng khám CÓ
+  // LÀM... Trong inbox thì em có thể thoải mái được". Ép thử 06/09: 5/6 câu mẫu ✅ ĐÚNG trong
+  // chính file bảng giá bị cổng này chặn — kể cả câu mẫu "Chi phí tiêm dịch nhờn từ 5 triệu ạ."
+  // Xoá hết ô ⇒ rơi nhánh degraded ⇒ khách hỏi giá nhận lại "chờ em chút xíu" = đúng cơ chế đã
+  // mất khách thật ngày 01/09.
+  // NAY: chỉ coi là "báo giá bừa" khi có con tiền NGOÀI 5 mức đã duyệt. Con tiền ĐÚNG bảng giá
+  // thì cho qua (và `src/conggac.js` vẫn soi tiếp: đúng số, đủ chữ "từ", không lọt chỗ công khai).
+  // ⚠️ Vế `chao_ban` GIỮ NGUYÊN, cố ý không nới — đó là nhóm cấm (A), khung phạt nặng nhất.
+  const coTienBia = docTien(String(msg || '')).some((x) => !TIEN_DA_DUYET.has(x.tri));
+
   for (const cau of t.split(/[.!?\n]+/)) {
     if (!RE_CAM_DMKT.test(cau)) continue;
     if (RE_CHAO_BAN.test(cau)) return 'chao_ban';
-    if (RE_TIEN_DMKT.test(cau)) return 'bao_gia';
+    if (coTienBia && RE_TIEN_DMKT.test(cau)) return 'bao_gia';
+  }
+  return null;
+}
+
+/**
+ * ĐỌC JSON MODEL TRẢ VỀ — hàm thuần, KHÔNG BAO GIỜ NÉM.
+ * Tách khỏi generateReply (06/09) để test được mà không phải gọi API thật.
+ * Ba lớp: (1) parse thẳng · (2) bóc khối {...} khi model bọc ```json / kèm chữ thừa ·
+ * (3) chịu thua → trả null để caller dùng CÂU TREO (đường lui), tuyệt đối không để ném lên.
+ * Trả null cho: rỗng · null/undefined · JSON hỏng · JSON hợp lệ nhưng không phải object
+ * (số/chuỗi/mảng) — vì sanitize() cần một object để trải.
+ */
+export function docJsonModel(text) {
+  const s = typeof text === 'string' ? text : (text == null ? '' : String(text));
+  if (!s.trim()) return null;
+  const laObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  try {
+    const v = JSON.parse(s);
+    if (laObj(v)) return v;
+  } catch { /* rơi xuống lớp 2 */ }
+  // Lớp 2: model hay bọc ```json ... ``` hoặc kèm lời dẫn — bóc khối ngoặc nhọn ngoài cùng.
+  // THỬ THU DẦN từ đuôi: model bị cắt giữa chừng (maxOutputTokens) thì khối cuối hỏng, nhưng
+  // vẫn có thể còn một khối con hợp lệ. Rẻ, và cứu được đúng ca JSON bị cụt.
+  const dau = s.indexOf('{');
+  if (dau < 0) return null;
+  for (let cuoi = s.lastIndexOf('}'); cuoi > dau; cuoi = s.lastIndexOf('}', cuoi - 1)) {
+    try {
+      const v = JSON.parse(s.slice(dau, cuoi + 1));
+      if (laObj(v)) return v;
+    } catch { /* thử khối ngắn hơn */ }
   }
   return null;
 }
@@ -286,14 +336,7 @@ export async function generateReply(history, mode = 'reply', customerName = null
     }
     const text = result.response.text();
 
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      // đôi khi model bọc trong ```json ... ``` → bóc ra
-      const m = text.match(/\{[\s\S]*\}/);
-      parsed = m ? JSON.parse(m[0]) : null;
-    }
+    const parsed = docJsonModel(text);
     if (!parsed) {
       console.error('[gemini] JSON parse fail. Raw:', text?.slice(0, 200));
       // VÁ 20/07/2026: trả FALLBACK có câu treo XOAY VÒNG (đừng trả hằng số → lượt sau bị lọc → bot im).

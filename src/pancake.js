@@ -11,6 +11,14 @@ import axios from 'axios';
 import { config, pagesThieuToken } from './config.js';
 import { isOpenApiEnabled, sendText as zaloSendText } from './zalo.js';
 import * as store from './store.js'; // + phanh giữa loạt: người thật vào là ngừng các ô còn lại (vá 13/08)
+// CỔNG GÁC ĐẦU RA (06/09/2026) — kiểm câu bot sắp gửi ngay TRƯỚC lúc gọi API.
+// conggac.js KHÔNG import module nào của repo (telegram nạp động) ⇒ không sinh vòng import.
+import { locTruocKhiGui, locMotO } from './conggac.js';
+// echoguard: cổng gác có thể SỬA chữ ô tin. 12 call site ở handler.js/care-send.js ghi sổ
+// chống-echo bằng chữ GỐC (trước cổng) → chữ THẬT gửi đi không có trong sổ → khi Pancake dội
+// echo về, handler tưởng telesale gõ tay → markHumanTaken → BOT CÂM 6H. Nên ghi THÊM bản đã
+// qua cổng vào sổ (ghi thêm, không thay) để bản nào dội về cũng khớp.
+import { noteBotSent } from './echoguard.js';
 
 const API_BASE = process.env.PANCAKE_API_BASE || 'https://pages.fm/api/public_api/v1';
 const API_BASE_V1 = process.env.PANCAKE_API_BASE_V1 || 'https://pages.fm/api/v1';
@@ -48,7 +56,7 @@ const MAX_CHARS_PER_TURN = Math.max(150, parseInt(process.env.BOT_MAX_CHARS_PER_
 //  - Ô chứa 'http' (link/clip) cần ĐỨNG RIÊNG (để FB bung preview) → tách các ô link ra, ưu tiên
 //    gộp/bỏ các ô CHỮ trùng lặp trước, giữ 1 ô link (nếu còn chỗ, ưu tiên link cuối = mới nhất).
 // KHÔNG bao giờ trả mảng rỗng (vào rỗng thì trả rỗng).
-function capBubbles(messages, max = MAX_BUBBLES) {
+export function capBubbles(messages, max = MAX_BUBBLES) {
   const arr = (Array.isArray(messages) ? messages : []).filter((m) => m != null && String(m).trim() !== '');
   if (arr.length === 0) return [];
   if (arr.length <= max) return arr;
@@ -808,6 +816,16 @@ async function sendOne(pageId, conversationId, text) {
  *   AI THÊM CALLER MỚI: phải kiểm giá trị trả về trước khi ghi lịch sử / cắm cờ đã-gửi / trừ quota.
  */
 export async function sendMessages(pageId, conversationId, messages) {
+  // CỔNG GÁC ĐẦU RA — chạy TRƯỚC capBubbles để cổng nhìn thấy NGUYÊN LƯỢT (gộp ô rồi thì cụm
+  // vi phạm có thể bị nối vào giữa ô khác, khó soi hơn). Mọi nguồn tin bot — dispatch, chuỗi
+  // chạm, retouch, care, giao cẩm nang — đều đi qua đây, không có đường lách.
+  const truocCong = Array.isArray(messages) ? messages.slice() : [messages];
+  messages = locTruocKhiGui(messages, { pageId, conversationId });
+  // Cổng có sửa chữ → ghi THÊM bản đã sửa vào sổ chống-echo (xem chú thích ở import).
+  if (messages.length !== truocCong.length || messages.some((m, i) => m !== truocCong[i])) {
+    try { messages.forEach((m) => noteBotSent(conversationId, m)); }
+    catch (e) { console.warn('[pancake] ghi sổ echo bản đã qua cổng lỗi (bỏ qua):', e?.message || e); }
+  }
   // TRẦN BÓNG CỨNG: gộp/cắt xuống ≤ MAX_BUBBLES ở tầng gửi (điểm nghẽn duy nhất) — chống dội bom.
   messages = capBubbles(messages);
   const tBatDauSec = Math.floor(Date.now() / 1000);
@@ -861,11 +879,20 @@ export async function replyComment(pageId, conversationId, commentId, text) {
   // ⚠️ CHƯA KIỂM CHỨNG: action 'reply_comment' trên làn v1+USER token chưa có bằng chứng chạy
   // (MCP pancake không có tool comment). Vì goiPancake vẫn giữ làn page token, hụt nhất là bằng
   // hành vi hôm nay — không xấu đi. Soi log lượt đầu sau deploy.
+  // CỔNG GÁC ĐẦU RA — CHẾ ĐỘ CÔNG KHAI. Đây là chỗ SỞ Y TẾ ĐỌC ĐƯỢC: siết thêm hai tầng so
+  // với inbox — cấm MỌI giá thủ thuật (nhóm cấm B, nặng nhất) và cấm nhắc điện xung (nhóm A,
+  // kỹ thuật Sở CHƯA duyệt). Cổng rỗng đầu ra thì KHÔNG gửi gì cả: thà im dưới một comment
+  // công khai còn hơn để lại bằng chứng vi phạm nằm vĩnh viễn trên tường page.
+  const textSach = locMotO(text, { pageId, conversationId, congKhai: true });
+  if (!textSach) {
+    console.warn(`[pancake] ⛔ cổng gác chặn rep comment công khai (conv ${conversationId}) → KHÔNG gửi.`);
+    return false;
+  }
   const kq = await goiPancake({
     method: 'post',
     pageId,
     duongDan: `/conversations/${conversationId}/messages`,
-    body: { message: text, action: 'reply_comment', comment_id: commentId },
+    body: { message: textSach, action: 'reply_comment', comment_id: commentId },
     viec: `rep comment (conv ${conversationId}, comment ${commentId})`,
   });
   return kq.ok;
@@ -881,6 +908,8 @@ export async function sendPrivateReply(pageId, conversationId, commentId, messag
   // VÁ 20/07/2026 (vòng 4): cùng cơ chế chọn token với sendOne/replyComment (goiPancake).
   // Private reply = đường KÉO người comment vào inbox — chính cửa tiền ads. Trước đây chỉ đi
   // public_api + page token → chết y hệt 29 ca "access_token renewed" trong 1 giờ.
+  // CỔNG GÁC ĐẦU RA: private reply là tin nhắn RIÊNG (không phải nơi Sở thấy) → soi mức inbox.
+  messages = locTruocKhiGui(messages, { pageId, conversationId });
   // TRẦN BÓNG CỨNG: chống dội bom ngay cả với private reply (xem capBubbles).
   messages = capBubbles(messages);
   let okAny = false;
