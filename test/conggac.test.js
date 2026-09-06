@@ -347,3 +347,37 @@ test('reMem — chịu dấu, chịu hoa thường, không ăn lan sang từ kh�
   assert.ok(!reMem('cam kết').test('camXket'));                    // chữ cái không được chen
   assert.ok(!reMem('dứt điểm').test('dứt điểmm'));                 // không dính vào giữa từ khác
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VÁ 06/09/2026 19:45 — HAI CA CHẶN OAN THẬT, Sếp Trình bắt tại trận trên Telegram.
+// Cổng vừa deploy lúc 19:31 thì 19:35–19:36 đã chặn nhầm 2 ô mà bot nói ĐÚNG.
+// Đây là bài học "cổng mới nuốt chính cái não nó phải bảo vệ" — cùng họ với cổng DMKT
+// cũ nuốt bảng giá mới. Giữ 2 test này VĨNH VIỄN để không tái phát.
+// ─────────────────────────────────────────────────────────────────────────────
+test('CHẶN OAN 1: "tư vấn miễn phí" KHÔNG phải ưu đãi bịa', () => {
+  const o = ganhCong(['Dạ tình trạng của mình nên được Bác sĩ xem kỹ để tư vấn đúng hướng ạ, '
+    + 'mình để lại số để Bác sĩ gọi tư vấn miễn phí nha 🙏']);
+  assert.equal(o.viPham.filter((v) => v.loai === 'uu_dai_bia').length, 0,
+    'câu xin số kèm "gọi tư vấn miễn phí" phải ĐI QUA — nó nằm sẵn 9 chỗ trong system-prompt');
+  assert.equal(o.oCuoi.length, 1, 'không được nuốt ô');
+});
+
+test('CHẶN OAN 2: giá neo 1.300.000đ là giá gốc HỢP LỆ', () => {
+  const o = ganhCong(['Còn gói khám chuyên khoa + siêu âm tầm soát thì 300.000đ thôi ạ '
+    + '(giá gốc 1.300.000đ).']);
+  assert.equal(o.viPham.filter((v) => v.loai === 'gia_bia').length, 0,
+    '1.300.000đ là giá neo chính thức, có ở 4 chỗ trong system-prompt');
+  assert.equal(o.oCuoi.length, 1, 'không được nuốt ô');
+});
+
+test('vẫn CHẶN ưu đãi bịa thật (không nới quá tay)', () => {
+  const o = ganhCong(['Bên em đang giảm thêm 20% cho khách mới ạ, tặng luôn 1 buổi massage.']);
+  assert.ok(o.viPham.some((v) => v.loai === 'uu_dai_bia'),
+    'ưu đãi ngoài 2 khoản duyệt vẫn phải bị chặn');
+});
+
+test('vẫn CHẶN giá bịa thật (không nới quá tay)', () => {
+  const o = ganhCong(['Gói này bên em 2.750.000đ thôi ạ.']);
+  assert.ok(o.viPham.some((v) => v.loai === 'gia_bia'),
+    'con số ngoài bảng giá vẫn phải bị chặn');
+});

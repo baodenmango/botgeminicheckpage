@@ -37,6 +37,13 @@ export const GIA_THAT = {
   // Hai ưu đãi ĐÃ DUYỆT (06/09/2026) — ngoài hai số này là bịa:
   KHAM_UU_DAI: 150000, // giảm 50% phí khám: 300.000đ → 150.000đ (BHYT / HS-SV / CNVC / >60 tuổi)
   DIEN_XUNG: 400000,   // tặng 1 lần điện xung trị liệu — trị giá 400.000đ
+  // ⚠️ VÁ 06/09/2026 19:45 — CHẶN OAN THẬT, Sếp Trình bắt tại trận.
+  // Cổng chặn ô: «Còn gói khám chuyên khoa + siêu âm tầm soát thì 300.000đ thôi ạ
+  // (giá gốc 1.300.000đ).» — báo `gia_bia (1.300.000đ)`. NHƯNG 1.300.000đ là GIÁ NEO
+  // CHÍNH THỨC, nằm sẵn ở 4 CHỖ trong `system-prompt.md` (dòng 15, 20, 237, 455) và là
+  // "MỒI CHỦ LỰC khi khách hỏi giá". Bot nói ĐÚNG, cổng chặn SAI ⇒ khách mất câu chào giá.
+  // Bài học: danh sách giá hợp lệ phải ĐỐI CHIẾU VỚI NÃO, không tự liệt kê theo trí nhớ.
+  KHAM_GIA_GOC: 1300000, // giá gốc gói khám — dùng để NEO cạnh mốc 300.000đ
 };
 // Tập số tiền HỢP LỆ. Bất kỳ con tiền nào khác trong câu nói về giá ⇒ vi phạm.
 const TIEN_HOP_LE = new Set(Object.values(GIA_THAT));
@@ -209,6 +216,13 @@ export function docTien(chuoi) {
 // "Em giữ suất ưu đãi này cho mình nha" cũng chứa chữ "ưu đãi" — chặn nó là chặn
 // đúng đòn đổi-ưu-đãi-lấy-số, thứ mạnh nhất bot có (luật ⑥ của gia-va-uu-dai.md).
 const RE_TU_UU_DAI = /([ưu]u [đd][ãa]i|khuy[ếe]n m[ãa]i|khuy[ếe]n m[ạa]i|gi[ảa]m gi[áa]|gi[ảa]m th[êe]m|gi[ảa]m\s*\d+\s*%|mi[ễe]n ph[íi]|t[ặa]ng|voucher|combo|qu[àa] t[ặa]ng|freeship)/i;
+// ⚠️ VÁ 06/09/2026 19:45 — CHẶN OAN THẬT, Sếp Trình bắt tại trận.
+// Cổng chặn ô: «…mình để lại số để Bác sĩ gọi tư vấn miễn phí nha 🙏» — báo `uu_dai_bia`,
+// chỉ vì dính chữ "miễn phí". Nhưng "TƯ VẤN/GỌI miễn phí" KHÔNG phải ưu đãi — nó tả việc
+// cuộc gọi không mất tiền, đúng sự thật, và nằm sẵn 9 CHỖ trong `system-prompt.md`.
+// Chặn nó = chặn đúng câu xin số của bot ⇒ mất luôn cơ hội lấy SĐT.
+// Chỉ coi là ưu đãi khi "miễn phí" gắn với MÓN LỢI VẬT CHẤT, không phải với lời tư vấn.
+const RE_MIEN_PHI_HOP_LE = /(t[ưu] v[ấa]n|g[ọo]i|nh[ắa]n|inbox|tin nh[ắa]n|trao [đd][ổo]i|h[ỗo] tr[ợo]|gi[ảa]i [đd][áa]p)\s*(l[àa]\s*)?mi[ễe]n ph[íi]|mi[ễe]n ph[íi]\s*(cho\s*)?(t[ưu] v[ấa]n|g[ọo]i|nh[ắa]n)/i;
 // …phải KÈM một MÓN LỢI CỤ THỂ mới tính là đang hứa ưu đãi.
 const RE_MON_LOI = /(\d\s*%|mi[ễe]n ph[íi]|t[ặa]ng|voucher|combo|qu[àa]|gi[ảa]m th[êe]m|khuy[ếe]n m[ãa]i|khuy[ếe]n m[ạa]i)/i;
 // Hai khuôn ĐÃ DUYỆT.
@@ -381,9 +395,12 @@ function soiMotO(oGoc, { congKhai = false } = {}) {
   // --- ƯU ĐÃI BỊA → CHẶN ---
   {
     const soi = boHtml(o);
-    if (RE_TU_UU_DAI.test(soi) && RE_MON_LOI.test(soi)) {
-      const laUuDai1 = RE_UU_DAI_1.test(soi) && RE_UU_DAI_1_BOI_CANH.test(soi);
-      const laUuDai2 = RE_UU_DAI_2.test(soi);
+    // Gỡ cụm "tư vấn/gọi miễn phí" ra TRƯỚC khi dò ưu đãi — nếu sau khi gỡ mà không còn
+    // từ ưu đãi nào thì đây là câu xin số bình thường, KHÔNG phải chào ưu đãi.
+    const soiUuDai = soi.replace(RE_MIEN_PHI_HOP_LE, ' ');
+    if (RE_TU_UU_DAI.test(soiUuDai) && RE_MON_LOI.test(soiUuDai)) {
+      const laUuDai1 = RE_UU_DAI_1.test(soiUuDai) && RE_UU_DAI_1_BOI_CANH.test(soiUuDai);
+      const laUuDai2 = RE_UU_DAI_2.test(soiUuDai);
       if (!laUuDai1 && !laUuDai2) {
         viPham.push({ loai: 'uu_dai_bia', xuLy: 'chan', cum: 'ưu đãi ngoài 2 khoản đã duyệt' });
         return { o: null, viPham };
