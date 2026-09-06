@@ -578,18 +578,46 @@ export async function handleIncoming(ev) {
     // gắn cờ KHẨN nếu có dấu hiệu y tế nguy hiểm.
     if (store.isHandover(conv)) {
       const urgent = isUrgent(messageText);
-      console.log(`[handler] ${conversationId} handover + khách nhắn tiếp${urgent ? ' (KHẨN)' : ''} → nhắc người thật`);
-      store.appendHistory(conversationId, 'user', messageText);
-      try {
-        await notifyHandoverNudge({
-          name: customerName || conv.customer_name,
-          messageText,
-          urgent,
-          pageId,
-          conversationId,
-        });
-      } catch (e) { console.error('[handler] nudge lỗi:', e?.message); }
-      return; // vẫn KHÔNG để bot tự trả lời ca handover
+      // ── VÁ 06/09/2026 22:5x — HAI LỖI CÙNG MỘT CHỖ (anh Trình bắt qua ca Vi Thị Khánh Linh) ──
+      // ① Tin 🔔 "Khách (đã giao người) nhắn tiếp" là RÁC với group: khách gõ đúng chữ "Tư vấn",
+      //    không khó không gấp, mà vẫn nổ chuông lúc 22:37 Chủ Nhật. Anh Trình: "Có vậy mà cũng
+      //    báo group, đừng báo group mấy cái như thế này." ⇒ chỉ còn báo khi CÓ CỜ KHẨN.
+      // ② Nặng hơn: handover là ÁN CHUNG THÂN. `status='handover'` cắm một lần là bot IM MÃI MÃI —
+      //    `clearHandover` nằm sẵn trong store.js mà KHÔNG DÒNG NÀO GỌI. Ca này bị cắm 18/08;
+      //    ngày 06/09 khách BẤM MỘT QUẢNG CÁO MỚI (tiền ads thật) rồi gõ "Tư vấn" → bot cấm khẩu,
+      //    người không ai gõ, khách nhận đúng sự im lặng. Khoá 19 ngày vì một câu bí hồi tháng trước.
+      // ⇒ Khách quay lại sau khoảng lặng dài = CHUYỆN CŨ ĐÃ ĐÓNG → mở khoá, bot tiếp như khách mới.
+      //    Trừ 3 lý do nhạy cảm (opt-out · nản liệu trình · đòi Bác sĩ) — mấy ca đó khoá vĩnh viễn,
+      //    bot chen vào là đổ dầu vào lửa (ca Bé Tuyết 03/08, ca Duy Cường 20/08).
+      const lyDoHO = store.lyDoHandover(conversationId);
+      const khoaCung = store.HANDOVER_KHOA_CUNG.has(lyDoHO);
+      const nguongGio = parseInt(process.env.HANDOVER_MO_LAI_GIO || '72', 10);
+      const langGiay = conv.last_customer_msg_at
+        ? Math.floor(Date.now() / 1000) - conv.last_customer_msg_at
+        : Infinity;
+      const duLang = langGiay >= nguongGio * 3600;
+
+      if (!khoaCung && duLang && !urgent) {
+        store.clearHandover(conversationId);
+        conv.status = 'active'; // đồng bộ bản trong RAM để các lớp dưới không đọc cờ cũ
+        const ngayLang = langGiay === Infinity ? '?' : (langGiay / 86400).toFixed(1);
+        console.log(`[handover] ⏰ ${conversationId} MỞ KHOÁ — lý do "${lyDoHO}", khách im ${ngayLang} ngày rồi quay lại → bot tiếp tục tư vấn`);
+        // KHÔNG return, KHÔNG appendHistory ở đây — để luồng chính chạy tiếp như hội thoại thường.
+      } else {
+        store.appendHistory(conversationId, 'user', messageText);
+        if (urgent) {
+          console.log(`[handler] ${conversationId} handover + khách nhắn tiếp (KHẨN) → nhắc người thật`);
+          try {
+            await notifyHandoverNudge({
+              name: customerName || conv.customer_name,
+              messageText, urgent, pageId, conversationId,
+            });
+          } catch (e) { console.error('[handler] nudge lỗi:', e?.message); }
+        } else {
+          console.log(`[handler] ${conversationId} handover (lý do "${lyDoHO}"${khoaCung ? ', KHOÁ CỨNG' : `, mới im ${(langGiay / 3600).toFixed(1)}h < ${nguongGio}h`}) → bot im, KHÔNG báo group (luật 06/09)`);
+        }
+        return; // vẫn KHÔNG để bot tự trả lời ca handover
+      }
     }
 
     // CỜ TẮT BOT theo NHÃN Pancake: telesale đã gọi/chốt lịch khám (xảy ra NGOÀI inbox)
@@ -664,7 +692,7 @@ export async function handleIncoming(ev) {
     // Xử: bật opt_out (dừng TOÀN BỘ engine chăm) + xin lỗi ĐÚNG 1 lần + giao người thật.
     if (laTinXinNgung(messageText) && !store.isOptedOut(store.getConversation(conversationId))) {
       store.setOptOut(conversationId);
-      store.setHandover(conversationId); // bot IM hẳn, để người thật quyết có cứu hay không
+      store.setHandover(conversationId, 'opt_out'); // bot IM hẳn, để người thật quyết có cứu hay không
       // Xin lỗi 1 lượt DUY NHẤT rồi im hẳn — khách đang bực vì bị dội tin, nói nhiều là phản tác dụng.
       // Cờ kv chặn cả trường hợp khách nhắn thêm vài tin bực nữa (mỗi tin lại xin lỗi = dội tiếp).
       const daXinLoi = store.getKV(`optout_xinloi:${conversationId}`);
@@ -707,7 +735,7 @@ export async function handleIncoming(ev) {
     // → mọi tin bot gửi thêm đều là "thêm 1 tin nhắn máy nữa" = đổ dầu vào lửa. Xoa dịu đúng 1 lần,
     // handover (bot im + mọi engine chăm tự dừng theo isHandover), báo người thật GỌI ĐIỆN cứu.
     if (laTinNanBenhNhan(messageText, laConvDaKham(conversationId))) {
-      store.setHandover(conversationId);
+      store.setHandover(conversationId, 'nan_lieu_trinh');
       const daXoaDiu = store.getKV(`nanlt_xoadiu:${conversationId}`);
       if (!daXoaDiu) {
         store.setKV(`nanlt_xoadiu:${conversationId}`, String(Date.now()));
@@ -737,7 +765,7 @@ export async function handleIncoming(ev) {
     // Khách đã yêu cầu đích danh thì bot xác nhận 1 câu rồi LUI + báo người — càng cố tự trả lời
     // càng lộ là không biết (ca thật: bot hỏi ngược BN "mình quên loại đai nào đúng không ạ?").
     if (laTinDoiBacSi(messageText)) {
-      store.setHandover(conversationId);
+      store.setHandover(conversationId, 'doi_bac_si');
       const daBaoBS = store.getKV(`doibs_xacnhan:${conversationId}`);
       if (!daBaoBS) {
         store.setKV(`doibs_xacnhan:${conversationId}`, String(Date.now()));
@@ -1708,7 +1736,7 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
 
   // HANDOVER (khiếu nại / hỏi sâu chuyên môn)
   if (reply.handover) {
-    store.setHandover(conversationId);
+    store.setHandover(conversationId, `gemini:${String(reply.handover_reason || 'n/a').slice(0, 40)}`);
     await notifyHandover({
       name: reply.name || customerName,
       reason: reply.handover_reason,

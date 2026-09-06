@@ -84,3 +84,53 @@ test('não có luật A.5: bot tự giữ khách + được xin số lần 2 khi
   assert.match(nao, /2 l[ầa]n c[ảa] h[ộo]i tho[ạa]i/);
   assert.match(nao, /c[ấa]m 2 l[ưu][ợo]t li[êe]n ti[ếe]p/i);
 });
+
+// ── ④ HANDOVER CÓ HẠN (vá 06/09 22:5x — ca Vi Thị Khánh Linh) ──────────────────
+// Hai lỗi cùng chỗ: (a) tin 🔔 nhắn-tiếp là rác với group; (b) handover là án chung thân,
+// khoá bot 19 ngày, khách bấm quảng cáo MỚI vẫn không ai trả lời.
+const nguonStore = fs.readFileSync(path.join(GOC, 'src/store.js'), 'utf8');
+
+test('tin 🔔 "khách đã giao người nhắn tiếp" CHỈ còn bắn khi có cờ KHẨN', () => {
+  const i = nguonHandler.indexOf('if (store.isHandover(conv)) {');
+  assert.ok(i > 0);
+  const khoi = nguonHandler.slice(i, i + 3200);
+  const j = khoi.indexOf('notifyHandoverNudge({');
+  assert.ok(j > 0, 'mất luôn đường báo KHẨN — cắt quá tay');
+  assert.match(khoi.slice(Math.max(0, j - 300), j), /if \(urgent\)/,
+    'nudge phải nằm trong nhánh urgent, không bắn cho tin thường');
+});
+
+test('handover ghi LÝ DO + mốc giờ, không còn cắm trống trơn', () => {
+  assert.match(nguonStore, /export function setHandover\(conversationId, lyDo\)/);
+  assert.match(nguonStore, /handover_ly_do:\$\{conversationId\}/);
+  assert.ok(!/setHandover\(conversationId\)(?!\s*\{)/.test(nguonHandler),
+    'còn chỗ cắm handover mà không khai lý do → ca đó sẽ khoá vĩnh viễn');
+});
+
+test('3 lý do nhạy cảm KHOÁ CỨNG — bot không được tự chen vào', async () => {
+  const { HANDOVER_KHOA_CUNG } = await import('../src/store.js');
+  for (const ly of ['opt_out', 'nan_lieu_trinh', 'doi_bac_si']) {
+    assert.ok(HANDOVER_KHOA_CUNG.has(ly), `${ly} phải khoá cứng`);
+  }
+  assert.ok(!HANDOVER_KHOA_CUNG.has('khac'), 'ca thường thì phải mở lại được');
+  assert.ok(!HANDOVER_KHOA_CUNG.has('gemini:hoi sau chuyen mon'));
+});
+
+test('ca thường + khách im lâu rồi quay lại → MỞ KHOÁ, bot tư vấn tiếp', () => {
+  const i = nguonHandler.indexOf('if (store.isHandover(conv)) {');
+  const khoi = nguonHandler.slice(i, i + 3200);
+  assert.match(khoi, /!khoaCung && duLang && !urgent/, 'thiếu điều kiện mở khoá');
+  assert.match(khoi, /store\.clearHandover\(conversationId\)/, 'clearHandover vẫn không ai gọi');
+  assert.match(khoi, /conv\.status = 'active'/, 'quên đồng bộ cờ trong RAM → lớp dưới đọc cờ cũ');
+  // mở khoá thì KHÔNG được appendHistory (luồng chính sẽ ghi) và KHÔNG được return
+  // Chỉ soi DÒNG MÃ, bỏ dòng chú thích — chú thích của chính bản vá có nhắc 2 chữ này.
+  const iMo = khoi.indexOf('store.clearHandover');
+  const sauMo = khoi.slice(iMo, iMo + 420)
+    .split('\n').filter((d) => !d.trim().startsWith('//')).join('\n');
+  assert.ok(!sauMo.includes('appendHistory'), 'ghi history 2 lần → lịch sử nhân đôi');
+  assert.ok(!/\breturn;/.test(sauMo), 'mở khoá xong lại return thì bot vẫn câm');
+});
+
+test('ngưỡng mở khoá chỉnh được bằng env, mặc định 72h', () => {
+  assert.match(nguonHandler, /process\.env\.HANDOVER_MO_LAI_GIO \|\| '72'/);
+});

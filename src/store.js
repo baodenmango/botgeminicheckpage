@@ -475,9 +475,24 @@ export function setPhoneCaptured(conversationId, phone, name) {
   `).run(phone || null, name || null, String(conversationId));
 }
 
-export function setHandover(conversationId) {
+// VÁ 06/09/2026 22:5x — handover PHẢI GHI LÝ DO + MỐC GIỜ.
+// Trước đây chỉ ghi status='handover' trống trơn ⇒ không phân biệt được ca "khách bực, đừng
+// đụng vào" với ca "bot bí một câu hồi tháng trước". Hệ quả: mọi ca khoá VĨNH VIỄN như nhau,
+// `clearHandover` có sẵn mà KHÔNG AI GỌI. Xem [[handover-khong-co-han-khoa-bot-vinh-vien]].
+export function setHandover(conversationId, lyDo) {
   db.prepare("UPDATE conversations SET status = 'handover' WHERE conversation_id = ?")
     .run(String(conversationId));
+  try {
+    setKV(`handover_ly_do:${conversationId}`, String(lyDo || 'khac'));
+    setKV(`handover_luc:${conversationId}`, String(Date.now()));
+  } catch (e) { console.warn('[store] ghi lý do handover hụt:', e?.message); }
+}
+
+// Lý do KHÔNG BAO GIỜ tự mở lại — khách đang bực / đã đòi người thật / đã xin ngừng nhận tin.
+// Bot chen vào mấy ca này là đổ dầu vào lửa (ca Bé Tuyết 03/08, ca Duy Cường 20/08).
+export const HANDOVER_KHOA_CUNG = new Set(['opt_out', 'nan_lieu_trinh', 'doi_bac_si']);
+export function lyDoHandover(conversationId) {
+  return getKV(`handover_ly_do:${conversationId}`) || 'khac';
 }
 
 export function setCondition(conversationId, condition) {
