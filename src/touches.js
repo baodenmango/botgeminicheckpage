@@ -202,13 +202,24 @@ function noiDungCham6(condition, daCoSo) {
 // CHƯA số → bot tự nhắn xin số, mức khan hiếm/cấp bách TĂNG DẦN qua 3 mốc (15p → 24h → 47h).
 // Tuân thủ y tế: KHÔNG cam kết khỏi 100%, không bịa kết quả, không dọa. Chỉ khan hiếm suất + bằng chứng nhẹ.
 
-// Biến thể chạm 2 (~15p, chưa số) — giữ đòn bẩy "suất giữ riêng" + xin số, KHÔNG bịa số suất cụ thể.
+// Biến thể chạm 2 (~15p, chưa số).
+// ⛔ VÁ 06/09/2026 — BỎ ĐÒN "SUẤT GIỮ RIÊNG" + "TƯ VẤN MIỄN PHÍ", THAY BẰNG KHUNG ĐẶT LỊCH.
+// Đo lượt-xin-số-đầu-tiên trên 607 hội thoại khách có nói (30/08→05/09, pages.fm):
+//   khung ĐẶT LỊCH ("giữ lịch/khỏi chờ/xác nhận giờ")  7,7% (n=13) | 55,6% (n=9)
+//   khung "suất tư vấn" khan hiếm                      2,9% (n=69) | 23,5% (n=17)
+//   khung "tư vấn MIỄN PHÍ"                            2,7% (n=255)| 13,7% (n=131)  ← 5 câu cũ dùng
+//   (2 cột = khách gõ 2–3 tin | khách gõ 4–6 tin)
+// 5 câu cũ gộp CẢ HAI khung yếu vào một câu, và mở bằng lời trách nhẹ "mình chưa kịp để lại số"
+// — tức là đòi lại thứ chưa từng được cho. 5 câu mới: nêu MỘT VIỆC CỤ THỂ em làm cho khách
+// (giữ chỗ / gọi đúng giờ khách rảnh) rồi mới xin số, và luôn để lại một câu hỏi mở.
+// LUẬT khi sửa: KHÔNG bịa số suất, KHÔNG bịa giờ trống cụ thể (bot không giữ lịch thật —
+// system-prompt mục 8D điểm 2), KHÔNG dùng lại cụm "suất tư vấn" / "miễn phí" làm lý do chính.
 const CHAM2_CHUASO = [
-  'Dạ em thấy mình quan tâm mà chưa kịp để lại số ạ 🌸 Bên em đang giữ riêng cho mình 1 suất tư vấn với Bác sĩ Trình hôm nay — mình để lại số điện thoại, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
-  'Dạ nãy mình có quan tâm mà chưa kịp gửi số cho em ạ 🌸 Em vẫn đang giữ riêng cho mình một suất tư vấn với Bác sĩ Trình trong hôm nay — mình cho em xin số, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
-  'Dạ hình như mình còn bỏ ngỏ chưa để lại số cho em ạ 🌸 Bên em đang ưu tiên giữ cho mình một suất tư vấn với Bác sĩ Trình — mình gửi em số điện thoại để Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
-  'Dạ em để ý mình quan tâm mà chưa kịp cho số ạ 🌸 Suất tư vấn với Bác sĩ Trình em đang giữ riêng cho mình hôm nay đó — mình để lại số giúp em, Bác sĩ gọi tư vấn miễn phí cho mình nha 🙏',
-  'Dạ nãy giờ mình quan tâm mà em chưa có số để nhờ Bác sĩ gọi ạ 🌸 Bên em vẫn dành riêng cho mình một suất tư vấn với Bác sĩ Trình hôm nay — mình cho em xin số, Bác sĩ gọi tư vấn miễn phí nha 🙏',
+  'Dạ mình cho em xin số điện thoại nha, em giữ chỗ trước cho mình — tới là được khám liền, khỏi ngồi chờ ạ 🌸 Mình tiện sáng hay chiều ạ?',
+  'Dạ em sắp lịch giúp mình nha, mình để lại số để em ghi vào sổ khám ạ 🌸 Mình định ghé buổi sáng hay buổi chiều ạ?',
+  'Dạ mình gửi em số điện thoại, em nhờ Bác sĩ Trình gọi đúng lúc mình rảnh nha 🌸 Khoảng mấy giờ thì mình tiện nghe máy ạ?',
+  'Dạ mình để lại số giúp em, em giữ lịch cho mình khỏi phải chờ khi tới ạ 🌸 Mình đang khó chịu nhất ở chỗ nào để em ghi vào cho Bác sĩ nắm trước ạ?',
+  'Dạ em ghi lịch khám giúp mình nha, mình cho em xin số để em xác nhận giờ chính xác ạ 🌸 Mình đi được ngày thường hay cuối tuần ạ?',
 ];
 // Chạm 2 (~15 phút, chưa số) — NÉN 04/07: 1 ô.
 // LƯU Ý (soi 02/08): 3 builder 2/5/7 vốn CHỈ dùng cho nhánh CHƯA có số — engine sevenTouch.js:140

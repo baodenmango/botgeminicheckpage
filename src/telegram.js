@@ -124,6 +124,28 @@ export async function notifyBooking({ name, condition, summary, pageId, conversa
   await send(text);
 }
 
+// ── VÁ 06/09/2026 — BÁO "LEAD ẤM" ĐỂ NGƯỜI VÀO GÕ TAY ───────────────────────────
+// CĂN CỨ ĐO (783 hội thoại INBOX 30/08→05/09, pages.fm/api/v1):
+//   • Hội thoại CÓ người thật gõ tay  : 211 ca → ra SĐT 48 = 22,7%
+//   • Hội thoại BOT GEMINI ĐƠN ĐỘC    : 397 ca → ra SĐT 19 =  4,8%   (kém 4,7 lần)
+//   • Bot xin số THÊM lần 2 KHÔNG cứu được: cùng mức tương tác, xin 1 lượt 5,6% →
+//     xin 2 lượt 4,3% (bot đơn độc, khách ≥2 tin). Dí thêm KHÔNG phải lời giải.
+// ⇒ Việc đúng của bot khi khách đã kể bệnh mà chưa cho số là GỌI NGƯỜI, không phải dí tiếp.
+// Chỉ BÁO NỘI BỘ (Telegram) — KHÔNG nhắn khách, KHÔNG đổi trạng thái. Đảo ngược được.
+export async function notifyLeadAm({ name, condition, summary, pageId, conversationId, soLuotKhach }) {
+  const benh = CONDITION_VI[condition] || CONDITION_VI.unknown;
+  let text =
+    `🟡 <b>LEAD ẤM — BOT ĐÃ XIN SỐ MÀ KHÁCH CHƯA CHO</b>\n` +
+    `👤 Tên: ${escapeHtml(name) || '(chưa rõ)'}\n` +
+    `🩺 Bệnh: ${benh}\n` +
+    `💬 Khách đã nhắn ${soLuotKhach || '?'} tin, kể bệnh rõ — bot xin số rồi mà khách né.\n` +
+    `⚡️ VÀO GÕ TAY: người thật chốt gấp 4,7 lần bot (22,7% vs 4,8%). Đừng để bot dí thêm.\n`;
+  if (summary) text += `📋 Tóm tắt: ${escapeHtml(summary)}\n`;
+  text += `${await nguonLine(pageId, conversationId)}\n`;
+  text += `💬 Hội thoại: ${pancakeLink(pageId, conversationId)}`;
+  await send(text);
+}
+
 // Báo CHẠM TELESALE (2/5/7) cho ca ĐÃ có SĐT → telesale gọi. Kèm nút "Đã chạm".
 // callback_data c7:<convId>:done khớp listener nút bấm cloud (bot-nut-bam).
 function nutChamLead(convId) {

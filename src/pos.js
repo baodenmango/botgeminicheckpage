@@ -75,3 +75,62 @@ export async function lookupPosCustomer(phone) {
   cache.set(p, { rec, at: Date.now() });
   return rec;
 }
+
+// ============================================================
+//  TỔNG CHI CỦA MỘT KHÁCH (purchased_amount) — thêm 06/09/2026.
+//  Dùng cho LUẬT ≥20 TRIỆU (src/gac20tr.js): ca lớn thì bot KHÔNG được tự nhắn
+//  khi hồ sơ còn trống. Nguồn: POS `shop_customer.purchased_amount` — chính con số
+//  POS dùng để xếp hạng khách, KHÔNG phải tự cộng đơn (tránh đếm trùng đơn huỷ).
+//
+//  Đo thật 06/09/2026 để kiểm chứng đường này:
+//    0903979484 PHAN TRẦN THIỀU ANH → 54.180.000đ (1 đơn)
+//    0983937026 NGUYỄN VĂN CƯ       → 52.200.000đ (1 đơn)
+//
+//  ⚠️ FAIL-OPEN CÓ CHỦ Ý: POS lỗi/thiếu token → trả null = "CHƯA ĐO ĐƯỢC".
+//  Cổng chặn coi null là KHÔNG CHẶN. Lý do: nếu fail-closed thì một lần POS sập
+//  là toàn bộ chuỗi chăm của MỌI khách đứng im, mà im lặng hàng loạt thì hại hơn
+//  một tin lỡ giọng. Log rõ để soi được khi cần.
+// ============================================================
+const cacheChi = new Map(); // phone -> { tong, at }
+const TTL_CHI_CO_MS = 6 * 3600 * 1000;   // đo được → giữ 6h (khách có thể lên bill thêm trong ngày)
+const TTL_CHI_NULL_MS = 15 * 60 * 1000;  // chưa đo được → thử lại sau 15'
+
+/**
+ * Tổng tiền khách đã chi tại phòng khám, theo POS.
+ * @param {string} phone
+ * @returns {Promise<number|null>} số tiền (đ) · 0 nếu có khách nhưng chưa chi · null nếu CHƯA ĐO ĐƯỢC
+ */
+export async function layTongChi(phone) {
+  const p = normPhone(phone);
+  if (!p || p.length !== 10) return null;
+  if (!POS_TOKEN) return null;
+  const hit = cacheChi.get(p);
+  if (hit && Date.now() - hit.at < (hit.tong == null ? TTL_CHI_NULL_MS : TTL_CHI_CO_MS)) return hit.tong;
+
+  let tong = null;
+  try {
+    const { data } = await axios.get(`${POS_BASE}/shops/${POS_SHOP_ID}/customers`, {
+      params: { access_token: POS_TOKEN, search: p, page_size: 20 },
+      timeout: 15000,
+    });
+    const ds = Array.isArray(data?.data) ? data.data : [];
+    // POS có thể trả nhiều bản ghi cùng SĐT (mỗi kênh 1 bản) → lấy MỨC CAO NHẤT,
+    // vì bản ghi "gộp" mới mang đủ tiền; lấy tổng thì đếm trùng.
+    for (const c of ds) {
+      const sc = c?.shop_customer || {};
+      const sdts = [...(c.phone_numbers || []), ...(sc.phone_numbers || [])].map(normPhone);
+      if (!sdts.includes(p)) continue;                 // POS search khớp lỏng → soi lại cho chắc
+      const v = Number(sc.purchased_amount);
+      if (Number.isFinite(v)) tong = Math.max(tong ?? 0, v);
+    }
+  } catch (e) {
+    console.warn('[pos] đọc tổng chi lỗi:', e?.response?.status || e?.message, '→ coi như CHƯA ĐO ĐƯỢC');
+    cacheChi.set(p, { tong: null, at: Date.now() });
+    return null;
+  }
+  cacheChi.set(p, { tong, at: Date.now() });
+  return tong;
+}
+
+/** Cho test: dọn cache tổng chi. */
+export function xoaCacheTongChiChoTest() { cacheChi.clear(); }

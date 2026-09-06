@@ -321,8 +321,14 @@ export function mapDiagnosis(text) {
  * record có → [BN_CŨ] ...; không có → [BN_MỚI] bệnh=...
  * @param {object|null} record  kết quả lookupMedi
  * @param {string} conditionVi  tên bệnh khách đang quan tâm (để dùng cho BN mới)
+ * @param {string|null} lieuTrinh  đoạn thẻ SỔ LIỆU TRÌNH CỦA THẢO (src/lieutrinh.js
+ *        theLieuTrinh()) — thêm 06/09/2026. Trước đó thẻ [BN_CŨ] thực tế chỉ có mỗi
+ *        TÊN với ~83% bệnh nhân, nên bot hỏi "mình bị đau ở đâu ạ" với người vừa trả
+ *        50 triệu (ca Thiều Anh 54,18tr + ca Văn Cư 52,2tr, cùng bill 28/08). Truyền
+ *        null / bỏ trống thì hàm giữ nguyên hành vi cũ.
  */
-export function buildContextTag(record, conditionVi) {
+export function buildContextTag(record, conditionVi, lieuTrinh = null) {
+  const themLT = (s) => (lieuTrinh ? `${s}\n${lieuTrinh}` : s);
   if (record) {
     const parts = [];
     if (record.name) parts.push(`tên=${record.name}`);
@@ -333,7 +339,10 @@ export function buildContextTag(record, conditionVi) {
     }
     if (record.lastVisit) parts.push(`khám cuối=${record.lastVisit}`);
     if (record.prescription) parts.push(`toa gần nhất=${record.prescription}`);
-    return `[BN_CŨ] ${parts.join(' • ')}`;
+    return themLT(`[BN_CŨ] ${parts.join(' • ')}`);
   }
-  return `[BN_MỚI] bệnh quan tâm=${conditionVi || 'chưa rõ'}`;
+  // BN_MỚI mà VẪN có liệu trình trong sổ Thảo là chuyện có thật: Thảo ghi tên nhưng
+  // thường bỏ trống SĐT (đo 06/09: chỉ 58/180 dòng có số) nên MEDi/POS chưa bắt kịp.
+  // Gắn thẻ liệu trình vào để bot đừng chào như người lạ.
+  return themLT(`[BN_MỚI] bệnh quan tâm=${conditionVi || 'chưa rõ'}`);
 }
