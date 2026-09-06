@@ -596,12 +596,21 @@ export async function handleIncoming(ev) {
         ? Math.floor(Date.now() / 1000) - conv.last_customer_msg_at
         : Infinity;
       const duLang = langGiay >= nguongGio * 3600;
+      // VÁ NGAY 06/09 23:2x — điều kiện "khoảng lặng" MỘT MÌNH LÀ HỤT, không cứu nổi ca đẻ ra nó:
+      // chị Vi Thị Khánh Linh vừa nhắn 22:37 nên `last_customer_msg_at` mới tinh ⇒ duLang=false ⇒
+      // lượt sau chị nhắn, bot VẪN CÂM. Khoảng lặng đo "khách nghỉ bao lâu", không đo "cờ cắm bao lâu".
+      // ⇒ Thêm vế thứ hai: CỜ ĐÃ CŨ. Người thật cắm cờ cả tuần mà không quay lại = ca bị bỏ, không
+      // phải ca đang được xử. Conv cắm TRƯỚC bản vá này không có mốc `handover_luc` ⇒ đương nhiên cũ.
+      const ngayHetHan = parseInt(process.env.HANDOVER_HET_HAN_NGAY || '7', 10);
+      const mocCam = parseInt(store.getKV(`handover_luc:${conversationId}`) || '0', 10) || 0;
+      const cuKy = mocCam === 0 || Date.now() - mocCam >= ngayHetHan * 86400000;
 
-      if (!khoaCung && duLang && !urgent) {
+      if (!khoaCung && (duLang || cuKy) && !urgent) {
         store.clearHandover(conversationId);
         conv.status = 'active'; // đồng bộ bản trong RAM để các lớp dưới không đọc cờ cũ
         const ngayLang = langGiay === Infinity ? '?' : (langGiay / 86400).toFixed(1);
-        console.log(`[handover] ⏰ ${conversationId} MỞ KHOÁ — lý do "${lyDoHO}", khách im ${ngayLang} ngày rồi quay lại → bot tiếp tục tư vấn`);
+        const vi = duLang ? `khách im ${ngayLang} ngày rồi quay lại` : `cờ cắm đã quá ${ngayHetHan} ngày, không ai xử`;
+        console.log(`[handover] ⏰ ${conversationId} MỞ KHOÁ — lý do "${lyDoHO}", ${vi} → bot tiếp tục tư vấn`);
         // KHÔNG return, KHÔNG appendHistory ở đây — để luồng chính chạy tiếp như hội thoại thường.
       } else {
         store.appendHistory(conversationId, 'user', messageText);

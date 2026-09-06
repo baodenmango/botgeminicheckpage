@@ -119,7 +119,7 @@ test('3 lý do nhạy cảm KHOÁ CỨNG — bot không được tự chen vào'
 test('ca thường + khách im lâu rồi quay lại → MỞ KHOÁ, bot tư vấn tiếp', () => {
   const i = nguonHandler.indexOf('if (store.isHandover(conv)) {');
   const khoi = nguonHandler.slice(i, i + 3200);
-  assert.match(khoi, /!khoaCung && duLang && !urgent/, 'thiếu điều kiện mở khoá');
+  assert.match(khoi, /!khoaCung && \(duLang \|\| cuKy\) && !urgent/, 'thiếu điều kiện mở khoá');
   assert.match(khoi, /store\.clearHandover\(conversationId\)/, 'clearHandover vẫn không ai gọi');
   assert.match(khoi, /conv\.status = 'active'/, 'quên đồng bộ cờ trong RAM → lớp dưới đọc cờ cũ');
   // mở khoá thì KHÔNG được appendHistory (luồng chính sẽ ghi) và KHÔNG được return
@@ -133,4 +133,12 @@ test('ca thường + khách im lâu rồi quay lại → MỞ KHOÁ, bot tư v�
 
 test('ngưỡng mở khoá chỉnh được bằng env, mặc định 72h', () => {
   assert.match(nguonHandler, /process\.env\.HANDOVER_MO_LAI_GIO \|\| '72'/);
+});
+
+test('mở khoá còn vế CỜ CŨ — khoảng lặng một mình không cứu nổi ca vừa nhắn xong', () => {
+  const i = nguonHandler.indexOf('if (store.isHandover(conv)) {');
+  const khoi = nguonHandler.slice(i, i + 4200);
+  assert.match(khoi, /\(duLang \|\| cuKy\)/, 'thiếu vế cờ-cũ → ca Khánh Linh vẫn câm ở lượt sau');
+  assert.match(khoi, /mocCam === 0 \|\|/, 'conv cắm trước bản vá không có mốc giờ → phải coi là CŨ');
+  assert.match(khoi, /process\.env\.HANDOVER_HET_HAN_NGAY \|\| '7'/);
 });
