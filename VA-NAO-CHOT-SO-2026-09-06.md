@@ -161,8 +161,20 @@ Khách gõ **trung vị 24 ký tự/tin**. ⇒ luật mới: hỏi **1 câu ĐÓ
 
 ## 5. Bộ thước NGHIỆM THU (chạy lại sau 7–10 ngày chạy thật)
 
-Cùng đường đo của skill `do-ra-sdt-va-cau-moi-gia`, cộng `from.admin_name` để tách lane
-(script đã dựng: quét đủ 4.200 hội thoại/page rồi mới lọc `inserted_at` — **đừng break sớm**).
+**Đã đóng gói thành script chạy được:**
+
+```bash
+python3 scripts/do-chot-so.py 2026-09-07 2026-09-16     # <ngày đầu> <ngày cuối>
+```
+
+Chỉ-đọc, fail-closed khi token hỏng, đã vá sẵn 5 bẫy (sắp theo `updated_at` · con trỏ
+`current_count` chứ không phải `page` · `limit` không được tôn trọng · bỏ dấu thiếu `đ→d` ·
+cấm báo 0% khi token chết). Chạy lại trên chính cửa sổ nền thì ra **đúng 783 / 607 / 11,0% /
+4,8%** — trùng cả bản đo phiên trước lẫn bản đo phiên này.
+
+🚨 **ĐƠN VỊ — đừng so nhầm vế.** Bảng dưới có dòng đếm theo **hội thoại ở lượt-xin-ĐẦU**, còn
+script đếm theo **Ô (bong bóng) trên toàn hội thoại**. Hai đơn vị khác nhau. Script đã in kèm
+**mốc do CHÍNH NÓ đo** trên cửa sổ nền — **chỉ so số của script với mốc của script**.
 
 | Thước | Mốc 30/08→05/09 | Đích |
 |---|---|---|
