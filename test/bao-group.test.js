@@ -142,3 +142,10 @@ test('mở khoá còn vế CỜ CŨ — khoảng lặng một mình không cứu
   assert.match(khoi, /mocCam === 0 \|\|/, 'conv cắm trước bản vá không có mốc giờ → phải coi là CŨ');
   assert.match(khoi, /process\.env\.HANDOVER_HET_HAN_NGAY \|\| '7'/);
 });
+
+// ── ⑤ CẤM HỨA GỌI KHI CHƯA CÓ SỐ (vá 07/09 — ca Vi Thị Khánh Linh) ────────────
+test('não cấm hứa "Bác sĩ sẽ gọi" khi chưa có số + cấm dí gọi khi khách xin nhắn tin', () => {
+  assert.match(nao, /C[ẤA]M H[ỨU]A "B[ÁA]C S[ĨI] S[ẼE] G[ỌO]I" KHI CH[ƯU]A C[ÓO] S[ỐO]/);
+  assert.match(nao, /kh[áa]ch [đd][ãa] n[óo]i h[ọo] mu[ốo]n NH[ẮA]N TIN/i);
+  assert.match(nao, /khung NH[ẮA]N TIN/);
+});
