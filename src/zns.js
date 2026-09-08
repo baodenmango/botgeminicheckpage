@@ -138,6 +138,24 @@ function danhDauKhongCoZalo(sdt) {
 // ĐÚNG MỖI GIỜ phút :10 (y hệt bệnh -118 đã vá 19/07) vì thiếu cờ chặn cho mã này.
 function xuLyLoiZalo(sdt, data) {
   if (data?.error === -118) { danhDauKhongCoZalo(sdt); return true; }
+  if (data?.error === -137) {
+    // -137 "ZBS Account charge failure" = VÍ ZBS HẾT TIỀN — lỗi cấp VÍ, không phải cấp số.
+    // CẤM cắm cờ theo SĐT (nạp tiền xong số đó vẫn gửi được). Việc đúng: réo Telegram 1 lần/ngày.
+    // Bài học 06-08/09/2026: ví cạn trưa 06/09, 2 ngày / 200+ tin rớt mới có người nhận ra
+    // qua đống cảnh báo lẻ trong group đặt lịch — vì không có chuông gộp nào nói thẳng "HẾT TIỀN".
+    const ngay = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+    if (!store.getKV(`zns_137_bao:${ngay}`)) {
+      store.setKV(`zns_137_bao:${ngay}`, '1');
+      notifyText([
+        '🔴 <b>VÍ ZNS (ZBS) HẾT TIỀN — MỌI TIN ZNS ĐANG RỚT</b>',
+        'Zalo trả -137 "ZBS Account charge failure": xác nhận lịch, nhắc lịch, nhắc tái khám, mời OA, đánh giá, voucher ĐỀU không đi được.',
+        '→ Anh Trình nạp tiền tại account.zalo.solutions (đăng nhập Zalo của anh) → tài khoản ZBS → Nạp tiền.',
+        'Nạp xong không cần làm gì thêm — các chuỗi nhắc tự chạy lại ở nhịp kế tiếp.',
+      ].join('\n')).catch(() => {});
+      console.error('[zns] 🔴 -137 VÍ ZBS HẾT TIỀN — đã réo Telegram (1 lần/ngày)');
+    }
+    return true;
+  }
   if (data?.error === -141) {
     if (sdt && !store.getKV(NO_ZALO_KEY(sdt))) {
       store.setKV(NO_ZALO_KEY(sdt), `tu-choi-141:${Math.floor(Date.now() / 1000)}`);
