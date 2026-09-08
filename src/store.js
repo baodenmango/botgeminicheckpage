@@ -896,6 +896,17 @@ export function markBillChamDone(id, code) {
   db.prepare('UPDATE bill_care SET bill_cham_done=?, updated_at=? WHERE id=?').run(JSON.stringify(arr), nowSec(), String(id));
 }
 
+// Gỡ 1 mốc khỏi bill_cham_done (dùng để CỨU ca bị bỏ mốc oan khi ví ZNS hết tiền — -137).
+// Trả về true nếu có gỡ thật (mốc đang nằm trong danh sách done).
+export function unmarkBillChamDone(id, code) {
+  const r = getBillCare(id); if (!r) return false;
+  const arr = parseJsonArr(r.bill_cham_done);
+  if (!arr.includes(code)) return false;
+  const moi = arr.filter((c) => c !== code);
+  db.prepare('UPDATE bill_care SET bill_cham_done=?, updated_at=? WHERE id=?').run(JSON.stringify(moi), nowSec(), String(id));
+  return true;
+}
+
 // Đã gửi chạm tái-bill theo nhóm này chưa?
 export function isGroupChamDone(rec, code) {
   return parseJsonArr(rec?.group_cham_done).includes(code);

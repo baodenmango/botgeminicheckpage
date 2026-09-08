@@ -131,6 +131,13 @@ function danhDauKhongCoZalo(sdt) {
   store.setKV(NO_ZALO_KEY(sdt), String(Math.floor(Date.now() / 1000)));
   console.warn(`[zns] 🚫 ${sdt.slice(0, 5)}*** KHÔNG có tài khoản Zalo (-118) → ngừng gửi ZNS cho số này`);
 }
+// Ví ZBS có đang báo hết tiền HÔM NAY không (cờ do xuLyLoiZalo set khi gặp -137).
+// billengine dùng để KHÔNG bỏ mốc chăm oan khi ví cạn (giữ ca chờ nạp tiền).
+export function viZnsHetTien() {
+  const ngay = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  return !!store.getKV(`zns_137_bao:${ngay}`);
+}
+
 // Soi đáp án Zalo: lỗi VĨNH VIỄN theo số thì ghi cờ ngừng gửi. Trả về true nếu đã cắm cờ.
 // -118 = số không có tài khoản Zalo. -141 = "User refused to receive this message via phone"
 // (khách đã BẤM TỪ CHỐI nhận ZNS) — Zalo trả mãi mãi cho số đó, gửi lại chỉ tốn lượt.

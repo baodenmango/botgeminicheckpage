@@ -12,7 +12,7 @@ import * as store from './store.js';
 import { BILL_TOUCHES, buildBillMessages } from './billtouches.js';
 import { sendCareMessages } from './care-send.js';
 import { tagFollowerBenh } from './zalo.js';
-import { sendZnsNhacLich, isZnsEnabled, sendZnsQuanTamOA, isQuanTamOAEnabled } from './zns.js';
+import { sendZnsNhacLich, isZnsEnabled, sendZnsQuanTamOA, isQuanTamOAEnabled, viZnsHetTien } from './zns.js';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -211,6 +211,11 @@ export async function runBillTouches() {
         }
         sent++;
         console.log(`[bill] ✅ gửi chạm ${code} cho ca ${rec.id}`);
+      } else if (viZnsHetTien()) {
+        // VÁ 08/09/2026: ví ZBS hết tiền (-137) là lỗi HẠ TẦNG tạm thời, KHÔNG phải mù kênh.
+        // KHÔNG đếm hụt, KHÔNG bỏ mốc — giữ nguyên ca chờ nạp tiền, nhịp sau tự gửi lại.
+        // Trước vá: 2 ngày ví cạn × 24 nhịp làm 46+ ca bị bỏ mốc tái khám oan.
+        console.warn(`[bill] ⏸️ giữ mốc ${code} ca ${rec.id} — ví ZNS hết tiền (-137), chờ nạp rồi gửi lại`);
       } else {
         const n = demThatBai(rec.id, code);
         if (n >= BILL_MAX_FAIL) {

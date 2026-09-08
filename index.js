@@ -979,6 +979,38 @@ app.post('/admin/zns-test', async (req, res) => {
 // --- Admin (CHỈ ĐỌC): đếm DẤU VẾT ZNS THẬT theo KV — trả lời "template X đã bắn bao nhiêu?" ---
 // Vì cham_da_gui của bill_care đánh dấu XONG cả ca bỏ-cuộc-sau-3-lần-hụt → đếm mốc chạm là "đo tới
 // cửa". Route này đếm tới ĐÍCH: mỗi KV chỉ được ghi khi Zalo trả error=0 (tin THẬT rời máy).
+// --- Admin: CỨU ca chăm sau bán bị BỎ MỐC oan khi ví ZNS hết tiền (-137, 06-08/09) ---
+// GET /admin/cuu-bill-137?token=XXX[&dry=1 mặc định][&ngay=9]
+// Ví cạn 06→08/09 → billengine hụt -137, sau 3 lần bỏ luôn mốc d6/d7. Route này gỡ mốc d6/d7
+// khỏi bill_cham_done + xoá đếm hụt cho ca ra bill trong `ngay` ngày qua → nhịp billengine kế
+// tự gửi lại (nay ví đã có tiền). CHỈ đụng ca CÒN trong cửa sổ nhắc (findBillTargets grace=2 sẽ
+// tự lọc ca đã quá hạn). KHÔNG gửi tin ở đây — chỉ mở cờ, engine gửi ở nhịp của nó.
+app.get('/admin/cuu-bill-137', (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const dry = req.query.dry !== '0';
+  const ngay = Math.min(parseInt(req.query.ngay || '9', 10), 14);
+  const nguong = Math.floor(Date.now() / 1000) - ngay * 86400;
+  const rows = store.listBillCare(3000).filter((r) => r.bill_date && r.bill_date >= nguong && !r.rebooked && !r.opt_out);
+  const dsCuu = [];
+  for (const r of rows) {
+    const done = (() => { try { return JSON.parse(r.bill_cham_done || '[]'); } catch { return []; } })();
+    const goMoc = ['d6', 'd7'].filter((c) => done.includes(c));
+    if (!goMoc.length) continue;
+    dsCuu.push({ id: r.id, phone: r.phone ? String(r.phone).slice(0, 4) + '***' : null, bill_date: r.bill_date, go: goMoc });
+    if (!dry) {
+      for (const c of goMoc) { store.unmarkBillChamDone(r.id, c); store.delKV(`bill_fail:${r.id}:${c}`); }
+    }
+  }
+  res.status(200).json({
+    ok: true, dry, ngay_quet: ngay, so_ca_cuu: dsCuu.length,
+    ghi_chu: dry ? 'dry-run — thêm &dry=0 để mở cờ THẬT (engine sẽ gửi lại ở nhịp billengine kế, chỉ ca còn trong cửa sổ grace)' : 'đã gỡ mốc + xoá đếm hụt; billengine nhịp kế tự gửi lại',
+    ca: dsCuu.slice(0, 60),
+  });
+});
+
 app.get('/admin/zns-dem', (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken || req.query.token !== adminToken) {
