@@ -223,6 +223,13 @@ const RE_TU_UU_DAI = /([ưu]u [đd][ãa]i|khuy[ếe]n m[ãa]i|khuy[ếe]n m[ạa
 // Chặn nó = chặn đúng câu xin số của bot ⇒ mất luôn cơ hội lấy SĐT.
 // Chỉ coi là ưu đãi khi "miễn phí" gắn với MÓN LỢI VẬT CHẤT, không phải với lời tư vấn.
 const RE_MIEN_PHI_HOP_LE = /(t[ưu] v[ấa]n|g[ọo]i|nh[ắa]n|inbox|tin nh[ắa]n|trao [đd][ổo]i|h[ỗo] tr[ợo]|gi[ảa]i [đd][áa]p)\s*(l[àa]\s*)?mi[ễe]n ph[íi]|mi[ễe]n ph[íi]\s*(cho\s*)?(t[ưu] v[ấa]n|g[ọo]i|nh[ắa]n)/i;
+// ⚠️ VÁ 08/09/2026 — CHẶN OAN THẬT, Sếp Trình bắt tại trận (câu mời follow OA tặng cẩm nang).
+// "TẶNG/GỬI cẩm nang · tài liệu · ebook · bài tập · video · trọn bộ" KHÔNG phải ưu đãi dịch vụ —
+// đó là NỘI DUNG KIẾN THỨC Y HỌC MIỄN PHÍ để kéo follow Zalo OA (đúng đòn mở van co_kenh Đòn 4,
+// hợp pháp DMKT). Chặn nó = chặn đúng đòn kéo follow ta muốn bot làm. Gỡ cụm này ra TRƯỚC khi dò
+// ưu đãi; nếu sau khi gỡ không còn từ ưu đãi nào thì đây là câu tặng tài liệu, KHÔNG chặn.
+// Global (g) để gỡ HẾT mọi cụm "tặng ... tài liệu" trong ô (câu mời OA hay lặp 2 lần).
+const RE_TANG_NOI_DUNG_HOP_LE = /(t[ặa]ng|g[ửu]i|g[ửu]i t[ặa]ng|chia s[ẻe]|nh[ậa]n)\s*[^.!?]{0,25}?(c[ẩa]m nang|t[àa]i li[ệe]u|ebook|e-?book|b[àa]i t[ậa]p|video|clip|infographic|tr[ọo]n b[ộo]|b[ộo] t[àa]i li[ệe]u|h[ìi]nh [ảa]nh minh h[ọo]a|t[àa]i li[ệe]u tham kh[ảa]o)/gi;
 // …phải KÈM một MÓN LỢI CỤ THỂ mới tính là đang hứa ưu đãi.
 const RE_MON_LOI = /(\d\s*%|mi[ễe]n ph[íi]|t[ặa]ng|voucher|combo|qu[àa]|gi[ảa]m th[êe]m|khuy[ếe]n m[ãa]i|khuy[ếe]n m[ạa]i)/i;
 // Hai khuôn ĐÃ DUYỆT.
@@ -392,21 +399,25 @@ function soiMotO(oGoc, { congKhai = false } = {}) {
     }
   }
 
-  // --- ƯU ĐÃI BỊA → CHẶN ---
-  {
+  // --- ƯU ĐÃI: INBOX thả thoải mái, CÔNG KHAI mới siết (anh Trình chốt 08/09/2026) ---
+  // Nguyên văn anh Trình: "ưu đãi trong TIN NHẮN thì cứ thoải mái — hứa hẹn, ưu đãi, tặng này kia
+  // thoải mái." ⇒ làn INBOX/chat 1-1 KHÔNG chặn ưu đãi/khuyến mãi/tặng. Chỉ làn CÔNG KHAI
+  // (comment/broadcast/bài đăng — nơi Sở thấy) mới giữ luật "chỉ 2 khoản đã duyệt".
+  // ⚠️ Hứa KẾT QUẢ điều trị (nhóm C: "khỏi hẳn/cam kết/hết đau luôn") + học vị (E) KHÔNG nằm ở đây —
+  // chúng bị chặn ở cổng riêng CẢ inbox lẫn công khai (luật pháp lý NĐ38, không theo làn).
+  if (congKhai) {
     const soi = boHtml(o);
-    // Gỡ cụm "tư vấn/gọi miễn phí" ra TRƯỚC khi dò ưu đãi — nếu sau khi gỡ mà không còn
-    // từ ưu đãi nào thì đây là câu xin số bình thường, KHÔNG phải chào ưu đãi.
-    const soiUuDai = soi.replace(RE_MIEN_PHI_HOP_LE, ' ');
+    // Gỡ cụm hợp lệ TRƯỚC khi dò: "tư vấn/gọi miễn phí" + "tặng cẩm nang/tài liệu" (kiến thức, không phải ưu đãi tiền).
+    const soiUuDai = soi.replace(RE_MIEN_PHI_HOP_LE, ' ').replace(RE_TANG_NOI_DUNG_HOP_LE, ' ');
     if (RE_TU_UU_DAI.test(soiUuDai) && RE_MON_LOI.test(soiUuDai)) {
       const laUuDai1 = RE_UU_DAI_1.test(soiUuDai) && RE_UU_DAI_1_BOI_CANH.test(soiUuDai);
       const laUuDai2 = RE_UU_DAI_2.test(soiUuDai);
       if (!laUuDai1 && !laUuDai2) {
-        viPham.push({ loai: 'uu_dai_bia', xuLy: 'chan', cum: 'ưu đãi ngoài 2 khoản đã duyệt' });
+        viPham.push({ loai: 'uu_dai_bia', xuLy: 'chan', cum: 'ưu đãi ngoài 2 khoản đã duyệt (công khai)' });
         return { o: null, viPham };
       }
       // Ưu đãi ĐÚNG nhưng ở nơi CÔNG KHAI: "tặng điện xung" là kỹ thuật nhóm (A) Sở CHƯA duyệt.
-      if (congKhai && laUuDai2) {
+      if (laUuDai2) {
         viPham.push({ loai: 'uu_dai_cong_khai', xuLy: 'chan', cum: 'điện xung ở nơi công khai' });
         return { o: null, viPham };
       }

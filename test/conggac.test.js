@@ -186,7 +186,7 @@ test('THIẾU "TỪ" — KHÔNG bắt oan câu đã đúng, và 300k thì không
 // ===========================================================================
 // ƯU ĐÃI — chỉ 2 khoản đã duyệt
 // ===========================================================================
-test('ƯU ĐÃI BỊA — chặn mọi khoản ngoài 2 khoản đã duyệt', () => {
+test('ƯU ĐÃI BỊA — CÔNG KHAI chặn mọi khoản ngoài 2 khoản đã duyệt', () => {
   const ca = [
     'Bên em tặng thêm gói chụp X-quang miễn phí ạ.',
     'Đi 2 người thì được giảm thêm 10% ạ.',
@@ -194,8 +194,8 @@ test('ƯU ĐÃI BỊA — chặn mọi khoản ngoài 2 khoản đã duyệt', (
     'Em tặng mình một voucher giảm giá cho lần sau ạ.',
   ];
   for (const t of ca) {
-    const kq = ra(t);
-    assert.ok(coLoai(kq, 'uu_dai_bia'), `phải chặn ưu đãi bịa: "${t}"`);
+    const kq = ra(t, { congKhai: true }); // inbox thả (chốt 08/09), chỉ công khai mới siết
+    assert.ok(coLoai(kq, 'uu_dai_bia'), `CÔNG KHAI phải chặn ưu đãi bịa: "${t}"`);
     assert.ok(!kq.oCuoi.includes(t));
   }
 });
@@ -239,7 +239,9 @@ test('KHAN HIẾM — không bắt oan câu hẹn lịch bình thường', () =>
 // CHẶN SẠCH → KHÔNG BAO GIỜ ĐỂ BOT CÂM
 // ===========================================================================
 test('chặn sạch cả lượt thì phải THAY bằng câu an toàn (bot không được im)', () => {
-  const kq = ganhCong(['Liệu trình 3 mũi tầm 15 triệu ạ.', 'Bên em tặng combo miễn phí ạ.']);
+  // INBOX (thayCauAnToan mặc định) — giá BỊA (ngoài bảng giá thật) bị chặn cứng mọi làn;
+  // chặn sạch ô → cổng phải thay 1 câu an toàn thay vì để bot im.
+  const kq = ganhCong(['Gói này 2.750.000đ ạ.']);
   assert.equal(kq.oCuoi.length, 1, 'phải có đúng 1 ô thay thế');
   assert.ok(kq.oCuoi[0].length > 20, 'ô thay thế phải là câu thật');
   assert.ok(coLoai(kq, 'thay_cau_an_toan'));
@@ -370,10 +372,27 @@ test('CHẶN OAN 2: giá neo 1.300.000đ là giá gốc HỢP LỆ', () => {
   assert.equal(o.oCuoi.length, 1, 'không được nuốt ô');
 });
 
-test('vẫn CHẶN ưu đãi bịa thật (không nới quá tay)', () => {
-  const o = ganhCong(['Bên em đang giảm thêm 20% cho khách mới ạ, tặng luôn 1 buổi massage.']);
+test('CÔNG KHAI vẫn CHẶN ưu đãi bịa (nơi Sở thấy)', () => {
+  const o = ganhCong(['Bên em đang giảm thêm 20% cho khách mới ạ, tặng luôn 1 buổi massage.'], { congKhai: true });
   assert.ok(o.viPham.some((v) => v.loai === 'uu_dai_bia'),
-    'ưu đãi ngoài 2 khoản duyệt vẫn phải bị chặn');
+    'ưu đãi ngoài 2 khoản duyệt ở CÔNG KHAI vẫn phải bị chặn');
+});
+
+test('INBOX thả ưu đãi thoải mái (anh Trình chốt 08/09)', () => {
+  const o = ganhCong(['Bên em đang giảm thêm 20% cho khách mới ạ, tặng luôn 1 buổi massage.']); // congKhai=false
+  assert.equal(o.viPham.filter((v) => v.loai === 'uu_dai_bia').length, 0,
+    'inbox cho ưu đãi/tặng/khuyến mãi thoải mái, không chặn');
+  assert.equal(o.oCuoi.length, 1, 'không được nuốt ô');
+});
+
+test('CHẶN OAN 3: mời follow OA tặng cẩm nang (kiến thức, không phải ưu đãi tiền)', () => {
+  const cau = 'Nếu mình cần thêm cẩm nang về thoái hóa khớp gối và lưng, mình quan tâm Zalo OA '
+    + 'của phòng khám để em gửi tặng mình trọn bộ nha: https://zalo.me/3136814239074246132';
+  // kể cả ở làn CÔNG KHAI, tặng TÀI LIỆU KIẾN THỨC vẫn hợp lệ (không phải ưu đãi dịch vụ/tiền)
+  const o = ganhCong([cau], { congKhai: true });
+  assert.equal(o.viPham.filter((v) => v.loai === 'uu_dai_bia').length, 0,
+    'tặng cẩm nang là nội dung kiến thức miễn phí kéo follow OA, không được chặn');
+  assert.equal(o.oCuoi.length, 1, 'không được nuốt ô mời follow OA');
 });
 
 test('vẫn CHẶN giá bịa thật (không nới quá tay)', () => {
