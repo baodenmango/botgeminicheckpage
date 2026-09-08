@@ -349,19 +349,25 @@ export function laTinNanBenhNhan(text, daKham) {
   return Boolean(daKham) && RE_NAN_LIEU_TRINH.test(n);
 }
 
-// --- KHÁCH ĐÒI HỎI/GẶP TRỰC TIẾP BÁC SĨ (ca Duy Cường 20/08) ---
+// --- KHÁCH ĐÒI HỎI/GẶP TRỰC TIẾP BÁC SĨ (ca Duy Cường 20/08, SIẾT LẠI 08/09) ---
 // BN hỏi y lệnh riêng (loại đai lưng), bot không biết cứ vòng vo; khách chốt "Chị hỏi bác sĩ
 // lại giúp e nhá" — yêu cầu ĐÍCH DANH mà không luật nào bắt → không Telegram, bot nói tiếp.
-// Phân biệt với cách XƯNG HÔ "bác sĩ cho em hỏi..." (rất phổ biến, KHÔNG phải đòi gặp) bằng
-// cấu trúc: động từ hỏi/nhờ/gặp + bác sĩ + giúp/giùm/hộ/lại...
+// ⚠️ SIẾT 08/09 (ca Thi Hong Lieu Nguyen): "tôi bị tê tay nhờ bs tư vấn giúp" chỉ là CÁCH NÓI
+// LỊCH SỰ khi hỏi bệnh (khách coi bot = phòng khám) — bản cũ bắt cả câu này → bot lui oan +
+// báo group tào lao. Anh Trình chốt: "Mấy câu này em xử lí thoải mái, đừng báo group."
+// ⇒ Chỉ bắt khi có dấu hiệu ĐÍCH DANH thật: "gặp/nói chuyện với bác sĩ", "hỏi LẠI bác sĩ"
+// (quay về xác nhận — chữ "lại" là bắt buộc), "bs trả lời TRỰC TIẾP". "Nhờ/bs tư vấn giúp"
+// KHÔNG còn là cờ.
 const RE_DOI_BAC_SI = new RegExp([
-  // "hỏi (lại) bác sĩ (lại) giúp/giùm/hộ/cho em", "nhờ bác sĩ check/xem lại giúp"
-  '(hoi|check|xac nhan|nho) (lai )?(bac si|bs)( truc tiep)?( check| xem| coi)?( lai)? (giup|gium|dum|ho|cho)(?![a-z])',
-  // "muốn/xin gặp bác sĩ", "cho em/tôi gặp bác sĩ", "nói chuyện với bác sĩ"
-  '(muon|xin)( duoc)? gap (bac si|bs)',
+  // "hỏi LẠI bác sĩ giúp/giùm/hộ/cho em" — chữ "lại" bắt buộc (khách nhờ quay về hỏi BS)
+  '(hoi|check|xac nhan|nho)( hoi)? lai (bac si|bs)( check| xem| coi)? ?(giup|gium|dum|ho|cho)(?![a-z])',
+  // "hỏi/nhờ bác sĩ check/xem LẠI giúp" — "lại" đứng sau bác sĩ
+  '(hoi|check|xac nhan|nho) (bac si|bs)( check| xem| coi)? lai (giup|gium|dum|ho|cho)(?![a-z])',
+  // "muốn/xin gặp bác sĩ", "muốn nói chuyện với bác sĩ", "cho em/tôi gặp bác sĩ"
+  '(muon|xin)( duoc)? (gap|noi chuyen voi) (bac si|bs)',
   'cho (em|e|toi|tui|minh|chi|anh|c|co|chu) (gap|noi chuyen voi) (bac si|bs)',
-  // "bác sĩ trả lời/tư vấn trực tiếp giúp" — (?![a-z]) chặn 'ho' khớp giữa "HÔM qua" (bài học 15/08)
-  '(bac si|bs) (tra loi|tu van) (truc tiep|giup|gium|dum|ho)(?![a-z])',
+  // "bác sĩ trả lời/tư vấn TRỰC TIẾP" — bỏ hẳn (giup|gium|dum|ho): "bs tư vấn giúp" = hỏi bệnh thường
+  '(bac si|bs) (tra loi|tu van) truc tiep',
 ].join('|'));
 export function laTinDoiBacSi(text) {
   return RE_DOI_BAC_SI.test(` ${boDauKham(text)} `);
