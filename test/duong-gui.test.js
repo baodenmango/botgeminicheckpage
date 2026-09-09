@@ -64,7 +64,8 @@ test('cổng gác → capBubbles: nối hai lớp vẫn ra kết quả hợp l�
   assert.ok(cuoi.length >= 1, 'không bao giờ được ra lượt rỗng');
   assert.ok(cuoi.length <= 3, 'trần ô vẫn phải đúng sau cổng');
   const chu = cuoi.join(' ');
-  assert.ok(!/khỏi hẳn|cam kết/i.test(chu), 'lời hứa kết quả không được lọt qua 2 lớp');
+  // 09/09: inbox chỉ còn soi bậc CỨNG ("cam kết") — "khỏi hẳn" là giọng tư vấn thường, được thả.
+  assert.ok(!/cam kết/i.test(chu), 'lời cam kết cứng không được lọt qua 2 lớp');
   assert.ok(!/15 triệu/.test(chu), 'giá bịa không được lọt qua 2 lớp');
 });
 

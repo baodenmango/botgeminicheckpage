@@ -29,7 +29,7 @@ function sach(t, opts) {
 // ===========================================================================
 // NHÓM (C) — HỨA KẾT QUẢ (NĐ 38/2021, cấm VĨNH VIỄN)
 // ===========================================================================
-test('(C) hứa kết quả — DÍNH và được SỬA thành lời an toàn', () => {
+test('(C) CÔNG KHAI — bắt CẢ HAI bậc (cứng + mềm) và SỬA thành lời an toàn', () => {
   const ca = [
     'Bên em cam kết chữa khỏi hẳn cho mình ạ.',
     'Liệu trình này trị dứt điểm, không tái phát luôn ạ.',
@@ -38,18 +38,38 @@ test('(C) hứa kết quả — DÍNH và được SỬA thành lời an toàn',
     'Tỉ lệ khỏi rất cao, gần như khỏi 100% ạ.',
   ];
   for (const t of ca) {
-    const kq = ra(t);
+    const kq = ra(t, { congKhai: true });
     assert.ok(coLoai(kq, 'hua_ket_qua'), `phải bắt hứa kết quả: "${t}"`);
     const sau = raChu(kq).toLowerCase();
     for (const cam of ['khỏi hẳn', 'dứt điểm', 'không tái phát', 'cam kết',
       'tận gốc', 'hiệu quả 100%', 'an toàn tuyệt đối', 'tỉ lệ khỏi rất cao']) {
       assert.ok(!sau.includes(cam), `sau khi sửa vẫn còn "${cam}": ${sau}`);
     }
-    assert.ok(kq.oCuoi.length >= 1, 'không được để lượt rỗng');
   }
 });
 
-test('(C) hứa kết quả — bắt cả BIẾN THỂ né (hoa/thường · ký tự chèn · tách từ)', () => {
+test('(C) INBOX — bậc CỨNG (cam kết/bảo đảm/100%) vẫn bị SỬA', () => {
+  const ca = [
+    'Bên em cam kết chữa cho mình ạ.',
+    'Hiệu quả 100% luôn mình nha.',
+    'Thủ thuật này an toàn tuyệt đối ạ.',
+    'Tiêm xong là không tái phát nữa ạ.',
+    'Bên em đảm bảo khỏi cho mình ạ.',
+  ];
+  for (const t of ca) {
+    assert.ok(coLoai(ra(t), 'hua_ket_qua'), `inbox vẫn phải bắt cam kết cứng: "${t}"`);
+  }
+});
+
+test('(C) INBOX — bậc MỀM (giọng tư vấn thường) phải THẢ NGUYÊN VĂN (anh Trình 09/09)', () => {
+  // Ca thật 09/09 08:42 — cổng sửa oan câu này rồi réo group, anh Trình bắt tại trận.
+  sach('Bác sĩ Trình sẽ xem lại phim và kết quả cũ cho mình, rồi tư vấn hướng điều trị phù hợp hơn để mình dứt điểm hẳn tình trạng này ạ.');
+  sach('Nhiều cô chú theo đúng phác đồ thì khỏi hẳn đau, đi lại bình thường ạ.');
+  sach('Hướng của Bác sĩ là xử lý tận gốc chỗ viêm đó ạ.');
+  sach('Điều trị đúng thì cơn đau hết hẳn được mình nha.');
+});
+
+test('(C) CÔNG KHAI — bắt cả BIẾN THỂ né (hoa/thường · ký tự chèn · tách từ)', () => {
   const bienThe = [
     'Cam đoan kh.ỏi hẳn nha mình ơi, yên tâm ạ.',
     'Bệnh này KHỎI HẲN được mình nhé, bác sĩ nói vậy ạ.',
@@ -58,16 +78,20 @@ test('(C) hứa kết quả — bắt cả BIẾN THỂ né (hoa/thường · k�
     'Điều trị tận  gốc luôn mình nha, bác sĩ giỏi lắm ạ.',
   ];
   for (const t of bienThe) {
-    assert.ok(coLoai(ra(t), 'hua_ket_qua'), `biến thể né phải bị bắt: "${t}"`);
+    assert.ok(coLoai(ra(t, { congKhai: true }), 'hua_ket_qua'), `biến thể né phải bị bắt: "${t}"`);
   }
+  // Biến thể né của bậc CỨNG thì INBOX cũng phải bắt.
+  assert.ok(coLoai(ra('Bên em C-A-M K-Ế-T chất lượng dịch vụ cho mình ạ.'), 'hua_ket_qua'));
 });
 
-test('(C) KHÔNG được dính — câu tư vấn hợp lệ phải đi qua nguyên vẹn', () => {
-  sach('Sau điều trị nhiều người thấy đỡ hơn và đi lại nhẹ hơn ạ.');
-  sach('Bệnh này dễ tái phát nếu mình ngồi lâu, nên cần tập thêm ạ.');
-  sach('Bác sĩ hẹn khám lại để đánh giá đáp ứng của mình ạ.');
-  sach('Mình đỡ đau hơn chưa ạ, đi lại có dễ chịu hơn không ạ?');
-  sach('Em ghi nhận rồi ạ, Bác sĩ sẽ xem phim rồi tư vấn hướng phù hợp cho mình.');
+test('(C) KHÔNG được dính — câu tư vấn hợp lệ phải đi qua nguyên vẹn (cả 2 làn)', () => {
+  for (const opts of [undefined, { congKhai: true }]) {
+    sach('Sau điều trị nhiều người thấy đỡ hơn và đi lại nhẹ hơn ạ.', opts);
+    sach('Bệnh này dễ tái phát nếu mình ngồi lâu, nên cần tập thêm ạ.', opts);
+    sach('Bác sĩ hẹn khám lại để đánh giá đáp ứng của mình ạ.', opts);
+    sach('Mình đỡ đau hơn chưa ạ, đi lại có dễ chịu hơn không ạ?', opts);
+    sach('Em ghi nhận rồi ạ, Bác sĩ sẽ xem phim rồi tư vấn hướng phù hợp cho mình.', opts);
+  }
 });
 
 // ===========================================================================

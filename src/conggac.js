@@ -101,13 +101,32 @@ export function boDau(s) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. NHÓM (C) — HỨA KẾT QUẢ. NĐ 38/2021. CẤM VĨNH VIỄN, KHÔNG THEO MÙA DMKT.
+// 2. NHÓM (C) — HỨA KẾT QUẢ. NĐ 38/2021.
 // ---------------------------------------------------------------------------
+// ⚠️ CHIA 2 BẬC từ 09/09/2026 — anh Trình bắt tại trận ca cổng sửa oan trong INBOX:
+// câu "...tư vấn hướng điều trị phù hợp hơn để mình DỨT ĐIỂM HẲN tình trạng này ạ"
+// (giọng tư vấn thường, không phải lời cam kết) bị sửa + réo group. Nguyên văn anh:
+// "Mấy tin này thoải mái, em đừng có chặn nhiều cái quá đáng quá, trong Inbox thì
+// thoải mái hơn cho anh."
+//   · BẬC CỨNG — lời CAM KẾT / BẢO ĐẢM / 100% (khách chụp màn hình khiếu nại được,
+//     là bằng chứng bất lợi kể cả trong inbox): sửa ở CẢ HAI làn. Riêng inbox sửa
+//     LẶNG LẼ (chỉ log + đếm sổ, KHÔNG réo Telegram — xem banCanhBao).
+//   · BẬC MỀM — giọng tư vấn thường ("dứt điểm", "khỏi hẳn", "tận gốc"...):
+//     INBOX THẢ NGUYÊN VĂN, chỉ CÔNG KHAI (nơi Sở thấy — NĐ38) mới sửa.
 // Cách xử: SỬA (scrub) — thay bằng cụm an toàn tương đương, giữ câu đọc trôi.
 // Chặn hẳn là hạ sách: câu bị xoá sạch = bot cụt lời giữa lúc khách đang hỏi.
 // Thứ tự trong bảng CÓ Ý NGHĨA: cụm DÀI đứng trước cụm ngắn chứa trong nó
 // ("điều trị tận gốc" phải được thay trước khi "trị dứt"/"tận gốc" kịp cắn).
-const THAY_HUA_KET_QUA = [
+const THAY_HUA_CUNG = [
+  ['an toàn tuyệt đối', 'được làm cẩn thận'],
+  ['không tái phát', 'hạn chế tái phát'],
+  ['hiệu quả 100%', 'nhiều người đáp ứng tốt'],
+  ['khỏi 100%', 'đỡ hơn nhiều'],
+  ['đảm bảo khỏi', 'cố gắng giúp mình đỡ'],
+  ['bảo đảm khỏi', 'cố gắng giúp mình đỡ'],
+  ['cam kết', 'cố gắng'],
+];
+const THAY_HUA_MEM = [
   ['giảm đau ngay từ buổi đầu', 'nhiều người thấy dễ chịu hơn sau khi điều trị'],
   ['tỉ lệ khỏi rất cao', 'nhiều người đáp ứng tốt'],
   ['tỷ lệ khỏi rất cao', 'nhiều người đáp ứng tốt'],
@@ -115,18 +134,14 @@ const THAY_HUA_KET_QUA = [
   ['chữa tận gốc', 'xử lý đúng nguyên nhân'],
   ['chữa tới gốc', 'xử lý đúng nguyên nhân'],
   ['trị tận gốc', 'xử lý đúng nguyên nhân'],
-  ['an toàn tuyệt đối', 'được làm cẩn thận'],
-  ['không tái phát', 'hạn chế tái phát'],
-  ['hiệu quả 100%', 'nhiều người đáp ứng tốt'],
-  ['khỏi 100%', 'đỡ hơn nhiều'],
   ['hết đau luôn', 'đỡ đau hơn'],
   ['hết hẳn', 'đỡ hơn nhiều'],
   ['khỏi hẳn', 'đỡ hơn nhiều'],
   ['dứt điểm', 'đỡ hơn nhiều'],
   ['trị dứt', 'giúp đỡ hơn'],
-  ['cam kết', 'cố gắng'],
 ];
-const RE_HUA_KET_QUA = THAY_HUA_KET_QUA.map(([cum, thay]) => [reMem(cum), thay, cum]);
+const RE_HUA_CUNG = THAY_HUA_CUNG.map(([cum, thay]) => [reMem(cum), thay, cum]);
+const RE_HUA_MEM = THAY_HUA_MEM.map(([cum, thay]) => [reMem(cum), thay, cum]);
 
 // ---------------------------------------------------------------------------
 // 3. NHÓM (E) — HỌC VỊ CHƯA CÓ. Anh Trình đang học CK1 năm 2, CHƯA có bằng.
@@ -319,7 +334,9 @@ function soiMotO(oGoc, { congKhai = false } = {}) {
   const daiGoc = o.trim().length;
 
   // --- (C) HỨA KẾT QUẢ → SỬA ---
-  for (const [re, thay, ten] of RE_HUA_KET_QUA) {
+  // Inbox chỉ soi BẬC CỨNG (cam kết/bảo đảm/100%); công khai soi CẢ HAI bậc (anh Trình 09/09).
+  const dsHuaKetQua = congKhai ? [...RE_HUA_CUNG, ...RE_HUA_MEM] : RE_HUA_CUNG;
+  for (const [re, thay, ten] of dsHuaKetQua) {
     re.lastIndex = 0;
     if (re.test(o)) {
       re.lastIndex = 0;
@@ -518,8 +535,11 @@ function linkHoiThoai(pageId, conversationId) {
 }
 
 async function banCanhBao(viPham, { pageId, conversationId, congKhai }) {
-  // Chỉ báo người cho việc CHẶN và cho hai nhóm PHÁP LUẬT (C)(E) — sửa vặt thì ghi log là đủ.
-  const dangBao = viPham.filter((v) => v.xuLy === 'chan' || v.loai === 'hua_ket_qua' || v.loai === 'hoc_vi');
+  // INBOX: chỉ báo người khi CHẶN HẲN (giá bịa, ưu đãi bịa...) — sửa vặt (C)(E) làm lặng lẽ,
+  // ghi log + sổ đếm là đủ. Anh Trình 09/09: "đừng báo group mấy quả tào lao như thế".
+  // CÔNG KHAI: báo cả việc SỬA (C)(E) — chỗ Sở thấy được thì người phải biết ngay.
+  const dangBao = viPham.filter((v) => v.xuLy === 'chan'
+    || (congKhai && (v.loai === 'hua_ket_qua' || v.loai === 'hoc_vi')));
   if (!dangBao.length) return;
   const bay = Date.now();
   for (const v of dangBao) {
