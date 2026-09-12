@@ -1122,6 +1122,50 @@ export async function handleIncoming(ev) {
       }
     } catch { /* nhãn hỏng thì bỏ qua, không chặn luồng trả lời */ }
 
+    // ===== VÁ 12/09/2026 — CHỐNG "BOT IM LẶNG KHÔNG XIN SỐ" + THÍ NGHIỆM XIN LẦN 2 =====
+    // Anh Trình chốt 12/09/2026 sau bản đo: 800 hội thoại (200 mẫu/tuần × 4 tuần), đọc NGUYÊN VĂN
+    // mọi tin qua pages.fm/api/v1 (USER token poscake-hieploi), regex nhận cả khung "số Zalo":
+    //   bot CÓ xin số : 03/08 83,0% → 24/08 79,5% → 31/08 78,5% → 07/09 **70,0%**
+    //   ra SĐT TRONG nhóm bot đã xin : 17% → 11% → 15% → **7%**
+    //   ⇒ 60/200 ca (30%) bot KHÔNG xin lần nào — gấp đôi đầu tháng 8.
+    // KPI#6 cùng kỳ (mẫu số đã bóc 22% ca page tự nhắn trước): 21,9% (28/07) → 8,7% (07/09).
+    // Tiền: đ/hội thoại RẺ đi 38.459 → 32.434 mà đ/SĐT ĐẮT lên 188.966 → 372.986 (×1,97).
+    try {
+      const cvXs = store.getConversation(conversationId);
+      const benhDaBiet = Boolean(cvXs?.condition && cvXs.condition !== 'unknown');
+      const soLuotKhach = (cvXs?.history || []).filter((h) => h.role === 'user').length;
+      const soLanXin = parseInt(store.getKV(`xinso_count:${conversationId}`) || '0', 10) || 0;
+      const chuaCoSo = !store.isCaptured(cvXs);
+      const dangLead = !daDatLichTuBao && !daKhamHoSo && !daKhamTuBao && !isCustomer;
+
+      // (a) VÁ LỖ IM LẶNG — khách đã kể rõ bệnh, đã nói ≥2 lượt, mà bot CHƯA xin lần nào.
+      // Đây là lỗ to nhất và rẻ nhất: không đụng luật "xin 1 lần", chỉ bắt bot dùng đúng 1 lần đó.
+      if (dangLead && chuaCoSo && benhDaBiet && soLuotKhach >= 2 && soLanXin === 0) {
+        contextTag = (contextTag ? contextTag + '\n' : '') +
+          '[BẮT BUỘC LƯỢT NÀY: XIN SỐ] Khách đã kể rõ tình trạng và đã nói nhiều lượt, mà em CHƯA HỀ xin số lần nào. ' +
+          'Lượt trả lời này PHẢI có đúng 1 ô xin số điện thoại (hoặc số Zalo), đặt ở CUỐI, đúng cấu trúc bắt buộc: ' +
+          '[trả lời đúng cái khách vừa hỏi] → [một việc cụ thể em sẽ làm cho mình] → [xin số để làm được việc đó]. ' +
+          'TUYỆT ĐỐI KHÔNG kết thúc lượt này bằng câu hỏi thăm suông kiểu "mình sao rồi ạ".';
+        console.log(`[epxinso] ${conversationId} bệnh rõ + khách ${soLuotKhach} lượt + chưa xin lần nào → ÉP XIN`);
+      }
+
+      // (b) THÍ NGHIỆM A/B "XIN LẦN 2" — chỉ bật trên MỘT page, page kia giữ nguyên làm đối chứng.
+      // Vì sao phải thí nghiệm: luật A.4 "xin đúng 1 lần" (06/09) dựng trên TƯƠNG QUAN — chính bản
+      // vá đó tự ghi *"không phải nhân quả đã chứng minh… phải đo lại sau 7–10 ngày"*. Đã áp 6 ngày,
+      // số xấu đi. Đây là cách duy nhất biết luật đúng hay sai mà không phải đoán.
+      // Tắt: đặt env AB_XINSO_LAN2_PAGE='' · Đổi page thử: đặt env sang page id khác.
+      const abPage = process.env.AB_XINSO_LAN2_PAGE ?? '957014354156110';
+      if (abPage && String(pageId) === String(abPage) &&
+          dangLead && chuaCoSo && benhDaBiet && soLanXin === 1 && soLuotKhach >= 4) {
+        contextTag = (contextTag ? contextTag + '\n' : '') +
+          '[THÍ NGHIỆM — ĐƯỢC XIN SỐ LẦN 2] Khách đã né lượt xin số đầu nhưng VẪN đang nói chuyện tiếp (dấu hiệu còn quan tâm). ' +
+          'Riêng lượt này em ĐƯỢC xin số lần thứ hai mà không cần chờ khách hỏi giá/địa chỉ — nhưng phải đổi GÓC so với lần đầu: ' +
+          'lần này xin số để NHẮN TIN Zalo gửi kết quả/hướng xử lý cho mình xem, nói rõ em không gọi làm phiền. ' +
+          'Vẫn chỉ 1 ô xin số, đặt cuối, sau khi đã trả lời xong cái khách vừa hỏi. Đây là lần CUỐI, không xin lần 3.';
+        console.log(`[ab-xinso2] ${conversationId} page ${pageId} → CHO XIN LẦN 2 (khách ${soLuotKhach} lượt)`);
+      }
+    } catch (e) { console.warn('[epxinso] lỗi (bỏ qua, không chặn luồng):', e?.message); }
+
     // Chọn mode: khách ĐÃ ĐẶT LỊCH chưa tới khám → prebooked (xác nhận + trấn an, CẤM xin số);
     // khách ĐÃ KHÁM (hồ sơ/tự báo) → aftercare (chăm sau khám, cấm kịch bản lead);
     // khách đã cho số/có nhãn → care; còn lại → reply (kịch bản lead thường).
