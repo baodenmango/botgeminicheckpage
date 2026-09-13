@@ -86,12 +86,26 @@ const CAC_CAU_TRUNG_TINH = [
   'Dạ chỗ đau đó có làm mình khó ngủ hay khó đi lại không ạ?',
   'Dạ mình còn thắc mắc gì về tình trạng của mình không ạ, em giải đáp giúp mình?',
 ];
-function cauTrungTinh(freshConv) {
+// ⚠️ VÁ 13/09/2026 (ca Hue Pham — bị khách gọi "anh bạn", phát hiện bot): phao bắn ~20 lần/ngày
+// trong MỘT hội thoại; 4 câu dùng hết thì bản cũ fallback về câu [0] → lặp NGUYÊN VĂN 3 lần.
+// Luật mới: ① trần phao/ngày/hội thoại (env PHAO_TRAN_NGAY, mặc định 3) ② cạn 4 câu → trả null
+// (THÀ IM còn hơn lặp — hội thoại đã dùng hết 4 phao nghĩa là bot lú kéo dài, lặp thêm chỉ lộ máy).
+// Người gọi phải chịu được null: null = im + log, KHÔNG phải lỗi.
+const PHAO_TRAN_NGAY = parseInt(process.env.PHAO_TRAN_NGAY || '3', 10);
+function thaPhao(conversationId, freshConv) {
   const daGui = ((freshConv?.history) || [])
     .filter((h) => h.role === 'model')
     .map((h) => chuanHoaCau(h.text))
     .join('\n');
-  return CAC_CAU_TRUNG_TINH.find((c) => !daGui.includes(chuanHoaCau(c))) || CAC_CAU_TRUNG_TINH[0];
+  const cau = CAC_CAU_TRUNG_TINH.find((c) => !daGui.includes(chuanHoaCau(c)));
+  if (!cau) return null; // cạn phao → im
+  const key = `phao_dem:${conversationId}`;
+  const homNay = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10); // ngày theo giờ VN
+  let dem = 0;
+  try { const o = JSON.parse(store.getKV(key) || 'null'); if (o && o.d === homNay) dem = o.n || 0; } catch { /* sổ hỏng coi như 0 */ }
+  if (dem >= PHAO_TRAN_NGAY) return null; // quá trần trong ngày → im
+  store.setKV(key, JSON.stringify({ d: homNay, n: dem + 1 }));
+  return cau;
 }
 
 // Khách XIN tài liệu/cẩm nang/bài tập → gửi PDF ngay (không đợi chạm 4).
@@ -294,6 +308,9 @@ const RE_XIN_NGUNG = new RegExp([
   // phổ biến → BỎ HẲN ("gởi/gưởi" bỏ dấu = goi/guoi đã có 'gui|goi' cover). 'goi' thêm chắn
   // "gọi ĐƯỢC" ("tôi không gọi được cho phòng khám" = khách THAN, không phải xin ngừng).
   '(dung|khong|kh|ko|k|thoi) (nen )?(nhan(?! vien)|nhat|gui|goi(?! (duoc|dc))|ib|inbox|lam phien|phien|spam)(?![a-z])',
+  // VÁ 13/09 (ca Hue Pham): "Đã nói ĐỪNG HỎI bác sĩ được không" — xin ngừng rõ mà không nhánh nào bắt.
+  // Chỉ (dung|khoi), KHÔNG thêm 'thoi': "thôi hỏi bác sĩ giúp em" là NHỜ relay, bắt vào là oan.
+  '(dung|khoi) (co )?hoi(?![a-z])',
   '(nhan|gui|goi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
   // "bỏ ý định", "không còn nhu cầu", "hủy lịch", "không chữa nữa"
   'bo (y dinh|dinh|nhu cau|kham|chua)(?![a-z])',
@@ -372,6 +389,26 @@ const RE_DOI_BAC_SI = new RegExp([
 export function laTinDoiBacSi(text) {
   return RE_DOI_BAC_SI.test(` ${boDauKham(text)} `);
 }
+
+// --- KHÁCH BÁO ỔN / KHÔNG CÓ NHU CẦU (ca Hue Pham 13/09/2026) ---
+// Khách nhắn "Ổn định rồi không đau chỗ nào hết" 10:22 sáng, rồi "không sao đâu" ~10 lần tới
+// chiều — không cửa nào nhận ⇒ bot đeo bám hỏi bệnh cả ngày, bị khách gọi "anh bạn" (lộ máy).
+// Luật bậc thang theo SỐ LẦN trong 24h: lần 1 → Gemini đáp bình thường (khách nói "không sao"
+// xã giao 1 lần là chuyện thường, đừng phản ứng); lần 2 → 1 câu CHỐT lịch sự rồi thôi;
+// lần ≥3 → IM HẲN + đóng các chạm lead còn lại (đeo bám người không có nhu cầu = đốt uy tín).
+// Chỉ bắt tin NGẮN thuần-báo-ổn, không kèm câu hỏi — khách còn hỏi là còn nhu cầu.
+// ⚠️ Biên từ là BẮT BUỘC (bài học regex bỏ dấu, tái phạm lần 4 suýt dính: "o dau" khớp giữa
+// "sa-O DAU-..."). Dấu "?" phải kiểm trên TIN THÔ vì boDauKham xoá sạch ký tự đặc biệt.
+const RE_BAO_ON = /(?<![a-z])(khong|ko|k|hong|hok) ?(co )?(sao|can|benh|dau|bi gi|gi|van de|nhu cau)(?![a-z])|on dinh roi|(?<![a-z])on roi|het dau roi|het benh roi|khoe roi|(?<![a-z])do (nhieu )?roi|binh thuong roi/;
+const RE_CON_HOI = /the nao|lam sao|bao nhieu|khi nao|(?<![a-z])(gia|o dau|tu van|dat lich|kham|hoi)(?![a-z])/;
+export function laTinBaoOn(text) {
+  if (String(text || '').includes('?')) return false; // còn dấu hỏi = còn hỏi (kiểm trước khi bỏ dấu)
+  const n = ` ${boDauKham(text).trim()} `;
+  if (n.trim().length > 45) return false; // câu dài = đang kể/tả bệnh, không phải chốt "tôi ổn"
+  if (RE_CON_HOI.test(n)) return false;   // còn hỏi/còn muốn khám = còn nhu cầu
+  return RE_BAO_ON.test(n);
+}
+export const CAU_CHOT_BAO_ON = 'Dạ vậy em mừng cho mình ạ 🌸 Khi nào cần hỗ trợ gì về xương khớp, mình cứ nhắn em nha.';
 
 // --- KHÁCH Ở XA, KHÔNG TỚI PHÒNG KHÁM ĐƯỢC (anh Trình 24/08/2026) ---
 // Nguyên văn: "dạo này toàn văng khách ở xa, khách tính không tới phòng khám được nha em."
@@ -800,6 +837,33 @@ export async function handleIncoming(ev) {
       ).catch(() => {});
       console.log(`[doi-bac-si] 🙋 ${conversationId} khách đòi hỏi/gặp bác sĩ → handover + báo người`);
       return;
+    }
+
+    // ===== KHÁCH BÁO ỔN / KHÔNG CÓ NHU CẦU (ca Hue Pham 13/09) — CHỐT CHẶN SỐ 4 =====
+    // Bậc thang 24h: lần 1 kệ (Gemini đáp thường) · lần 2 chốt lịch sự · lần ≥3 im hẳn + đóng chạm.
+    if (laTinBaoOn(messageText)) {
+      const keyBaoOn = `baoon:${conversationId}`;
+      let demBaoOn = 0;
+      try {
+        const o = JSON.parse(store.getKV(keyBaoOn) || 'null');
+        if (o && Date.now() - o.t < 24 * 3600e3) demBaoOn = o.n || 0;
+      } catch { /* sổ hỏng coi như 0 */ }
+      demBaoOn += 1;
+      store.setKV(keyBaoOn, JSON.stringify({ n: demBaoOn, t: Date.now() }));
+      if (demBaoOn === 2) {
+        noteBotSent(conversationId, CAU_CHOT_BAO_ON);
+        noteBotJustSent(conversationId);
+        const okOn = await sendMessages(pageId, conversationId, [CAU_CHOT_BAO_ON]);
+        if (okOn) store.appendHistory(conversationId, 'model', CAU_CHOT_BAO_ON);
+        console.log(`[bao-on] 🌸 ${conversationId} khách báo ổn lần 2 → chốt lịch sự, thôi hỏi thêm`);
+        return;
+      }
+      if (demBaoOn >= 3) {
+        for (const t of [2, 3, 4, 5, 6, 7]) store.markTouchDone(conversationId, t); // đóng chạm lead còn lại
+        console.log(`[bao-on] 🤫 ${conversationId} khách báo ổn lần ${demBaoOn}/24h → IM (không đeo bám người không có nhu cầu) + đóng chạm lead`);
+        return;
+      }
+      // demBaoOn === 1 → rơi xuống cho Gemini đáp tự nhiên
     }
 
     // KHÁCH BÁO "ĐÃ ĐẾN KHÁM" mà conv chưa có SĐT (SOP quầy — ca Loan Le 07/07):
@@ -1353,6 +1417,16 @@ export async function handleBotTouch(conv, touchNo) {
     if (!fresh) return;
     if (store.isTouchDone(fresh, touchNo)) return;      // đã gửi chạm này rồi (đua cron)
     if (store.isHandover(fresh)) return;                  // khiếu nại/cần người → bot không chen
+    // KHÁCH BÁO ỔN ≥2 lần/24h (ca Hue Pham 13/09: chạm 3+4 vẫn bắn theo lịch vào người đang
+    // từ chối cả ngày = dội bom) → đóng luôn chạm này, không chờ.
+    try {
+      const oOn = JSON.parse(store.getKV(`baoon:${conversationId}`) || 'null');
+      if (oOn && oOn.n >= 2 && Date.now() - oOn.t < 72 * 3600e3) {
+        console.log(`[cham${touchNo}] 🤫 ${conversationId} khách đã báo ổn ${oOn.n} lần → đóng chạm, không dội thêm`);
+        store.markTouchDone(conversationId, touchNo);
+        return;
+      }
+    } catch { /* sổ hỏng thì chạm như thường */ }
     // OPT-OUT (vá 02/08, ca Phuong Ngoc): khách xin ngừng → dừng cả chuỗi 7 chạm.
     // Gác TƯỜNG MINH ở đây dù isHandover phía trên thường đã chặn: opt_out có thể được bật từ
     // đường khác (Gemini đặt opt_out, admin gắn tay) mà KHÔNG kèm handover → hở là dội tin tiếp.
@@ -1597,8 +1671,13 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       if (chuDong) {
         console.log(`[dispatch] ${conversationId} lượt DẬP CHỦ ĐỘNG mà mọi ô (${truoc}) trùng tin cũ → KHÔNG gửi gì (không spam câu trung tính)`);
       } else {
-        outMessages = [cauTrungTinh(freshConv)];
-        console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
+        const phao = thaPhao(conversationId, freshConv);
+        if (phao) {
+          outMessages = [phao];
+          console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
+        } else {
+          console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ NHƯNG phao CẠN/quá trần ngày → IM (thà im hơn lặp nguyên văn — ca Hue Pham 13/09)`);
+        }
       }
     }
   }
@@ -1624,7 +1703,8 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
           .map((m) => String(m).replace(/https?:\/\/\S+/gi, '').replace(/[ \t]{2,}/g, ' ').trim())
           .filter((m) => m.length > 0);
         // Cùng lắm vẫn rỗng (ô chỉ có mỗi link) → giữ 1 câu trung tính, KHÔNG im.
-        if (outMessages.length === 0) outMessages = [cauTrungTinh(freshConv)];
+        // (Lượt ĐẦU nên phao chắc chắn còn; phòng hờ null thì lấy thẳng câu [0] — khách mới không được im.)
+        if (outMessages.length === 0) outMessages = [thaPhao(conversationId, freshConv) || CAC_CAU_TRUNG_TINH[0]];
       }
       if (outMessages.length !== truoc) {
         console.log(`[dispatch] ${conversationId} lượt trả lời ĐẦU → gỡ link (30% vs 57% continuation, không để lượt rỗng)`);
@@ -1658,8 +1738,11 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       }
       // Sau khi bỏ mà rỗng lượt (chỉ toàn ô mời) → giữ lại 1 ô trung tính, đừng gửi lượt rỗng/im.
       // VÁ 06/09/2026: chỉ khi khách ĐANG CHỜ. Lượt bot tự dập thì im hẳn (xem phao cửa 1).
+      // VÁ 13/09: phao có trần + cạn → null = im, không lặp nguyên văn.
       if (!outMessages.length && truoc > 0 && !chuDong) {
-        outMessages = [cauTrungTinh(freshConv)];
+        const phao = thaPhao(conversationId, freshConv);
+        if (phao) outMessages = [phao];
+        else console.log(`[dispatch] ${conversationId} lượt chỉ toàn ô mời trùng, phao CẠN/quá trần → IM`);
       }
     }
   }
