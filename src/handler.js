@@ -97,19 +97,52 @@ const CAC_CAU_TRUNG_TINH = [
 // (THÀ IM còn hơn lặp — hội thoại đã dùng hết 4 phao nghĩa là bot lú kéo dài, lặp thêm chỉ lộ máy).
 // Người gọi phải chịu được null: null = im + log, KHÔNG phải lỗi.
 const PHAO_TRAN_NGAY = parseInt(process.env.PHAO_TRAN_NGAY || '3', 10);
-function thaPhao(conversationId, freshConv) {
-  const daGui = ((freshConv?.history) || [])
-    .filter((h) => h.role === 'model')
-    .map((h) => chuanHoaCau(h.text))
-    .join('\n');
-  const cau = CAC_CAU_TRUNG_TINH.find((c) => !daGui.includes(chuanHoaCau(c)));
-  if (!cau) return null; // cạn phao → im
+// ⚠️ VÁ 15/09/2026 CHIỀU (ca Âu Chung Tình — lời anh Trình: "hỏi lại đúng ý người ta đã trả
+// lời, làm tụt mood ghê gớm"): khách ĐÃ cho SĐT + đã kể "khớp vai, hơn 1 tháng"; một lượt gửi
+// hụt (token trang bị xoay) → rescue vớt → mọi ô trùng → phao chọn lần lượt câu [0] "khó chịu
+// chỗ nào" rồi câu [1] "bị lâu chưa" — cả hai khách đều VỪA trả lời xong. Hai lớp MẮT mới:
+//   ① hội thoại ĐÃ CÓ SĐT → cấm cả 4 câu hỏi-bệnh; phao duy nhất là 1 câu CHỐT (gửi rồi → im).
+//   ② chưa có SĐT → câu nào khách ĐÃ TỰ TRẢ LỜI Ý ĐÓ (so tin khách, bỏ dấu) thì bỏ qua.
+const CAU_TRUNG_TINH_DA_CO_SO = 'Dạ em ghi nhận hết thông tin rồi nha, trợ lý Bác sĩ sẽ gọi xác nhận giờ khám cho mình sớm nhất ạ. Mình cần hỏi gì thêm cứ nhắn em nha 😊';
+// Regex "khách đã trả lời" — CÙNG CHỈ SỐ với CAC_CAU_TRUNG_TINH; null = câu mở chung, luôn được phép.
+// So trên text bỏ dấu: dùng CỤM (khop vai / dau goi...) chứ không dùng từ đơn — "co"/"vai"/"gay"
+// bỏ dấu đụng "có"/"vài"/"gây" (từ cực phổ biến), từ đơn là bắt oan cả hội thoại.
+const PHAO_DA_TRA_LOI = [
+  /(khop (vai|goi|hang|co tay|khuyu|ngon)|dau (vai|goi|lung|co|gay|hong|chan|tay|khop|that lung)|(vai|goi|lung|hong|co tay|got chan|ca chan|ca tay) (dau|moi|nhuc|te)|thoat vi|cot song|than kinh toa|te (chan|tay|bi)|viem (khop|gan|chop)|gai (cot song|got)|cung khop|kho chiu[^,.!?]{0,14}(vai|goi|lung|co|gay))/, // [0] vùng đau
+  /(\d+ *(ngay|tuan|thang|nam)\b|may (ngay|tuan|thang|nam)|lau (roi|lam)|(tuan|thang|nam) (nay|roi|truoc)|tu (hoi|luc|khi)|hon (mot|nua) (thang|nam|tuan))/, // [1] bị lâu chưa
+  /(kho ngu|mat ngu|ngu (khong|ko|k)\b|khong ngu|nam nghieng|di lai kho|kho di lai|dau ve dem|dau ban dem|anh huong.{0,10}(ngu|di lai))/, // [2] ngủ / đi lại
+  null, // [3] "còn thắc mắc gì" — câu mở chung
+];
+function boDauPhao(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase();
+}
+function demVaTangPhao(conversationId) {
   const key = `phao_dem:${conversationId}`;
   const homNay = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10); // ngày theo giờ VN
   let dem = 0;
   try { const o = JSON.parse(store.getKV(key) || 'null'); if (o && o.d === homNay) dem = o.n || 0; } catch { /* sổ hỏng coi như 0 */ }
-  if (dem >= PHAO_TRAN_NGAY) return null; // quá trần trong ngày → im
+  if (dem >= PHAO_TRAN_NGAY) return false; // quá trần trong ngày → im
   store.setKV(key, JSON.stringify({ d: homNay, n: dem + 1 }));
+  return true;
+}
+export function thaPhao(conversationId, freshConv) {
+  const history = (freshConv?.history) || [];
+  const daGui = history
+    .filter((h) => h.role === 'model')
+    .map((h) => chuanHoaCau(h.text))
+    .join('\n');
+  // ① Đã có SĐT → khách qua giai đoạn hỏi bệnh rồi; chỉ còn 1 câu chốt, chốt rồi mà vẫn lú → im.
+  if (store.isCaptured(freshConv)) {
+    if (daGui.includes(chuanHoaCau(CAU_TRUNG_TINH_DA_CO_SO))) return null;
+    if (!demVaTangPhao(conversationId)) return null;
+    return CAU_TRUNG_TINH_DA_CO_SO;
+  }
+  // ② Chưa có SĐT → bỏ câu bot đã gửi VÀ câu khách đã tự trả lời ý đó.
+  const khachNoi = boDauPhao(history.filter((h) => h.role === 'user').map((h) => h.text).join(' \n '));
+  const cau = CAC_CAU_TRUNG_TINH.find((c, i) =>
+    !daGui.includes(chuanHoaCau(c)) && !(PHAO_DA_TRA_LOI[i] && PHAO_DA_TRA_LOI[i].test(khachNoi)));
+  if (!cau) return null; // cạn phao → im
+  if (!demVaTangPhao(conversationId)) return null;
   return cau;
 }
 
@@ -857,6 +890,14 @@ export async function handleIncoming(ev) {
     // Lưu tin khách + cập nhật mốc thời gian (cho retouch).
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
+
+    // STICKER SAU KHI ĐÃ CÓ SĐT (ca Âu Chung Tình 15/09): khách cho số xong, bot đã chốt "trợ lý
+    // sẽ gọi" — khách thả 👍/sticker là lời KẾT lịch sự, không phải câu cần trả lời. Generate tiếp
+    // chỉ đẻ ô trùng → dispatch thả phao hỏi-bệnh lại từ đầu (tụt mood, lộ máy). → bot im.
+    if (messageText === '[khách gửi sticker cảm xúc]' && store.isCaptured(store.getConversation(conversationId))) {
+      console.log(`[handler] ${conversationId} sticker sau khi đã có SĐT → lời chào kết, bot im`);
+      return;
+    }
 
     // ===== KIẾN TRÚC 2 LỚP (đại tu 15/09): REGEX ĐỀ CỬ — MODEL PHÊ DUYỆT =====
     // theNghiBac: máy dò nghi nhưng model BÁC → lượt này bot ngắn lại, không bán (thẻ nối vào contextTag).
