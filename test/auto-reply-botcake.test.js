@@ -17,11 +17,11 @@ process.env.DB_PATH = path.join(tamDB, 'test.sqlite');
 const { isAutoReplyMessage } = await import('../src/handler.js');
 
 const PHAI_BAT = [
-  // Botcake xin số — bắn nguyên văn vào Từ Duy Phương + Lan Huynh 17:42 ngày 15/09
-  'Dạ mình để lại số điện thoại giúp em nha, Bác sĩ gọi xem kỹ tình trạng rồi tư vấn hướng phù hợp cho mình — tư vấn miễn phí thôi ạ 🙏',
   // Meta ice-breaker kèm tên khách — ca Lan Huynh 16:17
   'Chào Lan! Chúng tôi có thể giúp gì cho bạn?',
   'Chào Minh Tân! Chúng tôi có thể giúp gì cho bạn?',
+  // Tin hệ thống Meta "message request" — chính nó khoá ca Từ Duy Phương 169' (trích log 15/09)
+  'Dr Nhật Trình muốn gửi tin nhắn cho bạn.',
   // 2 mẫu cũ phải còn sống (hồi quy)
   'Dạ cảm ơn anh/chị đã liên hệ, a/c vui lòng mô tả càng chi tiết càng tốt vấn đề mình đang gặp phải',
   'Đã đặt giai đoạn của khách hàng tiềm năng thành Đủ tiêu chuẩn',
@@ -34,6 +34,9 @@ const PHAI_THA = [
   'Dạ mình để lại số giúp em nha',                       // câu ngắn người hay gõ — KHÔNG khớp mẫu dài
   'Em tư vấn miễn phí cho mình nha chị',                  // nhắc "tư vấn miễn phí" giữa câu thường
   'Bác sĩ nói tình trạng của chị cần khám trực tiếp ạ',
+  // ⚠️ Mẫu TRẢ LỜI NHANH "Sodienthoai" — NGƯỜI TRỰC bấm tay trong Pancake (truy ra tối 15/09).
+  // Bot PHẢI LUI khi thấy nó → PHẢI THẢ. Bản vá chiều 15/09 từng bắt nhầm câu này, đã rút.
+  'Dạ mình để lại số điện thoại giúp em nha, Bác sĩ gọi xem kỹ tình trạng rồi tư vấn hướng phù hợp cho mình — tư vấn miễn phí thôi ạ 🙏',
 ];
 
 for (const c of PHAI_BAT) {

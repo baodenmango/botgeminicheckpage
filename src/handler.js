@@ -218,12 +218,15 @@ const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
   // là auto-reply → bot chen ngang đè người. Đổi thành 2 mẫu neo DÀI của tin auto thật.
   'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec cua phong kham|ngoai gio lam viec' +
   '|mo ta cang chi tiet cang tot|de lai sdt giup bac trinh|da de lai binh luan|[botcake]' +
-  // VÁ 15/09 CHIỀU (ca Từ Duy Phương 169' + Lan Huynh 68' câm): 2 mẫu auto lọt 6 cửa → cờ human OAN
-  // → bot lui 2h chờ một "người thật" không tồn tại. ① kịch bản Botcake xin số ("...Bác sĩ gọi xem kỹ
-  // tình trạng rồi tư vấn hướng phù hợp...") ② ice-breaker Meta ("Chào X! Chúng tôi có thể giúp gì cho
-  // bạn?" — nhân viên mình không bao giờ xưng "chúng tôi"). Chỉ thêm mẫu DÀI + ĐẶC TRƯNG, tránh vết xe
-  // 'gio lam viec' (mẫu ngắn chặn oan telesale thật).
-  '|bac si goi xem ky tinh trang roi tu van huong phu hop|chung toi co the giup gi cho ban'
+  // VÁ 15/09 CHIỀU + TỐI (ca Từ Duy Phương 169' + Lan Huynh 68' câm): 2 tin auto Meta lọt 6 cửa
+  // → cờ human OAN → bot lui 2h chờ một "người thật" không tồn tại:
+  //   ① ice-breaker "Chào X! Chúng tôi có thể giúp gì cho bạn?" (nhân viên không xưng "chúng tôi")
+  //   ② tin hệ thống "Dr Nhật Trình muốn gửi tin nhắn cho bạn." (message request notice — trích log
+  //      07:32:51Z 15/09, chính nó khoá ca "Bị viêm khớp vai" 169 phút).
+  // ⚠️ BẢN CHIỀU từng thêm cả câu "bac si goi xem ky tinh trang..." — RÚT LẠI TRONG NGÀY: truy ra đó
+  // là mẫu TRẢ LỜI NHANH "Sodienthoai" trong Pancake (Cài đặt → Hỗ trợ trả lời), NGƯỜI TRỰC bấm tay
+  // → bot LUI là ĐÚNG; giữ marker đó là bot chen ngang người trực (vết xe 'gio lam viec').
+  '|chung toi co the giup gi cho ban|muon gui tin nhan cho ban'
 ).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
 // DANH THIẾP OA: Zalo tự bắn tin CHỈ GỒM TÊN OA (+ emoji) mỗi khi khách mở chat — vd
 // "Phòng khám Cơ Xương Khớp Hiệp Lợi 🦴" (ca Minh Trang 06/07: bot tưởng telesale → câm 6h).
