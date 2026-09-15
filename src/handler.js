@@ -1973,6 +1973,23 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
     }
   }
 
+  // ===== CHỐNG BỊA "ĐÃ NHẬN SỐ" (đại tu 15/09 — ca Ngọc Bân: khách gửi ❤️❤️, bot nói "em nhận
+  // được số của mình rồi ạ... trợ lý sẽ liên hệ" → tự đóng hội thoại, lead chết không ai biết) =====
+  // Chưa hề có số (regex + DB đều rỗng) mà model nói "đã nhận số" = BỊA DỮ KIỆN → bỏ ô đó.
+  if (!phoneByRegex && !store.isCaptured(freshConv)) {
+    const RE_BIA_NHAN_SO = /(em |a )?(da )?(nhan|co) (duoc )?so (cua |dien thoai )?(minh|anh|chi|co|chu)|em nhan duoc so|da luu so (cua )?(minh|anh|chi)/;
+    const truocBia = outMessages.length;
+    outMessages = outMessages.filter((m) => {
+      const bia = RE_BIA_NHAN_SO.test(` ${boDauKham(m)} `);
+      if (bia) console.warn(`[dispatch] 🚫 ${conversationId} model BỊA "đã nhận số" khi chưa có số → bỏ ô: "${String(m).slice(0, 60)}"`);
+      return !bia;
+    });
+    if (outMessages.length < truocBia && outMessages.length === 0 && !chuDong) {
+      const phao = thaPhao(conversationId, freshConv);
+      if (phao) outMessages = [phao];
+    }
+  }
+
   // ===== VIỆC #2 — KỶ LUẬT LINK (audit 09/07: loạt CÓ link khách nhắn tiếp 30% vs KHÔNG link 57%) =====
   // Bot gắn sale page quá sớm, quá dày → rớt khách. Thêm 2 luật (giữ nguyên cờ sale_link_sent
   // của ensureSalePageLink, chỉ SIẾT thêm):
