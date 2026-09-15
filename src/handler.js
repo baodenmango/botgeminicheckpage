@@ -217,7 +217,13 @@ const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
   // VÁ 15/09: 'gio lam viec' trần → telesale thật gõ "Giờ làm việc bên em 8h-20h nha chị" bị coi
   // là auto-reply → bot chen ngang đè người. Đổi thành 2 mẫu neo DÀI của tin auto thật.
   'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec cua phong kham|ngoai gio lam viec' +
-  '|mo ta cang chi tiet cang tot|de lai sdt giup bac trinh|da de lai binh luan|[botcake]'
+  '|mo ta cang chi tiet cang tot|de lai sdt giup bac trinh|da de lai binh luan|[botcake]' +
+  // VÁ 15/09 CHIỀU (ca Từ Duy Phương 169' + Lan Huynh 68' câm): 2 mẫu auto lọt 6 cửa → cờ human OAN
+  // → bot lui 2h chờ một "người thật" không tồn tại. ① kịch bản Botcake xin số ("...Bác sĩ gọi xem kỹ
+  // tình trạng rồi tư vấn hướng phù hợp...") ② ice-breaker Meta ("Chào X! Chúng tôi có thể giúp gì cho
+  // bạn?" — nhân viên mình không bao giờ xưng "chúng tôi"). Chỉ thêm mẫu DÀI + ĐẶC TRƯNG, tránh vết xe
+  // 'gio lam viec' (mẫu ngắn chặn oan telesale thật).
+  '|bac si goi xem ky tinh trang roi tu van huong phu hop|chung toi co the giup gi cho ban'
 ).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
 // DANH THIẾP OA: Zalo tự bắn tin CHỈ GỒM TÊN OA (+ emoji) mỗi khi khách mở chat — vd
 // "Phòng khám Cơ Xương Khớp Hiệp Lợi 🦴" (ca Minh Trang 06/07: bot tưởng telesale → câm 6h).
@@ -252,7 +258,7 @@ const AUTO_REPLY_PATTERNS = ((process.env.AUTO_REPLY_PATTERNS || '').trim() ||
   + '|^da dat giai doan cua khach hang tiem nang thanh|^da dat giai doan khach hang tiem nang thanh'
 ).split('|').map((s) => { try { return new RegExp(s.trim(), 'i'); } catch { return null; } }).filter(Boolean);
 
-function isAutoReplyMessage(text) {
+export function isAutoReplyMessage(text) {
   const n = String(text || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd')
     .toLowerCase();
@@ -2009,6 +2015,15 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
           console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ → THẢ 1 câu trung tính, KHÔNG IM (phao chống bỏ rơi khách)`);
         } else {
           console.log(`[dispatch] ${conversationId} ⚠️ mọi ô (${truoc}) trùng tin cũ NHƯNG phao CẠN/quá trần ngày → IM (thà im hơn lặp nguyên văn — ca Hue Pham 13/09)`);
+          // VÁ 15/09 CHIỀU (ca Co Nan): bot IM ở lượt TRẢ LỜI (khách vừa kể "chân phải đi không
+          // được") mà không kêu ai → khách chờ 40' tới khi máy canh 15' réo. Im thì được, nhưng
+          // im phải KÊU NGƯỜI THẬT vào thay — báo group 1 lần/2h/hội thoại.
+          const kBi = `bot_bi_bao:${conversationId}`;
+          const tBi = parseInt(store.getKV(kBi) || '0', 10) || 0;
+          if (Date.now() - tBi > 2 * 3600e3) {
+            store.setKV(kBi, String(Date.now()));
+            notifyText(`🆘 BOT BÍ CÂU với "${customerName || conversationId}" — khách đang chờ mà mọi câu bot soạn đều trùng tin cũ (phao cạn). Cần NGƯỜI THẬT vào rep inbox ngay.`).catch(() => {});
+          }
         }
       }
     }
