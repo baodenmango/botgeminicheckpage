@@ -153,6 +153,24 @@ function drainPending(conversationId) {
   return { ...q[q.length - 1], messageText: q.map((e) => e.messageText).join('\n') };
 }
 
+// ===== GOM TIN KHÁCH NHẮN LIỀN TAY (đại tu 15/09 — ca Lương Tờ Rình) =====
+// Bản cũ CHỈ gom khi lượt trước đang chạy (lock). Khách gõ 2-3 tin cách nhau 5-10 giây lúc bot
+// RẢNH = 2-3 lượt Gemini rời nhau → bot trả lời tin 1, tin 2 thành lịch sử chưa ai đáp ("Tôi ở
+// xa thì phải làm sao ạ" chết đúng kiểu này; hiện trường 15/09 còn ra lỗi 2 luồng câu hỏi đè nhau).
+// Nay: tin đầu vào PHÒNG CHỜ, chờ BOT_GOM_TIN_GIAY (mặc định 8s, =0 tắt) — khách gõ tiếp thì
+// reset đồng hồ; hết chờ → gom tất cả thành MỘT lượt. Người thật cũng đọc hết tin rồi mới trả lời.
+const GOM_TIN_MS = Number(process.env.BOT_GOM_TIN_GIAY ?? 8) * 1000;
+const GOM_TRAN_MS = 20000; // trần chờ tuyệt đối — khách gõ rả rích không giữ bot mãi
+const gomTimers = new Map();   // conversationId -> timeout
+const gomFirstAt = new Map();  // conversationId -> mốc tin ĐẦU vào phòng chờ
+function gomFlush(conversationId) {
+  clearTimeout(gomTimers.get(conversationId));
+  gomTimers.delete(conversationId);
+  gomFirstAt.delete(conversationId);
+  const merged = drainPending(conversationId);
+  if (merged) handleIncoming({ ...merged, _daGom: true });
+}
+
 // Sổ chống echo giờ nằm ở echoguard.js (dùng chung với đường gửi Zalo OpenAPI —
 // zalo.js cũng ghi vào sổ này sau mỗi lần gửi, khỏi nhầm echo là telesale gõ tay).
 
@@ -652,6 +670,24 @@ export async function handleIncoming(ev) {
     queuePending(ev);
     return;
   }
+
+  // PHÒNG CHỜ GOM TIN (15/09) — chỉ cho tin khách THẬT, chưa qua gom, khi bot đang rảnh.
+  if (GOM_TIN_MS > 0 && !ev._daGom) {
+    const q = pendingQueue.get(conversationId) || [];
+    const daayQua = q.length >= 4; // sắp chạm trần 5 của queuePending → xử luôn, đừng rơi tin
+    queuePending(ev);
+    if (!gomFirstAt.has(conversationId)) gomFirstAt.set(conversationId, Date.now());
+    const choDaLau = Date.now() - gomFirstAt.get(conversationId) >= GOM_TRAN_MS;
+    // Flush NGAY khi: tin có SĐT hợp lệ (không bắt lead chờ 8s) · quá trần 20s · hàng sắp đầy.
+    if (extractPhone(messageText) || choDaLau || daayQua) {
+      gomFlush(conversationId);
+      return;
+    }
+    clearTimeout(gomTimers.get(conversationId));
+    gomTimers.set(conversationId, setTimeout(() => gomFlush(conversationId), GOM_TIN_MS));
+    return;
+  }
+
   lockAcquire(conversationId);
   try {
     const conv = store.ensureConversation(conversationId, pageId, customerName);

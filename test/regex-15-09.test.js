@@ -77,3 +77,13 @@ test('XIN NGỪNG không bắt oan "giờ tin nhiều nguồn quá"', () => {
   assert.equal(laTinXinNgung('Giờ tin nhiều nguồn quá không biết tin ai'), false, '"giờ" không phải "gởi"');
   assert.equal(laTinXinNgung('gửi tin nhiều quá rồi đó'), true, 'xin ngừng thật vẫn bắt');
 });
+
+// ── GOM TIN (15/09): kiểm cấu trúc nguồn — phòng chờ phải tồn tại đúng thiết kế ──
+test('PHÒNG CHỜ GOM TIN: có đủ cầu dao + flush ngay khi có SĐT + trần 20s', () => {
+  const src = fs.readFileSync(new URL('../src/handler.js', import.meta.url), 'utf8');
+  assert.ok(src.includes('BOT_GOM_TIN_GIAY'), 'phải có cầu dao env BOT_GOM_TIN_GIAY');
+  assert.ok(src.includes('PHÒNG CHỜ GOM TIN'), 'khối gom tin phải nằm trong handleIncoming');
+  assert.match(src, /extractPhone\(messageText\) \|\| choDaLau \|\| daayQua/, 'flush ngay khi SĐT/trần/đầy hàng');
+  assert.ok(src.includes('GOM_TRAN_MS = 20000'), 'trần chờ tuyệt đối 20s');
+  assert.match(src, /_daGom/, 'cờ chống vòng lặp phải tồn tại');
+});
