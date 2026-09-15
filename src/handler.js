@@ -311,7 +311,10 @@ const RE_XIN_NGUNG = new RegExp([
   // VÁ 13/09 (ca Hue Pham): "Đã nói ĐỪNG HỎI bác sĩ được không" — xin ngừng rõ mà không nhánh nào bắt.
   // Chỉ (dung|khoi), KHÔNG thêm 'thoi': "thôi hỏi bác sĩ giúp em" là NHỜ relay, bắt vào là oan.
   '(dung|khoi) (co )?hoi(?![a-z])',
-  '(nhan|gui|goi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
+  // VÁ 15/09 (ca Lương Tờ Rình 14/09): bản cũ KHÔNG đòi từ phủ định đi trước nên "khớp vai và
+  // GỐI NỮA ạ" (bỏ dấu = "goi nua") bị hiểu thành "đừng gọi nữa" → opt-out + tắt chăm VĨNH VIỄN
+  // với lead đang kể bệnh. "X nữa" chỉ là xin-ngừng khi có ĐỪNG/KHÔNG/THÔI đứng trước gần đó.
+  '(?<![a-z])(dung|khong|kh|ko|k|thoi|het|ngung|ngwng) [^,.!?]{0,20}(nhan|gui|goi|ib|inbox|tn|tin) .{0,25}(nua|nua nhe|nua nha|di a)( |$)',
   // "bỏ ý định", "không còn nhu cầu", "hủy lịch", "không chữa nữa"
   'bo (y dinh|dinh|nhu cau|kham|chua)(?![a-z])',
   '(khong|kh|ko|k) (con )?(nhu cau|y dinh)(?![a-z])',
