@@ -1820,6 +1820,14 @@ function findNguonInPayload(obj, out = {}, depth = 0) {
     if (!out.adId && k === 'ad_ids' && Array.isArray(v) && v.length > 0) out.adId = String(v[0]);
     if (!out.ref && k === 'ref' && typeof v === 'string' && v.trim()) out.ref = v.trim().slice(0, 80);
     if (!out.postId && k === 'post_id' && typeof v === 'string' && /^\d+_\d+$/.test(v)) out.postId = v;
+    // 15/09 (đại tu ad-context): webhook Meta kèm ads_context_data có SẴN tiêu đề ads —
+    // trích luôn ở đây thì bot biết nội dung ad khách bấm mà KHÔNG tốn API call nào.
+    if (k === 'ads_context_data' && v && typeof v === 'object') {
+      if (!out.adTitle && typeof v.ad_title === 'string' && v.ad_title.trim()) {
+        out.adTitle = v.ad_title.trim().slice(0, 350);
+      }
+      if (!out.postId && typeof v.post_id === 'string' && /^\d+_\d+$/.test(v.post_id)) out.postId = v.post_id;
+    }
     if (v && typeof v === 'object') findNguonInPayload(v, out, depth + 1);
   }
   return out;

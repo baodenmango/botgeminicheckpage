@@ -13,6 +13,7 @@ import { napBang as napSoLieuTrinh, theLieuTrinh } from './lieutrinh.js';
 import { chanTinChuDong } from './gac20tr.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
 import { pheDuyetYDinh } from './pheduyet.js';
+import { layCaptionQuangCao, dungTheQuangCao, adContextBat } from './adcontext.js';
 import { buildCarePlanTag } from './careplan.js';
 import { SALE_PAGE } from './conditions.js';
 import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
@@ -696,7 +697,13 @@ export async function handleIncoming(ev) {
     // telegram.js đọc kv này dựng dòng "📣 Nguồn" cho telesale (yêu cầu anh Trình 09/07).
     if (ev.nguon && !store.getKV(`nguon:${conversationId}`)) {
       store.setKV(`nguon:${conversationId}`, JSON.stringify(ev.nguon));
+      store.setKV(`nguon_luc:${conversationId}`, String(Date.now())); // mốc để thẻ ads chỉ áp 72h đầu
       console.log(`[nguon] ${conversationId}: ${JSON.stringify(ev.nguon)}`);
+    }
+    // 15/09 (ad-context tầng ①): webhook Meta kèm sẵn tiêu đề ads → ghi thẳng, 0 API call.
+    if (ev.nguon?.adTitle && !store.getKV(`adcap:${conversationId}`)) {
+      store.setKV(`adcap:${conversationId}`, String(ev.nguon.adTitle).slice(0, 350));
+      console.log(`[adcontext] 📣 ${conversationId} webhook kèm ad_title → đã ghi caption`);
     }
     // ĐO LƯỜNG: ghi cột source chuẩn hoá (song song kv nguon: trên — kv giữ cho telegram, cột để query).
     // Suy channel từ pageId (getPageChannel) vì conv.channel chưa set kịp lúc này (set tận ~dòng 422).
@@ -1383,6 +1390,25 @@ export async function handleIncoming(ev) {
     if (theNghiBac) {
       contextTag = (contextTag ? contextTag + '\n' : '') + theNghiBac;
     }
+
+    // ===== THẺ QUẢNG CÁO KHÁCH VỪA BẤM (đại tu 15/09 — ca Lương Tờ Rình) =====
+    // Chỉ áp 72h đầu kể từ lúc biết nguồn (sau đó bối cảnh nguội, đỡ tốn token) + chỉ hội thoại lead.
+    try {
+      const nguonRaw = store.getKV(`nguon:${conversationId}`);
+      const nguonLuc = parseInt(store.getKV(`nguon_luc:${conversationId}`) || '0', 10) || 0;
+      const conMoi = nguonLuc === 0 || Date.now() - nguonLuc < 72 * 3600e3;
+      if (adContextBat() && nguonRaw && conMoi && !daKhamHoSo && !daKhamTuBao) {
+        let caption = store.getKV(`adcap:${conversationId}`) || null;
+        if (!caption) {
+          const ng = JSON.parse(nguonRaw);
+          if (ng?.postId) {
+            caption = await layCaptionQuangCao({ pageId, postId: ng.postId });
+            if (caption) store.setKV(`adcap:${conversationId}`, caption);
+          }
+        }
+        contextTag = (contextTag ? contextTag + '\n' : '') + dungTheQuangCao(caption);
+      }
+    } catch (e) { console.warn('[adcontext] lỗi (bỏ qua, không chặn luồng):', e?.message); }
 
     // ===== VÁ 12/09/2026 — CHỐNG "BOT IM LẶNG KHÔNG XIN SỐ" + THÍ NGHIỆM XIN LẦN 2 =====
     // Anh Trình chốt 12/09/2026 sau bản đo: 800 hội thoại (200 mẫu/tuần × 4 tuần), đọc NGUYÊN VĂN
