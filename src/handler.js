@@ -12,6 +12,7 @@ import { lookupMedi, buildContextTag } from './medi.js';
 import { napBang as napSoLieuTrinh, theLieuTrinh } from './lieutrinh.js';
 import { chanTinChuDong } from './gac20tr.js';
 import { lookupDaKham, buildDaKhamTag } from './daKham.js';
+import { pheDuyetYDinh } from './pheduyet.js';
 import { buildCarePlanTag } from './careplan.js';
 import { SALE_PAGE } from './conditions.js';
 import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
@@ -796,11 +797,46 @@ export async function handleIncoming(ev) {
     store.appendHistory(conversationId, 'user', messageText);
     store.markCustomerMessaged(conversationId);
 
+    // ===== KIẾN TRÚC 2 LỚP (đại tu 15/09): REGEX ĐỀ CỬ — MODEL PHÊ DUYỆT =====
+    // theNghiBac: máy dò nghi nhưng model BÁC → lượt này bot ngắn lại, không bán (thẻ nối vào contextTag).
+    let theNghiBac = null;
+    // Báo group có throttle 1h/hội thoại — dùng cho các ca model DEGRADED (bot im, người phải liếc).
+    const baoGroupThrottle = (kvKey, msg) => {
+      const t = parseInt(store.getKV(kvKey) || '0', 10) || 0;
+      if (Date.now() - t > 3600e3) {
+        store.setKV(kvKey, String(Date.now()));
+        notifyText(msg).catch(() => {});
+      }
+    };
+    const tinGanNhat = () => (store.getConversation(conversationId)?.history || []).slice(-6);
+
     // ===== KHÁCH XIN NGỪNG NHẬN TIN (ca Phuong Ngoc 02/08) — CHỐT CHẶN SỐ 1 =====
     // Đặt TRƯỚC mọi nhánh khác: khách đã nói "đừng nhắn nữa" thì không nhánh nào được phép
     // chen thêm tin (kể cả nhánh đã-khám / xin tài liệu / kịch bản lead).
     // Xử: bật opt_out (dừng TOÀN BỘ engine chăm) + xin lỗi ĐÚNG 1 lần + giao người thật.
+    // 2 LỚP (15/09, ca Lương Tờ Rình): regex chỉ ĐỀ CỬ — model đọc 6 tin cuối phê duyệt mới tắt.
     if (laTinXinNgung(messageText) && !store.isOptedOut(store.getConversation(conversationId))) {
+      const pdXN = await pheDuyetYDinh({
+        loai: 'xin_ngung', cauNghi: messageText, tinGanNhat: tinGanNhat(),
+        tenKhach: customerName || conv.customer_name,
+      });
+      if (pdXN.degraded) {
+        // Model lỗi → KHÔNG hành động vĩnh viễn, KHÔNG trả lời tiếp (lỡ khách xin ngừng thật
+        // thì nói thêm là dội tin). Im lượt này + báo người liếc; lượt sau khách nhắn thì bot vẫn sống.
+        console.log(`[opt-out] ⚠️ ${conversationId} nghi xin ngừng nhưng model DEGRADED → im lượt, không cắm cờ`);
+        baoGroupThrottle(`pd_degraded_bao:${conversationId}`,
+          `⚠️ <b>NGHI KHÁCH XIN NGỪNG</b> (máy phán không được — cần người liếc)\n` +
+          `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
+          `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 150)}"\n` +
+          `• Hội thoại: https://pancake.vn/${pageId}?c_id=${conversationId}`);
+        return;
+      }
+      if (!pdXN.xacNhan) {
+        // Model BÁC — khách đang kể bệnh/hỏi tiếp. Đi tiếp luồng thường, lượt này nhẹ nhàng.
+        console.log(`[opt-out] ✅ ${conversationId} máy dò nghi xin-ngừng nhưng model BÁC ("${pdXN.lyDo}") → tư vấn tiếp bình thường`);
+        theNghiBac = '[MÁY DÒ TỪNG NGHI KHÁCH KHÓ CHỊU VÌ TIN NHẮN NHƯNG ĐÃ XÁC MINH LÀ KHÔNG PHẢI] ' +
+          'Lượt này trả lời NGẮN GỌN, đúng trọng tâm câu khách hỏi, KHÔNG chào bán, KHÔNG xin số, KHÔNG gửi link.';
+      } else {
       store.setOptOut(conversationId);
       store.setHandover(conversationId, 'opt_out'); // bot IM hẳn, để người thật quyết có cứu hay không
       // Xin lỗi 1 lượt DUY NHẤT rồi im hẳn — khách đang bực vì bị dội tin, nói nhiều là phản tác dụng.
@@ -826,8 +862,9 @@ export async function handleIncoming(ev) {
         `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 180)}"\n` +
         `→ Đây là ca MẤT KHÁCH vì bị dội tin. Cần người thật xem lại, đừng để bot chen tiếp.`
       ).catch(() => {});
-      console.log(`[opt-out] 🛑 ${conversationId} khách xin ngừng → tắt chuỗi chăm + xin lỗi 1 lần + báo người`);
+      console.log(`[opt-out] 🛑 ${conversationId} khách xin ngừng (model xác nhận: "${pdXN.lyDo}") → tắt chuỗi chăm + xin lỗi 1 lần + báo người`);
       return;
+      } // hết nhánh model XÁC NHẬN
     }
 
     // ===== KHÁCH PHẢN BÁC "CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) — cắm VETO nhận diện đã-khám =====
@@ -844,7 +881,24 @@ export async function handleIncoming(ev) {
     // Khách đang bực về CÁCH CHĂM (không ai tư vấn lúc khám / chỉ nhận tin máy / muốn bỏ liệu trình)
     // → mọi tin bot gửi thêm đều là "thêm 1 tin nhắn máy nữa" = đổ dầu vào lửa. Xoa dịu đúng 1 lần,
     // handover (bot im + mọi engine chăm tự dừng theo isHandover), báo người thật GỌI ĐIỆN cứu.
+    // 2 LỚP (15/09): regex đề cử — model phê duyệt mới handover + xoa dịu.
     if (laTinNanBenhNhan(messageText, laConvDaKham(conversationId))) {
+      const pdNan = await pheDuyetYDinh({
+        loai: 'nan_lieu_trinh', cauNghi: messageText, tinGanNhat: tinGanNhat(),
+        tenKhach: customerName || conv.customer_name,
+      });
+      if (pdNan.degraded) {
+        console.log(`[nan-benh-nhan] ⚠️ ${conversationId} nghi nản liệu trình nhưng model DEGRADED → im lượt, không cắm cờ`);
+        baoGroupThrottle(`pd_degraded_bao:${conversationId}`,
+          `⚠️ <b>NGHI BỆNH NHÂN NẢN LIỆU TRÌNH</b> (máy phán không được — cần người liếc)\n` +
+          `• Khách: ${customerName || conv.customer_name || '(chưa rõ tên)'}\n` +
+          `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 150)}"\n` +
+          `• Hội thoại: https://pancake.vn/${pageId}?c_id=${conversationId}`);
+        return;
+      }
+      if (!pdNan.xacNhan) {
+        console.log(`[nan-benh-nhan] ✅ ${conversationId} model BÁC ("${pdNan.lyDo}") → không phải nản, tư vấn tiếp`);
+      } else {
       store.setHandover(conversationId, 'nan_lieu_trinh');
       const daXoaDiu = store.getKV(`nanlt_xoadiu:${conversationId}`);
       if (!daXoaDiu) {
@@ -867,14 +921,24 @@ export async function handleIncoming(ev) {
         `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 180)}"\n` +
         `→ Nguy cơ BỎ NGANG liệu trình. Cần NGƯỜI THẬT (ưu tiên Bác sĩ/CSKH) GỌI ĐIỆN trong hôm nay — đừng nhắn tin thêm.`
       ).catch(() => {});
-      console.log(`[nan-benh-nhan] 🚨 ${conversationId} bệnh nhân nản/chê trải nghiệm → handover + báo người`);
+      console.log(`[nan-benh-nhan] 🚨 ${conversationId} bệnh nhân nản/chê trải nghiệm (model xác nhận: "${pdNan.lyDo}") → handover + báo người`);
       return;
+      } // hết nhánh model XÁC NHẬN
     }
 
     // ===== KHÁCH ĐÒI HỎI/GẶP TRỰC TIẾP BÁC SĨ (ca Duy Cường 20/08) — CHỐT CHẶN SỐ 3 =====
     // Khách đã yêu cầu đích danh thì bot xác nhận 1 câu rồi LUI + báo người — càng cố tự trả lời
     // càng lộ là không biết (ca thật: bot hỏi ngược BN "mình quên loại đai nào đúng không ạ?").
+    // 2 LỚP (15/09): model bác/lỗi → rơi xuống Gemini xử thường (như trước khi có chốt 20/08),
+    // KHÔNG im — khách đòi bác sĩ mà nghi ngờ sai thì Gemini trả lời vẫn hơn bỏ rơi.
     if (laTinDoiBacSi(messageText)) {
+      const pdBS = await pheDuyetYDinh({
+        loai: 'doi_bac_si', cauNghi: messageText, tinGanNhat: tinGanNhat(),
+        tenKhach: customerName || conv.customer_name,
+      });
+      if (!pdBS.xacNhan) {
+        console.log(`[doi-bac-si] ✅ ${conversationId} model ${pdBS.degraded ? 'DEGRADED' : `BÁC ("${pdBS.lyDo}")`} → để Gemini xử thường`);
+      } else {
       store.setHandover(conversationId, 'doi_bac_si');
       const daBaoBS = store.getKV(`doibs_xacnhan:${conversationId}`);
       if (!daBaoBS) {
@@ -893,8 +957,9 @@ export async function handleIncoming(ev) {
         `• Khách nhắn: "${String(messageText).replace(/\s+/g, ' ').slice(0, 180)}"\n` +
         `→ Cần Bác sĩ/CSKH trả lời trực tiếp câu này rồi nhắn lại khách (bot đã hứa "em hỏi lại Bác sĩ").`
       ).catch(() => {});
-      console.log(`[doi-bac-si] 🙋 ${conversationId} khách đòi hỏi/gặp bác sĩ → handover + báo người`);
+      console.log(`[doi-bac-si] 🙋 ${conversationId} khách đòi hỏi/gặp bác sĩ (model xác nhận: "${pdBS.lyDo}") → handover + báo người`);
       return;
+      } // hết nhánh model XÁC NHẬN
     }
 
     // ===== KHÁCH BÁO ỔN / KHÔNG CÓ NHU CẦU (ca Hue Pham 13/09) — CHỐT CHẶN SỐ 4 =====
@@ -907,21 +972,36 @@ export async function handleIncoming(ev) {
         if (o && Date.now() - o.t < 24 * 3600e3) demBaoOn = o.n || 0;
       } catch { /* sổ hỏng coi như 0 */ }
       demBaoOn += 1;
-      store.setKV(keyBaoOn, JSON.stringify({ n: demBaoOn, t: Date.now() }));
-      if (demBaoOn === 2) {
-        noteBotSent(conversationId, CAU_CHOT_BAO_ON);
-        noteBotJustSent(conversationId);
-        const okOn = await sendMessages(pageId, conversationId, [CAU_CHOT_BAO_ON]);
-        if (okOn) store.appendHistory(conversationId, 'model', CAU_CHOT_BAO_ON);
-        console.log(`[bao-on] 🌸 ${conversationId} khách báo ổn lần 2 → chốt lịch sự, thôi hỏi thêm`);
-        return;
+      // 2 LỚP (15/09, ca Hoa Thuy — regex trần 45 ký tự bỏ lọt câu dài "Dạ k có đau gì BS, tại
+      // thấy Bs nt nên trả lời..."): từ bậc 2 trở đi (template cứng / markTouchDone một chiều)
+      // phải qua model phê duyệt. Bậc 1 chỉ ghi sổ + rơi Gemini = hành động nhẹ, không cần hỏi.
+      if (demBaoOn === 1) {
+        store.setKV(keyBaoOn, JSON.stringify({ n: 1, t: Date.now() }));
+        // rơi xuống cho Gemini đáp tự nhiên (prompt mục 4E dạy cách đáp người báo ổn)
+      } else {
+        const pdOn = await pheDuyetYDinh({
+          loai: 'bao_on', cauNghi: messageText, tinGanNhat: tinGanNhat(),
+          tenKhach: customerName || conv.customer_name,
+        });
+        if (!pdOn.xacNhan) {
+          // Model bác/lỗi → KHÔNG tăng sổ (giữ bậc cũ), rơi xuống Gemini đáp thường.
+          console.log(`[bao-on] ✅ ${conversationId} model ${pdOn.degraded ? 'DEGRADED' : `BÁC ("${pdOn.lyDo}")`} → không tính bậc báo-ổn, Gemini đáp thường`);
+        } else {
+          store.setKV(keyBaoOn, JSON.stringify({ n: demBaoOn, t: Date.now() }));
+          if (demBaoOn === 2) {
+            noteBotSent(conversationId, CAU_CHOT_BAO_ON);
+            noteBotJustSent(conversationId);
+            const okOn = await sendMessages(pageId, conversationId, [CAU_CHOT_BAO_ON]);
+            if (okOn) store.appendHistory(conversationId, 'model', CAU_CHOT_BAO_ON);
+            console.log(`[bao-on] 🌸 ${conversationId} khách báo ổn lần 2 (model xác nhận) → chốt lịch sự, thôi hỏi thêm`);
+            return;
+          }
+          // demBaoOn >= 3
+          for (const t of [2, 3, 4, 5, 6, 7]) store.markTouchDone(conversationId, t); // đóng chạm lead còn lại
+          console.log(`[bao-on] 🤫 ${conversationId} khách báo ổn lần ${demBaoOn}/24h (model xác nhận) → IM + đóng chạm lead`);
+          return;
+        }
       }
-      if (demBaoOn >= 3) {
-        for (const t of [2, 3, 4, 5, 6, 7]) store.markTouchDone(conversationId, t); // đóng chạm lead còn lại
-        console.log(`[bao-on] 🤫 ${conversationId} khách báo ổn lần ${demBaoOn}/24h → IM (không đeo bám người không có nhu cầu) + đóng chạm lead`);
-        return;
-      }
-      // demBaoOn === 1 → rơi xuống cho Gemini đáp tự nhiên
     }
 
     // KHÁCH BÁO "ĐÃ ĐẾN KHÁM" mà conv chưa có SĐT (SOP quầy — ca Loan Le 07/07):
@@ -1261,6 +1341,11 @@ export async function handleIncoming(ev) {
         'trả lời này (nếu đã rõ bệnh). Việc của em: (1) xác nhận ngắn gọn sẽ gửi ngay ("em gửi mình cẩm nang ' +
         'liền dưới đây nha"); (2) VẪN trả lời đầy đủ mọi câu hỏi khác trong tin của khách — đừng chỉ gửi tài liệu ' +
         'rồi bỏ qua câu hỏi; (3) chưa rõ bệnh thì hỏi vùng đau trước để gửi đúng cẩm nang.';
+    }
+
+    // Thẻ MÁY-DÒ-NGHI-NHƯNG-MODEL-BÁC (kiến trúc 2 lớp 15/09): lượt này bot nhẹ nhàng, không bán.
+    if (theNghiBac) {
+      contextTag = (contextTag ? contextTag + '\n' : '') + theNghiBac;
     }
 
     // ===== VÁ 12/09/2026 — CHỐNG "BOT IM LẶNG KHÔNG XIN SỐ" + THÍ NGHIỆM XIN LẦN 2 =====
