@@ -93,7 +93,7 @@ const nguonStore = fs.readFileSync(path.join(GOC, 'src/store.js'), 'utf8');
 test('tin 🔔 "khách đã giao người nhắn tiếp" CHỈ còn bắn khi có cờ KHẨN', () => {
   const i = nguonHandler.indexOf('if (store.isHandover(conv)) {');
   assert.ok(i > 0);
-  const khoi = nguonHandler.slice(i, i + 3200);
+  const khoi = nguonHandler.slice(i, i + 4800); // 15/09: nới cửa sổ — khối isHandover có thêm van 45 ngày khoá cứng
   const j = khoi.indexOf('notifyHandoverNudge({');
   assert.ok(j > 0, 'mất luôn đường báo KHẨN — cắt quá tay');
   assert.match(khoi.slice(Math.max(0, j - 300), j), /if \(urgent\)/,
@@ -118,7 +118,7 @@ test('3 lý do nhạy cảm KHOÁ CỨNG — bot không được tự chen vào'
 
 test('ca thường + khách im lâu rồi quay lại → MỞ KHOÁ, bot tư vấn tiếp', () => {
   const i = nguonHandler.indexOf('if (store.isHandover(conv)) {');
-  const khoi = nguonHandler.slice(i, i + 3200);
+  const khoi = nguonHandler.slice(i, i + 4800); // 15/09: nới cửa sổ — khối isHandover có thêm van 45 ngày khoá cứng
   assert.match(khoi, /!khoaCung && \(duLang \|\| cuKy\) && !urgent/, 'thiếu điều kiện mở khoá');
   assert.match(khoi, /store\.clearHandover\(conversationId\)/, 'clearHandover vẫn không ai gọi');
   assert.match(khoi, /conv\.status = 'active'/, 'quên đồng bộ cờ trong RAM → lớp dưới đọc cờ cũ');

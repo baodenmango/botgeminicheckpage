@@ -63,6 +63,9 @@ function demSuatTuVan(text) {
 function laOXinSo(text) {
   const n = String(text || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase();
+  // VÁ 15/09: câu PHỦ ĐỊNH việc xin số ("mình KHÔNG CẦN để lại số cũng được ạ") không phải lời
+  // xin số — bản cũ cộng oan vào sổ xinso_count → luật ép-xin-số (12/09) không nổ đúng lúc.
+  if (/(khong|kh|ko|k|khoi|chua) (can |phai )?(de lai|xin|cho em|gui) (so|sdt)/.test(n)) return false;
   return /(xin (so|sdt)|cho em (xin )?(so|sdt)|de lai (so|sdt)|so dien thoai|\bsdt\b|nhan (em )?so|gui em so|de so lai|em xin so|cho em so)/.test(n);
 }
 
@@ -158,7 +161,9 @@ function drainPending(conversationId) {
 // Gồm cả: auto-reply Zalo OA + CÂU CHÀO TỰ ĐỘNG META khi khách nhắn từ quảng cáo/bình luận
 // (ca Sen Vàng 02/07: Meta chào "...mô tả càng chi tiết càng tốt..." → bot tưởng telesale gõ → câm 6h).
 const AUTO_REPLY_MARKERS = (process.env.AUTO_REPLY_MARKERS ||
-  'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec' +
+  // VÁ 15/09: 'gio lam viec' trần → telesale thật gõ "Giờ làm việc bên em 8h-20h nha chị" bị coi
+  // là auto-reply → bot chen ngang đè người. Đổi thành 2 mẫu neo DÀI của tin auto thật.
+  'bo phan tu van se phan hoi|tin nhan cua ban da duoc ghi nhan|cam on ban da lien he phong kham|gio lam viec cua phong kham|ngoai gio lam viec' +
   '|mo ta cang chi tiet cang tot|de lai sdt giup bac trinh|da de lai binh luan|[botcake]'
 ).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
 // DANH THIẾP OA: Zalo tự bắn tin CHỈ GỒM TÊN OA (+ emoji) mỗi khi khách mở chat — vd
@@ -254,11 +259,17 @@ const RE_DA_CHOT_LICH = new RegExp([
   // "đã đặt cọc / đã cọc / đã chuyển khoản / đã chuyển tiền / đã thanh toán / đã tạm ứng"
   ' (da|vua|moi) (dat coc|coc|chuyen khoan|chuyen tien|thanh toan|tam ung|ck)',
   // "đã gửi SĐT / gửi thông tin / gửi số qua phòng khám" — telesale đã cầm số rồi
-  ' (da|vua|moi) (gui|goi|gio|gioi|cho|cung cap|de lai) .{0,20}(sdt|so dien thoai|so dt|thong tin|so)',
+  // VÁ 15/09: bỏ 'gio|gioi' (cùng lỗ bug 15/08 — bỏ dấu đụng "giơ/giờ/giỏi", từ quá phổ biến:
+  // "em vừa GIƠ tay lên là đau" từng có nguy cơ bị xác nhận "đã gửi số" → bịa lịch ma).
+  // 'goi(?! (cho|toi|den|lai|dien))': "em vừa GỌI CHO phòng khám số hotline" là GỌI ĐIỆN,
+  // không phải "gửi số" — chỉ nhận "gọi/gởi" khi theo sau là tân ngữ số/thông tin trực tiếp.
+  ' (da|vua|moi) (gui|goi(?! (cho|toi|den|lai|dien))|cho|cung cap|de lai) .{0,20}(sdt|so dien thoai|so dt|thong tin|so)',
   // Đảo thứ tự: "thông tin và SĐT tôi ĐÃ gởi qua phòng khám" (ca Cương 01/08) — tân ngữ đứng TRƯỚC "đã".
-  ' (sdt|so dien thoai|so dt|thong tin) .{0,20}(da|vua|moi) (gui|goi|gio|gioi|cho|cung cap|de lai)',
-  // "đã nhận được lịch/giờ/ngày khám", "đã có lịch hẹn", "có phiếu khám rồi"
-  ' (da|vua|moi) (nhan duoc|nhan|co) .{0,20}(lich|gio kham|ngay kham|phieu kham|so phieu)',
+  ' (sdt|so dien thoai|so dt|thong tin) .{0,20}(da|vua|moi) (gui|goi(?! (cho|toi|den|lai|dien))|cho|cung cap|de lai)',
+  // "đã nhận được lịch khám/giờ khám", "đã có lịch hẹn", "có phiếu khám rồi"
+  // VÁ 15/09: 'lich' trần → 'lich (kham|hen)' — "tuần sau em MỚI CÓ LỊCH rảnh" từng bị xác nhận
+  // lịch ma + cấm xin số vĩnh viễn. Lịch phải là lịch KHÁM/HẸN mới tính.
+  ' (da|vua|moi) (nhan duoc|nhan|co) .{0,20}(lich kham|lich hen|gio kham|ngay kham|phieu kham|so phieu)',
   ' (lich|phieu) kham .{0,15}(roi|xong)( |$)',
 ].join('|'));
 
@@ -286,8 +297,15 @@ export function laConvDaKham(conversationId) {
 }
 // Khách ĐÃ ĐẶT LỊCH/ĐÃ CỌC nhưng CHƯA tới khám (ca Cương 01/08). Khác laConvDaKham ở chỗ:
 // chưa có bệnh án để chăm sau khám, nhưng telesale ĐÃ cầm số → cấm mọi kịch bản xin số.
+// VÁ 15/09: cờ này trước KHÔNG có đường gỡ — 1 lần match oan là cấm xin số VĨNH VIỄN.
+// Nay TTL 30 ngày: lịch khám nào cũng đã qua từ lâu, khách quay lại sau 30 ngày = chuyện mới.
+// Giá trị cờ không parse được (bản cũ/gắn tay) → coi như còn hiệu lực (an toàn nghiêng về cũ).
 export function laConvDaDatLich(conversationId) {
-  return Boolean(store.getKV(`da_dat_lich_conv:${conversationId}`));
+  const raw = store.getKV(`da_dat_lich_conv:${conversationId}`);
+  if (!raw) return false;
+  const ts = parseInt(raw, 10);
+  if (Number.isFinite(ts) && ts > 0 && Date.now() - ts > 30 * 86400000) return false; // quá 30 ngày → hết hạn
+  return true;
 }
 
 // --- KHÁCH XIN NGỪNG NHẬN TIN (ca Phuong Ngoc 02/08) ---
@@ -326,7 +344,9 @@ const RE_XIN_NGUNG = new RegExp([
   '(huy|khong) (lich|kham|chua(?! (duoc|khoi|het))|dat lich)(?![a-z])',
   // "làm phiền quá", "gửi tin nhiều quá", "spam quá"
   '(lam phien|phien|spam|nhieu tin|tin nhieu) (qua|lam)',
-  '(gui|goi|gio|gioi) (tn|tin) (nhieu|qua)',
+  // VÁ 15/09: bỏ 'gio|gioi' — "GIỜ tin nhiều nguồn quá không biết tin ai" là khách THAN chuyện
+  // khác, không phải xin ngừng (cùng lỗ bug 15/08 đã vá ở nhánh đầu nhưng sót ở đây).
+  '(gui|goi) (tn|tin) (nhieu|qua)',
   ' (unsubscribe|stop) ',
 ].join('|'));
 
@@ -357,16 +377,25 @@ const RE_CHE_TRAI_NGHIEM = new RegExp([
   '(toan|suot ngay) (nhan tin|gui tin|tn)',
 ].join('|'));
 const RE_NAN_LIEU_TRINH = new RegExp([
-  'bo cuoc|bo ngang|bo giua chung',
+  // VÁ 15/09: chặn phủ định đứng trước — "May mà em KHÔNG bỏ cuộc, giờ đỡ nhiều rồi" là tin VUI,
+  // không phải nản. (V8 hỗ trợ lookbehind độ dài thay đổi.)
+  '(?<!(khong|chua|kh|ko|k|dau co) )(bo cuoc|bo ngang|bo giua chung)',
   // "thôi không tiêm nữa", "không theo nữa", "không chữa nữa"
   '(thoi|chac)? ?(khong|kh|ko|k) (tiem|chich|theo|chua|dieu tri|di|den|toi)( tiep)? nua',
   // "tiêm nhiều quá", "nhiều mũi quá" (kèm teen-speak "nhìu" → bỏ dấu = "nhiu")
   '(tiem|chich) (nhieu|nhiu) qua|(nhieu|nhiu) (mui|lan|dot) qua',
 ].join('|'));
 export function laTinNanBenhNhan(text, daKham) {
+  // VÁ 15/09: CẢ HAI tầng đều đòi daKham. Người CHƯA khám ở mình không thể "chê trải nghiệm
+  // khám của mình" — "khám chỗ kia cả buổi mà không ai giải thích gì" là khách kể xấu CHỖ KHÁC
+  // = lead vàng (system-prompt mục 8), bắt vào đây là xoa dịu lạc đề + tắt bot với lead nóng.
+  if (!daKham) return false;
   const n = ` ${boDauKham(text)} `;
+  // Câu HỎI về liệu trình ("tiêm nhiều mũi quá có hại gì không ạ?") = khách đang cần giải thích,
+  // không phải nản — kiểm dấu ? trên tin thô (boDauKham xoá ký tự đặc biệt).
+  if (String(text || '').includes('?')) return false;
   if (RE_CHE_TRAI_NGHIEM.test(n)) return true;
-  return Boolean(daKham) && RE_NAN_LIEU_TRINH.test(n);
+  return RE_NAN_LIEU_TRINH.test(n);
 }
 
 // --- KHÁCH ĐÒI HỎI/GẶP TRỰC TIẾP BÁC SĨ (ca Duy Cường 20/08, SIẾT LẠI 08/09) ---
@@ -390,7 +419,12 @@ const RE_DOI_BAC_SI = new RegExp([
   '(bac si|bs) (tra loi|tu van) truc tiep',
 ].join('|'));
 export function laTinDoiBacSi(text) {
-  return RE_DOI_BAC_SI.test(` ${boDauKham(text)} `);
+  const n = ` ${boDauKham(text)} `;
+  // VÁ 15/09: "muốn gặp bác sĩ" + dấu hiệu TỚI KHÁM ("muốn gặp bs khám thứ 7 được không",
+  // "gặp bác sĩ thì đặt lịch sao") = khách muốn ĐẶT LỊCH — việc của Gemini chốt lịch, không
+  // phải handover. Chỉ trừ khi khách nhờ "hỏi LẠI bác sĩ" (quay về xác nhận y lệnh — vẫn bắt).
+  if (/(kham|dat lich|gio nao|ngay nao|mang gi|thu [2-7]|chu nhat)/.test(n) && !/ lai /.test(n)) return false;
+  return RE_DOI_BAC_SI.test(n);
 }
 
 // --- KHÁCH BÁO ỔN / KHÔNG CÓ NHU CẦU (ca Hue Pham 13/09/2026) ---
@@ -442,14 +476,30 @@ const TINH_GAN = [
   'quan 9','quan 10','quan 11','quan 12','hoc mon','cu chi','nha be','binh chanh','can gio',
 ];
 // Chỉ bắt khi khách ĐANG KHAI NƠI Ở — tránh nhận nhầm khi khách kể chuyện ("em ra Hà Nội chơi").
-const RE_KHAI_NOI_O = /(o|song|nha|tu|ben|minh|em|toi|chi|anh|con|nay|dang)\s/;
+// VÁ 15/09: bản cũ chỉ đòi 1 từ khai-ở nằm BẤT KỲ đâu trong câu ("minh|em|toi|nay"... gần như câu
+// nào cũng có) → khách Sài Gòn kể "em đi Đà Nẵng CHƠI về là đau lưng" bị gắn nhãn Ở XA. Nay:
+// (a) từ khai-ở phải đứng NGAY TRƯỚC tên tỉnh (≤12 ký tự đệm); (b) câu kể đi chơi/du lịch/công tác → bỏ.
+const RE_KE_DI_CHOI = /(di choi|du lich|ra tham|ghe tham|cong tac|ve que an|di .{0,12}(choi|ve))/;
 export function nhanDienKhuVuc(text) {
   const n = ` ${boDauKham(text)} `;
   const hitGan = TINH_GAN.find((t) => n.includes(` ${t} `) || n.includes(` ${t},`));
   if (hitGan) return { tinh: hitGan, nhom: 'gan' };
-  const hitXa = TINH_XA.find((t) => n.includes(` ${t} `) || n.includes(` ${t},`));
-  if (hitXa && RE_KHAI_NOI_O.test(n)) return { tinh: hitXa, nhom: 'xa' };
+  if (RE_KE_DI_CHOI.test(n)) return null;
+  const hitXa = TINH_XA.find((t) => {
+    const idx = n.indexOf(` ${t} `) >= 0 ? n.indexOf(` ${t} `) : n.indexOf(` ${t},`);
+    if (idx < 0) return false;
+    const truoc = n.slice(Math.max(0, idx - 14), idx + 1);
+    return /( o | song | nha | que | ben | tu | dang | ngoai | trong | duoi | tren )[a-z ]{0,10}$/.test(truoc) ||
+      /^ ?$/.test(truoc.trim()); // tỉnh đứng đầu tin ("Nghệ An xa quá") cũng là khai nơi ở
+  });
+  if (hitXa) return { tinh: hitXa, nhom: 'xa' };
   return null;
+}
+// KHÁCH BÁO Ở XA mà KHÔNG nêu tên tỉnh ("tôi ở xa thì phải làm sao") — ca Lương Tờ Rình 14/09:
+// không nhánh nào bắt → câu hỏi bị nuốt. Chỉ cắm thẻ ngữ cảnh (hành động nhẹ), KHÔNG ghi nhãn KV.
+export const RE_O_XA_TRONG = /( o xa | xa qua | xa vay | xa the )|khong (den|toi|di|len|vao|xuong) duoc|(k|kh|ko) (den|toi|di) (duoc|dc)/;
+export function laTinBaoOXa(text) {
+  return RE_O_XA_TRONG.test(` ${boDauKham(text)} `);
 }
 
 // --- KHÁCH PHẢN BÁC "TÔI CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) ---
@@ -636,7 +686,12 @@ export async function handleIncoming(ev) {
       //    Trừ 3 lý do nhạy cảm (opt-out · nản liệu trình · đòi Bác sĩ) — mấy ca đó khoá vĩnh viễn,
       //    bot chen vào là đổ dầu vào lửa (ca Bé Tuyết 03/08, ca Duy Cường 20/08).
       const lyDoHO = store.lyDoHandover(conversationId);
-      const khoaCung = store.HANDOVER_KHOA_CUNG.has(lyDoHO);
+      // VÁ 15/09 — VAN AN TOÀN CUỐI cho khoá cứng: quá 45 ngày mà khách còn quay lại nhắn thì
+      // "án chung thân" cũng phải mở (match oan lọt mọi lưới thì ít nhất không giam khách mãi mãi;
+      // ca Lương Tờ Rình 14/09 bị opt_out oan là loại án này). Mốc cắm không có (conv cũ) → coi như quá hạn.
+      const mocCamKC = parseInt(store.getKV(`handover_luc:${conversationId}`) || '0', 10) || 0;
+      const khoaCungQuaHan = mocCamKC === 0 || Date.now() - mocCamKC >= 45 * 86400000;
+      const khoaCung = store.HANDOVER_KHOA_CUNG.has(lyDoHO) && !khoaCungQuaHan;
       const nguongGio = parseInt(process.env.HANDOVER_MO_LAI_GIO || '72', 10);
       const langGiay = conv.last_customer_msg_at
         ? Math.floor(Date.now() / 1000) - conv.last_customer_msg_at
@@ -913,17 +968,14 @@ export async function handleIncoming(ev) {
       return;
     }
 
-    // KHÁCH XIN TÀI LIỆU/CẨM NANG/BÀI TẬP → gửi PDF đúng bệnh NGAY (không đợi chạm 4).
-    // Chỉ gửi khi ĐÃ biết bệnh (condition khác unknown) + có PDF. Chưa rõ bệnh → để Gemini hỏi bệnh.
-    if (wantsDocument(messageText)) {
-      const cond = conv.condition && conv.condition !== 'unknown' ? conv.condition : null;
-      if (cond && BROCHURE_PDF[cond]) {
-        await giaoCamNang(conversationId, pageId, cond, { xinSo: !store.isCaptured(conv) });
-        return;
-      }
-      // chưa rõ bệnh → KHÔNG return, để Gemini hỏi "mình đau vùng nào"; lời hứa đã nằm trong kv,
-      // biết bệnh là khối "trả nợ cẩm nang" sau dispatch giao liền.
-      console.log(`[doc] ${conversationId} xin tài liệu nhưng chưa rõ bệnh → hứa đã ghi sổ, để Gemini hỏi bệnh`);
+    // KHÁCH XIN TÀI LIỆU/CẨM NANG/BÀI TẬP → cắm cờ doc_wanted (đã cắm ở trên), giao PDF qua khối
+    // "trả nợ cẩm nang" SAU dispatch — đường giao duy nhất.
+    // VÁ 15/09: bản cũ giao PDF + RETURN ngay tại đây → tin "Em gửi video chụp chân em nè, bác
+    // xem em bị gì" bị nuốt mất câu hỏi "em bị gì" (khách nhận mỗi cái PDF, câu hỏi chết).
+    // Nay KHÔNG return: Gemini vẫn trả lời TRỌN tin khách, thẻ dưới dặn model xác nhận sẽ gửi.
+    const khachXinTaiLieu = wantsDocument(messageText);
+    if (khachXinTaiLieu) {
+      console.log(`[doc] ${conversationId} khách xin tài liệu → cờ đã ghi sổ, giao qua khối trả-nợ sau dispatch (không nuốt câu hỏi khác)`);
     }
 
     // Chốt SĐT bằng regex (CHỈ nhận số VN hợp lệ đúng 10 số).
@@ -1189,6 +1241,28 @@ export async function handleIncoming(ev) {
       }
     } catch { /* nhãn hỏng thì bỏ qua, không chặn luồng trả lời */ }
 
+    // Thẻ Ở XA KHÔNG RÕ TỈNH (ca Lương Tờ Rình 14/09: "tôi ở xa thì phải làm sao ạ" — không nêu
+    // tỉnh nên thẻ [KHÁCH Ở TỈNH XA] không cắm, câu hỏi bị nuốt). Hành động NHẸ: chỉ thẻ ngữ cảnh
+    // lượt này, không ghi nhãn KV (khách chưa khai tỉnh, chưa đủ chứng cứ gắn nhãn lâu dài).
+    if (laTinBaoOXa(messageText) && !store.getKV(`khu_vuc:${conversationId}`)) {
+      contextTag = (contextTag ? contextTag + '\n' : '') +
+        '[KHÁCH BÁO Ở XA — CHƯA RÕ TỈNH] Khách vừa nói mình ở xa / không đến được. Đây là CÂU HỎI THẬT, ' +
+        'phải trả lời thẳng theo kịch bản Ở XA (mục 4H): thừa nhận cái xa, mở cửa gửi phim/kết quả cũ qua ' +
+        'inbox để Bác sĩ xem trước, hoặc để lại số để Bác sĩ gọi tư vấn trước — hợp mới sắp một chuyến khám ' +
+        'gọn MỘT buổi trong ngày. TUYỆT ĐỐI không lờ câu này đi, không nói "không xa lắm đâu", không dí lịch hẹn.';
+      console.log(`[khu-vuc] 🗺️ ${conversationId} khách báo Ở XA (chưa rõ tỉnh) → cắm thẻ ngữ cảnh lượt này`);
+    }
+
+    // Thẻ KHÁCH XIN TÀI LIỆU (VÁ 15/09 — đi cùng việc bỏ nhánh giao-PDF-rồi-return ở trên):
+    // hệ thống sẽ tự đính cẩm nang sau lượt này (khối trả-nợ), model chỉ cần xác nhận + trả lời đủ ý.
+    if (khachXinTaiLieu) {
+      contextTag = (contextTag ? contextTag + '\n' : '') +
+        '[KHÁCH VỪA XIN TÀI LIỆU/CẨM NANG] Hệ thống sẽ TỰ ĐỘNG đính kèm cẩm nang đúng bệnh ngay sau lượt ' +
+        'trả lời này (nếu đã rõ bệnh). Việc của em: (1) xác nhận ngắn gọn sẽ gửi ngay ("em gửi mình cẩm nang ' +
+        'liền dưới đây nha"); (2) VẪN trả lời đầy đủ mọi câu hỏi khác trong tin của khách — đừng chỉ gửi tài liệu ' +
+        'rồi bỏ qua câu hỏi; (3) chưa rõ bệnh thì hỏi vùng đau trước để gửi đúng cẩm nang.';
+    }
+
     // ===== VÁ 12/09/2026 — CHỐNG "BOT IM LẶNG KHÔNG XIN SỐ" + THÍ NGHIỆM XIN LẦN 2 =====
     // Anh Trình chốt 12/09/2026 sau bản đo: 800 hội thoại (200 mẫu/tuần × 4 tuần), đọc NGUYÊN VĂN
     // mọi tin qua pages.fm/api/v1 (USER token poscake-hieploi), regex nhận cả khung "số Zalo":
@@ -1244,7 +1318,7 @@ export async function handleIncoming(ev) {
     const history = store.getConversation(conversationId).history;
     const reply = await generateReply(history, mode, customerName || conv.customer_name, null, { channel, contextTag });
 
-    await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName);
+    await dispatch(conversationId, pageId, conv, reply, phoneByRegex, customerName, { mode });
 
     // BOT TỰ HỨA GỬI TÀI LIỆU (ca Nguyễn Chung 02/08): model nói "con gửi cô cẩm nang + video
     // bài tập... nha" nhưng khách chỉ đáp "Nếu được vậy thì cô cảm ơn" → không khớp ASK_DOC_RE
@@ -1636,7 +1710,11 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
   // ĐẢM BẢO gửi link sale page đúng bệnh (nếu Gemini quên chèn).
   // KHÁCH ĐÃ KHÁM (cờ da_kham) → KHÔNG ép link sale page (họ là bệnh nhân rồi, gửi trang bán
   // hàng là lộ máy + lạc vai chăm sóc — ca Thủy Tiên 14/07 bị dí link daulung sau khi chia sẻ số).
-  let outMessages = laConvDaKham(conversationId)
+  // VÁ 15/09: chỉ ép link ở mode 'reply' (kịch bản lead thường). Mode care/aftercare/prebooked/
+  // retouch là lượt CHĂM — code từng chèn link vào cả câu chào tạm biệt "Cảm ơn em nha" của khách
+  // (ca Hoa Thuy 14/09: 2 lần chúc ngủ ngon vẫn nhận link đau lưng) = biến lời chào thành lượt bán.
+  const modeGoi = opts.mode || (opts.chuDong ? 'retouch' : 'reply');
+  let outMessages = (laConvDaKham(conversationId) || modeGoi !== 'reply')
     ? [...reply.messages]
     : ensureSalePageLink(reply.messages, knownCondition, conv);
   const linkWasAdded = outMessages.length !== reply.messages.length ||
@@ -1651,8 +1729,15 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       .slice(-16);                                   // chỉ so 16 ô gần nhất (đủ phủ 5-8 lượt)
     const daGui = cacTinBot.map((c) => chuanHoaCau(c)).join('\n');
     const truoc = outMessages.length;
+    // VÁ 15/09: khách hỏi THÔNG TIN TĨNH (địa chỉ, giờ mở cửa, giá khám...) thì câu trả lời đúng
+    // lần nào cũng giống nhau — lọc "chống lặp" từng xoá câu trả lời địa chỉ lần 2, khách nhận
+    // phao hỏi bệnh thay vì cái mình hỏi (hiện trường 15/09: khách hỏi địa chỉ 3 lần mới có).
+    // Tin user cuối là câu hỏi tĩnh → MIỄN cả 2 cửa lọc cho lượt này.
+    const tinUserCuoi = [...(freshConv?.history || [])].reverse().find((h) => h.role === 'user')?.text || '';
+    const hoiTinhTinh = /(dia chi|o dau|cho nao|duong nao|gio (lam viec|mo|dong)|mo cua|may gio|gia kham|kham bao nhieu|bao nhieu tien)/
+      .test(boDauKham(tinUserCuoi));
     // 2 lớp: trùng NGUYÊN VĂN (cửa cũ 04/07) + lặp Ý diễn đạt lại (cửa mới 03/08, ca Bé Tuyết).
-    outMessages = outMessages.filter((m) =>
+    outMessages = hoiTinhTinh ? outMessages : outMessages.filter((m) =>
       !(chuanHoaCau(m).length > 25 && daGui.includes(chuanHoaCau(m))) && !laCauLapY(m, cacTinBot));
     if (outMessages.length < truoc) {
       console.log(`[dispatch] ${conversationId} bỏ ${truoc - outMessages.length} ô trùng/lặp ý tin bot đã gửi`);
