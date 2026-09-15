@@ -87,3 +87,13 @@ test('PHÒNG CHỜ GOM TIN: có đủ cầu dao + flush ngay khi có SĐT + tr�
   assert.ok(src.includes('GOM_TRAN_MS = 20000'), 'trần chờ tuyệt đối 20s');
   assert.match(src, /_daGom/, 'cờ chống vòng lặp phải tồn tại');
 });
+
+// ── TỪ CHỐI MỀM (bước 6): cờ hoãn 7 ngày + đọc kể cả hết hạn ──
+test('TỪ CHỐI MỀM: cờ sống 7 ngày, hết hạn vẫn đọc được lý do cũ (keCaHetHan)', async () => {
+  const { datTuChoiMem, layTuChoiMem } = await import('../src/handler.js');
+  datTuChoiMem('conv_tcm_1', 'khách ở xa, đã từ chối 2 lần');
+  assert.ok(layTuChoiMem('conv_tcm_1'), 'cờ mới cắm phải sống');
+  store.setKV('tu_choi_mem:conv_tcm_2', JSON.stringify({ t: Date.now() - 8 * 86400000, lyDo: 'cũ' }));
+  assert.equal(layTuChoiMem('conv_tcm_2'), null, 'quá 7 ngày → hết hoãn');
+  assert.ok(layTuChoiMem('conv_tcm_2', true), 'keCaHetHan vẫn đọc được lý do cho lượt chạm mang-thứ-mới');
+});

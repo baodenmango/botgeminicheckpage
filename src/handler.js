@@ -522,6 +522,24 @@ export function laTinBaoOXa(text) {
   return RE_O_XA_TRONG.test(` ${boDauKham(text)} `);
 }
 
+// ===== TỪ CHỐI MỀM (đại tu 15/09 — hiện trường: 13/30 hội thoại bị đeo bám SAU khi khách đã
+// từ chối "xa quá/không đến được", có ca 6 nhịp xin số trải 2 ngày) =====
+// Cờ HOÃN chạm/retouch 7 ngày — hoãn chứ KHÔNG huỷ (không markTouchDone, khuôn gac20tr).
+// Cắm khi: khách ở xa từ chối ≥2 lần · máy dò nghi khó chịu (model bác nhưng có khói) ·
+// khách báo ổn bậc 2. Lý do lưu lại để lần chạm sau (hết hạn hoãn) phải mang thứ MỚI.
+export function datTuChoiMem(conversationId, lyDo) {
+  store.setKV(`tu_choi_mem:${conversationId}`, JSON.stringify({ t: Date.now(), lyDo: String(lyDo).slice(0, 120) }));
+  console.log(`[tu-choi-mem] 🔕 ${conversationId} hoãn chạm chủ động 7 ngày — ${lyDo}`);
+}
+export function layTuChoiMem(conversationId, keCaHetHan = false) {
+  try {
+    const o = JSON.parse(store.getKV(`tu_choi_mem:${conversationId}`) || 'null');
+    if (o && (keCaHetHan || Date.now() - o.t < 7 * 86400000)) return o;
+  } catch { /* sổ hỏng coi như không có */ }
+  return null;
+}
+const RE_TU_CHOI = /khong (den|toi|di|vao|len) (duoc|dc)|xa qua|chua (di|vao|len|den) duoc|de (xem|tinh) (da|sau)|khi nao .{0,12}(vao|ra|di|sap xep)/;
+
 // --- KHÁCH PHẢN BÁC "TÔI CHƯA HỀ KHÁM" (ca Quoc Huy Vo 13/08) ---
 // Bot gọi nhầm lead là "khách cũ, tái khám" (hồ sơ tự khai / đơn POS tạo nhầm / nhãn gắn nhầm)
 // → khách vạch "Anh chưa hề khám bên em, mới chỉ nt thoi mà là khách cũ??". Lời KHÁCH tự nói về
@@ -879,6 +897,7 @@ export async function handleIncoming(ev) {
         console.log(`[opt-out] ✅ ${conversationId} máy dò nghi xin-ngừng nhưng model BÁC ("${pdXN.lyDo}") → tư vấn tiếp bình thường`);
         theNghiBac = '[MÁY DÒ TỪNG NGHI KHÁCH KHÓ CHỊU VÌ TIN NHẮN NHƯNG ĐÃ XÁC MINH LÀ KHÔNG PHẢI] ' +
           'Lượt này trả lời NGẮN GỌN, đúng trọng tâm câu khách hỏi, KHÔNG chào bán, KHÔNG xin số, KHÔNG gửi link.';
+        datTuChoiMem(conversationId, 'máy dò nghi khó chịu vì tin nhắn (model bác, nhưng có khói) → hoãn chạm chủ động');
       } else {
       store.setOptOut(conversationId);
       store.setHandover(conversationId, 'opt_out'); // bot IM hẳn, để người thật quyết có cứu hay không
@@ -1036,6 +1055,7 @@ export async function handleIncoming(ev) {
             noteBotJustSent(conversationId);
             const okOn = await sendMessages(pageId, conversationId, [CAU_CHOT_BAO_ON]);
             if (okOn) store.appendHistory(conversationId, 'model', CAU_CHOT_BAO_ON);
+            datTuChoiMem(conversationId, 'khách báo đã ổn 2 lần trong 24h');
             console.log(`[bao-on] 🌸 ${conversationId} khách báo ổn lần 2 (model xác nhận) → chốt lịch sự, thôi hỏi thêm`);
             return;
           }
@@ -1364,6 +1384,21 @@ export async function handleIncoming(ev) {
       }
     } catch { /* nhãn hỏng thì bỏ qua, không chặn luồng trả lời */ }
 
+    // TỪ CHỐI MỀM (15/09): khách Ở XA nói lời từ chối lần thứ ≥2 → hoãn mọi chạm chủ động 7 ngày.
+    // (Bot vẫn TRẢ LỜI khi khách nhắn — chỉ ngừng tự dập. Ca Hải Phòng từ chối 2 lần vẫn bị
+    // hỏi "ghé sáng hay chiều" là đúng bệnh này.)
+    try {
+      const rawKV = store.getKV(`khu_vuc:${conversationId}`);
+      const dangXa = (rawKV && JSON.parse(rawKV).nhom === 'xa') || laTinBaoOXa(messageText);
+      if (dangXa && RE_TU_CHOI.test(` ${boDauKham(messageText)} `)) {
+        const demTC = (parseInt(store.getKV(`tu_choi_xa_dem:${conversationId}`) || '0', 10) || 0) + 1;
+        store.setKV(`tu_choi_xa_dem:${conversationId}`, String(demTC));
+        if (demTC >= 2 && !layTuChoiMem(conversationId)) {
+          datTuChoiMem(conversationId, `khách ở xa, đã từ chối ${demTC} lần`);
+        }
+      }
+    } catch { /* không chặn luồng */ }
+
     // Thẻ Ở XA KHÔNG RÕ TỈNH (ca Lương Tờ Rình 14/09: "tôi ở xa thì phải làm sao ạ" — không nêu
     // tỉnh nên thẻ [KHÁCH Ở TỈNH XA] không cắm, câu hỏi bị nuốt). Hành động NHẸ: chỉ thẻ ngữ cảnh
     // lượt này, không ghi nhãn KV (khách chưa khai tỉnh, chưa đủ chứng cứ gắn nhãn lâu dài).
@@ -1579,6 +1614,12 @@ export async function handleRetouch(conv) {
       console.log(`[retouch] 🛑 ${conversationId} khách đã opt-out → KHÔNG chạm lại`);
       return;
     }
+    // TỪ CHỐI MỀM (15/09): khách vừa từ chối/báo ổn/suýt-khó-chịu → HOÃN chạm 7 ngày (không đốt lượt).
+    const tcmRT = layTuChoiMem(conversationId);
+    if (tcmRT) {
+      console.log(`[retouch] 🔕 ${conversationId} hoãn chạm (từ chối mềm: ${tcmRT.lyDo})`);
+      return;
+    }
     // CỜ TẮT BOT theo nhãn: telesale đã chốt lịch/đang xử → KHÔNG chạm lại tự động.
     if (await hasStopLabel(pageId, conversationId)) {
       console.log(`[retouch] ${conversationId} có nhãn chốt lịch/telesale xử → bỏ chạm lại`);
@@ -1607,7 +1648,16 @@ export async function handleRetouch(conv) {
         return;
       }
     }
-    const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name);
+    // Lần chạm SAU KHI hết hạn hoãn (15/09): mang lý do từ chối cũ vào prompt — chạm lại phải
+    // mang thứ MỚI đúng vào trở ngại đó, không lặp lời mời cũ (hiện trường: template 🌸 lặp y nhau).
+    let ctxRT = null;
+    const tcmCu = layTuChoiMem(conversationId, true);
+    if (tcmCu) {
+      ctxRT = `[LẦN TRƯỚC KHÁCH TỪ CHỐI VÌ: ${tcmCu.lyDo}] Lượt chạm này PHẢI mang thứ MỚI đúng vào trở ngại đó ` +
+        '(khách ở xa → mời gửi phim qua inbox/cuộc gọi trước; khách báo ổn → chỉ hỏi thăm nhẹ, không mời gì). ' +
+        'CẤM lặp lại lời mời cũ đã bị từ chối.';
+    }
+    const reply = await generateReply(fresh.history, 'retouch', fresh.customer_name, null, { contextTag: ctxRT });
     // retouch chỉ gửi tin nhắc, không kỳ vọng có SĐT — nhưng vẫn xử lý nếu có
     await dispatch(conversationId, pageId, fresh, reply, null, fresh.customer_name, { chuDong: true });
     store.incRetouch(conversationId);
@@ -1656,6 +1706,12 @@ export async function handleBotTouch(conv, touchNo) {
     // đường khác (Gemini đặt opt_out, admin gắn tay) mà KHÔNG kèm handover → hở là dội tin tiếp.
     if (store.isOptedOut(fresh)) {
       console.log(`[cham${touchNo}] 🛑 ${conversationId} khách đã opt-out → bỏ chạm`);
+      return;
+    }
+    // TỪ CHỐI MỀM (15/09): HOÃN chạm 7 ngày — không markTouchDone (hoãn ≠ huỷ, khuôn gac20tr).
+    const tcmBT = layTuChoiMem(conversationId);
+    if (tcmBT) {
+      console.log(`[cham${touchNo}] 🔕 ${conversationId} hoãn chạm (từ chối mềm: ${tcmBT.lyDo})`);
       return;
     }
     if (store.isHumanActive(fresh, HUMAN_HOLD_HOURS)) {   // telesale đang giữ → để người thật
