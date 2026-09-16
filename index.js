@@ -2189,11 +2189,13 @@ app.get('/admin/export-db', async (req, res) => {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
   try {
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const fs = require('fs');
+    // File này là ESM ("type":"module") — không có require, phải dynamic import.
+    const Database = (await import('better-sqlite3')).default;
+    const path = (await import('node:path')).default;
+    const fs = (await import('node:fs')).default;
+    const os = (await import('node:os')).default;
     const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'bot.sqlite');
-    const out = path.join(require('os').tmpdir(), 'bot-export-' + Date.now() + '.sqlite');
+    const out = path.join(os.tmpdir(), 'bot-export-' + Date.now() + '.sqlite');
     const src = new Database(DB_PATH, { readonly: true });
     await src.backup(out);
     src.close();
