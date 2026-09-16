@@ -2180,6 +2180,29 @@ cron.schedule('*/30 7-22 * * *', async () => {
   }
 }, { timezone: 'Asia/Ho_Chi_Minh' });
 
+// Xuất bản sao NHẤT QUÁN của DB (backup online của sqlite — an toàn kể cả đang ghi WAL).
+// Dùng cho việc dời bot về VPS 16/09/2026: tải DB ngay trước lúc suspend để giữ nguyên
+// chuỗi refresh-token Zalo (nằm trong bảng KV). Bảo vệ bằng ADMIN_TOKEN như mọi route admin.
+app.get('/admin/export-db', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken || req.query.token !== adminToken) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  try {
+    const Database = require('better-sqlite3');
+    const path = require('path');
+    const fs = require('fs');
+    const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'bot.sqlite');
+    const out = path.join(require('os').tmpdir(), 'bot-export-' + Date.now() + '.sqlite');
+    const src = new Database(DB_PATH, { readonly: true });
+    await src.backup(out);
+    src.close();
+    res.download(out, 'bot.sqlite', () => { try { fs.unlinkSync(out); } catch (e) {} });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // --- Khởi động ---
 app.listen(config.port, () => {
   console.log(`🚀 Bot Gemini Hiệp Lợi chạy ở cổng ${config.port}`);
