@@ -2140,27 +2140,44 @@ async function dispatch(conversationId, pageId, conv, reply, phoneByRegex, custo
       } catch (e) {
         console.warn(`[dispatch] ${conversationId} không xoá được dấu rescue: ${e?.message || e}`);
       }
-      // (2) BÁO NGƯỜI (nguyên tắc vàng: bot không trả lời được thì NGƯỜI phải biết ngay, SLA ≤5').
-      //     Ca thật 20/07: Gemini chết đúng lúc khách hỏi giá tiêm → reply.booking_intent bị ép
-      //     false nên telesale KHÔNG hề biết có lead nóng. Bot im MÀ người cũng không được báo.
-      //     Chặn spam Telegram: 1 lần / hội thoại / 1 giờ (KV có mốc thời gian, tự hết hạn mềm).
-      const kDeg = `degraded_notified:${conversationId}`;
-      const lanTruoc = parseInt(store.getKV(kDeg) || '0', 10) || 0;
-      if (Date.now() - lanTruoc > 3600 * 1000) {
-        store.setKV(kDeg, String(Date.now()));
-        await notifyHandover({
-          name: reply.name || customerName,
-          reason: 'Gemini chết (429/503) — khách hỏi mà bot chỉ trả được câu treo. VÀO REP TAY GẤP.',
-          condition: knownCondition,
-          summary: knownSummary,
-          pageId,
-          conversationId,
-        }).catch((e) => console.error(`[dispatch] ${conversationId} báo Telegram suy giảm hụt: ${e?.message || e}`));
-        console.warn(`[dispatch] 📣 ${conversationId} đã BÁO NGƯỜI (Gemini suy giảm) — telesale vào rep tay`);
+      // (2) TỰ XỬ TRƯỚC — CHỈ BÁO NGƯỜI KHI TỰ VỚT THẤT BẠI KÉO DÀI.
+      //     ⚠️ VÁ 16/09/2026 (ca Mai Anh Trương 19:14, anh Trình: "cái này em xử lí được dư sức
+      //     mà đi báo group làm gì cho nó loạn"): 429/503 là lỗi THOÁNG QUA — bước (1) đã mở cửa
+      //     cho cron rescue 5' tự quay lại trả lời thật khi Gemini sống. Báo người NGAY lần đầu
+      //     là đẩy việc máy tự làm được sang người. Từ nay: ghi mốc degraded đầu tiên; chỉ khi
+      //     QUÁ NGƯỠNG (mặc định 15' — tức rescue đã thử ~3 vòng vẫn chết) mới báo group, và vẫn
+      //     giữ throttle 1h/hội thoại. Lượt nào Gemini trả lời được thì mốc này được xoá (nhánh
+      //     else bên dưới) — hệ tự lành thì không ai bị réo.
+      const NGUONG_BAO_NGUOI_MS = parseInt(process.env.GEMINI_DEGRADED_BAO_NGUOI_PHUT || '15', 10) * 60000;
+      const kDegTu = `degraded_tu_luc:${conversationId}`;
+      const degTuLuc = parseInt(store.getKV(kDegTu) || '0', 10) || 0;
+      if (!degTuLuc) {
+        store.setKV(kDegTu, String(Date.now()));
+        console.log(`[dispatch] ${conversationId} Gemini suy giảm lần đầu → TỰ XỬ (rescue 5' sẽ vớt), chưa báo người`);
+      } else if (Date.now() - degTuLuc > NGUONG_BAO_NGUOI_MS) {
+        const kDeg = `degraded_notified:${conversationId}`;
+        const lanTruoc = parseInt(store.getKV(kDeg) || '0', 10) || 0;
+        if (Date.now() - lanTruoc > 3600 * 1000) {
+          store.setKV(kDeg, String(Date.now()));
+          await notifyHandover({
+            name: reply.name || customerName,
+            reason: `Gemini chết (429/503) QUÁ ${Math.round(NGUONG_BAO_NGUOI_MS / 60000)} PHÚT — máy tự vớt nhiều vòng không xong, khách chỉ nhận câu treo. Vào rep tay giúp.`,
+            condition: knownCondition,
+            summary: knownSummary,
+            pageId,
+            conversationId,
+          }).catch((e) => console.error(`[dispatch] ${conversationId} báo Telegram suy giảm hụt: ${e?.message || e}`));
+          console.warn(`[dispatch] 📣 ${conversationId} Gemini suy giảm kéo dài >${Math.round(NGUONG_BAO_NGUOI_MS / 60000)}' → BÁO NGƯỜI`);
+        } else {
+          console.log(`[dispatch] ${conversationId} Gemini suy giảm kéo dài nhưng đã báo người trong 1h → không báo lại (chống spam)`);
+        }
       } else {
-        console.log(`[dispatch] ${conversationId} Gemini suy giảm nhưng đã báo người trong 1h → không báo lại (chống spam)`);
+        console.log(`[dispatch] ${conversationId} Gemini suy giảm ${Math.round((Date.now() - degTuLuc) / 60000)}' (< ngưỡng ${Math.round(NGUONG_BAO_NGUOI_MS / 60000)}') → máy tiếp tục tự vớt, chưa báo người`);
       }
     } else {
+      // Gemini trả lời được thật → hệ đã lành, xoá mốc suy-giảm (đừng để lần 429 sau bị cộng dồn
+      // thời gian với lần trước rồi réo người oan).
+      try { store.delKV(`degraded_tu_luc:${conversationId}`); } catch { /* sổ hỏng thì thôi */ }
       // Lưu lượt bot vào lịch sử (gộp các ô thành 1 lượt 'model')
       store.appendHistory(conversationId, 'model', outMessages.join('\n'));
       // Đánh dấu đã gửi link để không lặp lại mỗi lượt
