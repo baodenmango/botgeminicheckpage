@@ -129,9 +129,11 @@ test('(E) "CK1" trơ trọi chỉ tính là học vị khi có nhắc bác sĩ',
 });
 
 // ===========================================================================
-// GIÁ — chỉ 5 mức thật, sai một số là CHẶN
+// GIÁ NGOÀI DANH SÁCH — CÔNG KHAI chặn · INBOX thả nguyên câu + cảnh báo kiểm hậu
+// (VÁ 16/09/2026 — ca X-quang "150–250k" bị chặn oan, anh Trình: "trong chatbox
+//  thì cứ nói chuyện thoải mái. Lảng tránh nói sai chủ đề làm khách bực thêm")
 // ===========================================================================
-test('GIÁ BỊA — con tiền ngoài bảng thì CHẶN, không cho đi', () => {
+test('GIÁ NGOÀI BẢNG ở CÔNG KHAI — vẫn CHẶN, không cho đi', () => {
   const ca = [
     'Liệu trình 3 mũi tầm 15 triệu ạ.',
     'Tiêm 2 khớp thì khoảng 10 triệu ạ.',
@@ -140,10 +142,19 @@ test('GIÁ BỊA — con tiền ngoài bảng thì CHẶN, không cho đi', () =
     'Giá tiêm dao động từ 5 triệu đến 7 triệu ạ.',
   ];
   for (const t of ca) {
-    const kq = ra(t);
-    assert.ok(coLoai(kq, 'gia_bia'), `phải chặn giá bịa: "${t}"`);
-    assert.ok(!kq.oCuoi.includes(t), 'ô vi phạm không được lọt ra');
+    const kq = ra(t, { congKhai: true });
+    assert.ok(coLoai(kq, 'gia_bia'), `phải chặn giá ngoài bảng ở công khai: "${t}"`);
+    assert.ok(!kq.oCuoi.includes(t), 'ô vi phạm không được lọt ra chỗ công khai');
   }
+});
+
+test('GIÁ NGOÀI BẢNG ở INBOX — thả NGUYÊN CÂU + gắn cảnh báo kiểm hậu (ca X-quang 16/09)', () => {
+  const cau = 'Dạ Nấm Lùm ơi, giá chụp X-quang cổ tay thì tùy vào số lượng phim mình cần chụp, '
+    + 'khoảng từ 150.000đ – 250.000đ ạ.';
+  const kq = ra(cau); // congKhai=false
+  assert.equal(kq.oCuoi[0], cau, 'câu phải TỚI KHÁCH nguyên vẹn — bot không được lảng tránh');
+  assert.ok(coLoai(kq, 'gia_la_inbox'), 'phải gắn cảnh báo gia_la_inbox để group kiểm hậu');
+  assert.ok(kq.viPham.every((v) => v.xuLy !== 'chan'), 'inbox không được chặn vì giá');
 });
 
 test('GIÁ THẬT — 5 mức đã duyệt phải đi qua nguyên vẹn', () => {
@@ -263,12 +274,18 @@ test('KHAN HIẾM — không bắt oan câu hẹn lịch bình thường', () =>
 // CHẶN SẠCH → KHÔNG BAO GIỜ ĐỂ BOT CÂM
 // ===========================================================================
 test('chặn sạch cả lượt thì phải THAY bằng câu an toàn (bot không được im)', () => {
-  // INBOX (thayCauAnToan mặc định) — giá BỊA (ngoài bảng giá thật) bị chặn cứng mọi làn;
-  // chặn sạch ô → cổng phải thay 1 câu an toàn thay vì để bot im.
-  const kq = ganhCong(['Gói này 2.750.000đ ạ.']);
+  // 16/09: INBOX không còn đường chặn giá nữa (anh Trình: "trong chatbox cứ nói thoải mái") —
+  // cơ chế thay-câu-an-toàn giờ chỉ kích hoạt khi có làn chặn, test bằng congKhai + ép thayCauAnToan.
+  const kq = ganhCong(['Gói này 2.750.000đ ạ.'], { congKhai: true, thayCauAnToan: true });
   assert.equal(kq.oCuoi.length, 1, 'phải có đúng 1 ô thay thế');
   assert.ok(kq.oCuoi[0].length > 20, 'ô thay thế phải là câu thật');
   assert.ok(coLoai(kq, 'thay_cau_an_toan'));
+});
+
+test('INBOX không còn ca chặn-sạch: giá lạ đi nguyên, không cần câu an toàn', () => {
+  const kq = ganhCong(['Gói này 2.750.000đ ạ.']); // congKhai=false
+  assert.equal(kq.oCuoi[0], 'Gói này 2.750.000đ ạ.', 'câu phải tới khách nguyên vẹn');
+  assert.ok(!coLoai(kq, 'thay_cau_an_toan'), 'không được thay câu — khách đang chờ câu thật');
 });
 
 test('câu an toàn XOAY VÒNG theo phút — 2 lượt liên tiếp không trùng nguyên văn', () => {
@@ -346,14 +363,16 @@ test('FAIL-SAFE — cổng ném lỗi thì tin vẫn đi qua, không làm bot c�
   assert.doesNotThrow(() => ganhCong([acQuy]));
 });
 
-test('sổ đếm — đếm được số ô sửa / ô chặn', () => {
+test('sổ đếm — đếm được ô sửa / ô chặn / ô thả-cảnh-báo', () => {
   resetThongKe();
-  ganhCong(['Bên em cam kết khỏi hẳn ạ.']);   // sửa
-  ganhCong(['Liệu trình 3 mũi tầm 15 triệu ạ.']); // chặn
+  ganhCong(['Bên em cam kết khỏi hẳn ạ.']);                          // sửa (inbox)
+  ganhCong(['Liệu trình 3 mũi tầm 15 triệu ạ.'], { congKhai: true }); // chặn (công khai)
+  ganhCong(['Liệu trình 3 mũi tầm 15 triệu ạ.']);                     // thả + cảnh báo (inbox, 16/09)
   const tk = thongKe();
-  assert.ok(tk.tongLuot >= 2);
+  assert.ok(tk.tongLuot >= 3);
   assert.ok(tk.oSua >= 1, 'phải đếm được ô sửa');
   assert.ok(tk.oChan >= 1, 'phải đếm được ô chặn');
+  assert.ok(tk.oThaCanhBao >= 1, 'phải đếm được ô thả-cảnh-báo');
   assert.ok(Object.keys(tk.theoLoai).some((k) => k.startsWith('hua_ket_qua')));
   resetThongKe();
 });
@@ -419,8 +438,8 @@ test('CHẶN OAN 3: mời follow OA tặng cẩm nang (kiến thức, không ph�
   assert.equal(o.oCuoi.length, 1, 'không được nuốt ô mời follow OA');
 });
 
-test('vẫn CHẶN giá bịa thật (không nới quá tay)', () => {
-  const o = ganhCong(['Gói này bên em 2.750.000đ thôi ạ.']);
+test('vẫn CHẶN giá ngoài bảng ở CÔNG KHAI (không nới quá tay)', () => {
+  const o = ganhCong(['Gói này bên em 2.750.000đ thôi ạ.'], { congKhai: true });
   assert.ok(o.viPham.some((v) => v.loai === 'gia_bia'),
-    'con số ngoài bảng giá vẫn phải bị chặn');
+    'con số ngoài bảng giá ở chỗ công khai vẫn phải bị chặn');
 });

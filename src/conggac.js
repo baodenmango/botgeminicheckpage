@@ -288,7 +288,7 @@ export function cauAnToan(mocMs = Date.now()) {
 // ---------------------------------------------------------------------------
 // 8. SỔ ĐẾM — thống kê được, không chỉ log trôi
 // ---------------------------------------------------------------------------
-const soDem = { tongLuot: 0, tongO: 0, oSua: 0, oChan: 0, loi: 0, theoLoai: Object.create(null) };
+const soDem = { tongLuot: 0, tongO: 0, oSua: 0, oChan: 0, oThaCanhBao: 0, loi: 0, theoLoai: Object.create(null) };
 function dem(loai, xuLy) {
   const k = `${loai}:${xuLy}`;
   soDem.theoLoai[k] = (soDem.theoLoai[k] || 0) + 1;
@@ -298,7 +298,7 @@ export function thongKe() {
   return JSON.parse(JSON.stringify(soDem));
 }
 export function resetThongKe() {
-  soDem.tongLuot = 0; soDem.tongO = 0; soDem.oSua = 0; soDem.oChan = 0; soDem.loi = 0;
+  soDem.tongLuot = 0; soDem.tongO = 0; soDem.oSua = 0; soDem.oChan = 0; soDem.oThaCanhBao = 0; soDem.loi = 0;
   soDem.theoLoai = Object.create(null);
 }
 
@@ -392,19 +392,30 @@ function soiMotO(oGoc, { congKhai = false } = {}) {
     }
   }
 
-  // --- GIÁ BỊA → CHẶN (con số sai thì không sửa an toàn được) ---
+  // --- GIÁ NGOÀI DANH SÁCH ---
+  // ⚠️ VÁ 16/09/2026 — anh Trình chốt sau ca X-quang "150.000đ – 250.000đ" bị chặn (khách Nấm Lùm,
+  // 17:56 16/09): «Cổng gác bot này là sai đó, trong chatbox thì cứ nói chuyện thoải mái. Lảng tránh
+  // nói sai chủ đề làm khách hàng bực thêm chứ được gì đâu.» Đây là lần CHẶN OAN thứ 2 cùng kiểu
+  // (lần 1: giá neo 1.300.000đ, 06/09) — whitelist 7 con số không bao giờ đuổi kịp đời thật
+  // (X-quang, xét nghiệm, MRI...). Từ nay:
+  //   · INBOX  → THẢ NGUYÊN CÂU, chỉ ghi 'canh_bao' để bắn group kiểm hậu (bot không được lảng tránh).
+  //   · CÔNG KHAI → vẫn CHẶN như cũ (chỗ Sở Y tế đọc được, thà im còn hơn để chữ nằm trên tường).
   {
     const tien = docTien(boHtml(o));
     const bia = tien.filter((t) => !TIEN_HOP_LE.has(t.tri));
     if (bia.length) {
-      viPham.push({ loai: 'gia_bia', xuLy: 'chan', cum: bia.map((t) => t.raw).join(' · ') });
-      return { o: null, viPham };
+      if (congKhai) {
+        viPham.push({ loai: 'gia_bia', xuLy: 'chan', cum: bia.map((t) => t.raw).join(' · ') });
+        return { o: null, viPham };
+      }
+      viPham.push({ loai: 'gia_la_inbox', xuLy: 'canh_bao', cum: bia.map((t) => t.raw).join(' · ') });
     }
-    // Kiểm lại sau khi sửa: vẫn thiếu "từ" ⇒ không cứu được ⇒ chặn.
+    // Kiểm lại sau khi sửa: vẫn thiếu "từ" trước giá thủ thuật ⇒ công khai chặn; inbox thả + báo.
     for (const t of tien) {
       if (!TIEN_PHAI_CO_TU.has(t.tri)) continue;
       const truoc = o.slice(0, t.dau);
       if (!/(t[ừu]|kho[ảa]ng|tr[êe]n|d[ướuơ]{1,3}i)\s*$/i.test(truoc)) {
+        if (!congKhai) { viPham.push({ loai: 'thieu_tu', xuLy: 'canh_bao', cum: t.raw }); continue; }
         viPham.push({ loai: 'thieu_tu', xuLy: 'chan', cum: t.raw });
         return { o: null, viPham };
       }
@@ -493,7 +504,9 @@ export function ganhCong(oVao, opts = {}) {
       for (const v of kq.viPham) {
         viPham.push({ ...v, nguyenVan: oGoc.slice(0, 400) });
         dem(v.loai, v.xuLy);
-        if (v.xuLy === 'chan') soDem.oChan++; else soDem.oSua++;
+        if (v.xuLy === 'chan') soDem.oChan++;
+        else if (v.xuLy === 'canh_bao') soDem.oThaCanhBao++;   // câu đi nguyên, chỉ báo người kiểm hậu
+        else soDem.oSua++;
       }
       if (kq.o === null) { daSua = true; continue; }      // chặn hẳn ô này
       if (kq.o !== oGoc) daSua = true;                    // đã sửa
@@ -538,7 +551,7 @@ async function banCanhBao(viPham, { pageId, conversationId, congKhai }) {
   // INBOX: chỉ báo người khi CHẶN HẲN (giá bịa, ưu đãi bịa...) — sửa vặt (C)(E) làm lặng lẽ,
   // ghi log + sổ đếm là đủ. Anh Trình 09/09: "đừng báo group mấy quả tào lao như thế".
   // CÔNG KHAI: báo cả việc SỬA (C)(E) — chỗ Sở thấy được thì người phải biết ngay.
-  const dangBao = viPham.filter((v) => v.xuLy === 'chan'
+  const dangBao = viPham.filter((v) => v.xuLy === 'chan' || v.xuLy === 'canh_bao'
     || (congKhai && (v.loai === 'hua_ket_qua' || v.loai === 'hoc_vi')));
   if (!dangBao.length) return;
   const bay = Date.now();
@@ -552,7 +565,9 @@ async function banCanhBao(viPham, { pageId, conversationId, congKhai }) {
     const gop = donCho.get(v.loai) || 0;
     donCho.set(v.loai, 0);
     const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const nhan = v.xuLy === 'chan' ? '⛔ ĐÃ CHẶN' : '✏️ ĐÃ SỬA';
+    // 'canh_bao' = câu ĐÃ TỚI KHÁCH nguyên vẹn (luật 16/09: inbox nói thoải mái, không chặn) —
+    // tin group chỉ để NGƯỜI kiểm hậu xem giá bot nói có hợp lý không, không phải để sửa bot.
+    const nhan = v.xuLy === 'chan' ? '⛔ ĐÃ CHẶN' : (v.xuLy === 'canh_bao' ? '👁 ĐÃ GỬI CHO KHÁCH — kiểm hậu giá' : '✏️ ĐÃ SỬA');
     const noi = congKhai ? 'COMMENT CÔNG KHAI' : 'inbox';
     let tin = `🚧 <b>CỔNG GÁC BOT — ${nhan}</b>\n`
       + `🏷 Loại: <b>${esc(v.loai)}</b> (${esc(v.cum)})\n`

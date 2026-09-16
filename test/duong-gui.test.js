@@ -54,7 +54,7 @@ test('ô link luôn được giữ và đứng riêng (để bung preview)', () 
 test('cổng gác → capBubbles: nối hai lớp vẫn ra kết quả hợp lệ', () => {
   const vao = [
     'Bên em cam kết chữa khỏi hẳn ạ.',
-    'Liệu trình 3 mũi tầm 15 triệu ạ.',     // sẽ bị CHẶN
+    'Liệu trình 3 mũi tầm 15 triệu ạ.',     // 16/09: inbox THẢ giá lạ (chỉ cảnh báo kiểm hậu)
     'Tiêm dịch nhờn từ 5 triệu ạ.',
     'Khám + siêu âm 300k ạ.',
     'Mình cho em xin số nha ạ.',
@@ -66,7 +66,8 @@ test('cổng gác → capBubbles: nối hai lớp vẫn ra kết quả hợp l�
   const chu = cuoi.join(' ');
   // 09/09: inbox chỉ còn soi bậc CỨNG ("cam kết") — "khỏi hẳn" là giọng tư vấn thường, được thả.
   assert.ok(!/cam kết/i.test(chu), 'lời cam kết cứng không được lọt qua 2 lớp');
-  assert.ok(!/15 triệu/.test(chu), 'giá bịa không được lọt qua 2 lớp');
+  // 16/09 (anh Trình, ca X-quang): giá lạ ở INBOX phải TỚI KHÁCH — lảng tránh mới là lỗi.
+  assert.ok(/15 triệu/.test(chu), 'giá lạ ở inbox phải được thả tới khách (không lảng tránh)');
 });
 
 test('capBubbles chịu được đầu vào dị dạng', () => {
