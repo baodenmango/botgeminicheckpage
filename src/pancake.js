@@ -202,6 +202,9 @@ const DEFAULT_PAGE_NAMES = {
   '386613267864665': 'Page Phòng Khám Hiệp Lợi',
   '957014354156110': 'Page Dr Nhật Trình',
   '3136814239074246132': 'Zalo OA Hiệp Lợi',
+  // 2 page mới chạy ads — thêm 17/09/2026 (xem chú thích PAGE_AUDIENCE ở handler.js)
+  '1122755484264475': 'Page Hiệp Lợi - Điều trị thoái hoá khớp gối',
+  '1226601910533190': 'Page BS Nhật Trình - Cơ Xương Khớp',
 };
 export function getPageName(pageId) {
   const cfg = findPageConfig(pageId);

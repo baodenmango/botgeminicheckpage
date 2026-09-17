@@ -1,0 +1,65 @@
+diff --git a/index.js b/index.js
+index 40b1ae0..001263d 100644
+--- a/index.js
++++ b/index.js
+@@ -609,6 +609,25 @@ app.get('/admin/env-check', (req, res) => {
+     ZALO_OA_SECRET_len: len(process.env.ZALO_OA_SECRET),
+     ZALO_OA_ID: process.env.ZALO_OA_ID || null, // OA id là định danh CÔNG KHAI
+     VOUCHER_LIVE: flag(process.env.VOUCHER_LIVE),
++    // THÊM 17/09/2026: liệt kê PAGE đang bật. Lý do: ngày 16-17/09 phải lục .env trên
++    // máy để trả lời câu "bot có phục vụ 2 page mới không" — env-check cũ không khai
++    // page nào, nên câu đó KHÔNG chẩn được từ xa. page_id là định danh CÔNG KHAI
++    // (giống ZALO_OA_ID), KHÔNG in token, chỉ in độ dài để biết đã điền hay chưa.
++    PAGES: (() => {
++      const ds = [];
++      for (let i = 1; i <= 20; i += 1) {
++        const id = process.env[`PANCAKE_PAGE_${i}_ID`];
++        if (!id) continue;
++        ds.push({
++          id,
++          channel: process.env[`PANCAKE_PAGE_${i}_CHANNEL`] || 'facebook',
++          name: process.env[`PANCAKE_PAGE_${i}_NAME`] || null,
++          token_len: len(process.env[`PANCAKE_PAGE_${i}_TOKEN`]),
++        });
++      }
++      return ds;
++    })(),
++    PANCAKE_AUTO_REFRESH: flag(process.env.PANCAKE_AUTO_REFRESH),
+   });
+ });
+ 
+diff --git a/src/handler.js b/src/handler.js
+index 7a6d9f8..cf54a88 100644
+--- a/src/handler.js
++++ b/src/handler.js
+@@ -24,6 +24,16 @@ import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
+ const PAGE_AUDIENCE = {
+   '957014354156110': '[TỆP PAGE: CLIP VIRAL — page Bs Trình] Khách đến từ clip viral, đa phần tò mò chưa có ý định khám. Cho giá trị trước, đừng vồ vập xin số (làm theo mục 1B).',
+   '386613267864665': '[TỆP PAGE: CHỦ ĐÍCH — page Phòng khám] Khách chủ đích tìm phòng khám. Vào việc nhanh, trả lời thẳng, chốt lịch + xin số sớm (làm theo mục 1B).',
++
++  // ── THÊM 17/09/2026 — 2 page mới đang chạy ads mà bot CHƯA từng phục vụ ──────
++  // Đo 16-17/09 (HiepLoi-Ads): 2 camp đổ 1.142.509đ/7 ngày vào đúng 2 page này, nhưng
++  // cả hai KHÔNG có trong PANCAKE_PAGE_*_ID ⇒ isPageEnabled()=false ⇒ webhook bị bỏ ở
++  // MỌI cửa (index.js, handleIncoming, comment.js, care-send.js). Bot chưa từng nghe.
++  // Tệp khách 2 page này KHÁC page Bs Trình: khách tới từ ad CLIP THEO MẶT BỆNH (không
++  // phải clip viral), nên đã có sẵn một triệu chứng cụ thể trong đầu — nhưng đo được
++  // click→nhắn tin chỉ 3,18–5,44% (page cũ 10,04%) ⇒ phần lớn còn đang DÒ, chưa chốt.
++  '1122755484264475': '[TỆP PAGE: ADS MỘT MẶT BỆNH — page Điều trị thoái hoá khớp gối] Khách bấm từ quảng cáo clip về KHỚP GỐI, hầu hết đang có sẵn triệu chứng gối và muốn biết mình bị gì. Bám đúng trục GỐI, hỏi triệu chứng gối trước (đau khi nào, lên xuống cầu thang, cứng khớp buổi sáng) rồi mới mời khám. Đừng mở rộng sang mặt bệnh khác khi khách chưa nhắc.',
++  '1226601910533190': '[TỆP PAGE: ADS TRIỆU CHỨNG — page BS Nhật Trình Cơ Xương Khớp] Khách bấm từ quảng cáo clip triệu chứng cơ xương khớp (vai, lưng, cổ tay, gối). Vào bằng đúng triệu chứng họ vừa xem, xác nhận "có phải tôi bị cái này không", rồi dẫn sang khám. Nhịp giữa: chủ đích hơn page clip viral nhưng chưa bằng page Phòng khám.',
+ };
+ 
+ // Chuẩn hóa câu để so trùng nguyên văn (chống bot lặp lại chính mình — lộ máy).
+diff --git a/src/pancake.js b/src/pancake.js
+index 4258b1f..fc20f17 100644
+--- a/src/pancake.js
++++ b/src/pancake.js
+@@ -202,6 +202,9 @@ const DEFAULT_PAGE_NAMES = {
+   '386613267864665': 'Page Phòng Khám Hiệp Lợi',
+   '957014354156110': 'Page Dr Nhật Trình',
+   '3136814239074246132': 'Zalo OA Hiệp Lợi',
++  // 2 page mới chạy ads — thêm 17/09/2026 (xem chú thích PAGE_AUDIENCE ở handler.js)
++  '1122755484264475': 'Page Hiệp Lợi - Điều trị thoái hoá khớp gối',
++  '1226601910533190': 'Page BS Nhật Trình - Cơ Xương Khớp',
+ };
+ export function getPageName(pageId) {
+   const cfg = findPageConfig(pageId);

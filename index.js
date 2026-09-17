@@ -609,6 +609,25 @@ app.get('/admin/env-check', (req, res) => {
     ZALO_OA_SECRET_len: len(process.env.ZALO_OA_SECRET),
     ZALO_OA_ID: process.env.ZALO_OA_ID || null, // OA id là định danh CÔNG KHAI
     VOUCHER_LIVE: flag(process.env.VOUCHER_LIVE),
+    // THÊM 17/09/2026: liệt kê PAGE đang bật. Lý do: ngày 16-17/09 phải lục .env trên
+    // máy để trả lời câu "bot có phục vụ 2 page mới không" — env-check cũ không khai
+    // page nào, nên câu đó KHÔNG chẩn được từ xa. page_id là định danh CÔNG KHAI
+    // (giống ZALO_OA_ID), KHÔNG in token, chỉ in độ dài để biết đã điền hay chưa.
+    PAGES: (() => {
+      const ds = [];
+      for (let i = 1; i <= 20; i += 1) {
+        const id = process.env[`PANCAKE_PAGE_${i}_ID`];
+        if (!id) continue;
+        ds.push({
+          id,
+          channel: process.env[`PANCAKE_PAGE_${i}_CHANNEL`] || 'facebook',
+          name: process.env[`PANCAKE_PAGE_${i}_NAME`] || null,
+          token_len: len(process.env[`PANCAKE_PAGE_${i}_TOKEN`]),
+        });
+      }
+      return ds;
+    })(),
+    PANCAKE_AUTO_REFRESH: flag(process.env.PANCAKE_AUTO_REFRESH),
   });
 });
 

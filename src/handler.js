@@ -24,6 +24,16 @@ import { BROCHURE_PDF, BROCHURE_NAME } from './resources.js';
 const PAGE_AUDIENCE = {
   '957014354156110': '[TỆP PAGE: CLIP VIRAL — page Bs Trình] Khách đến từ clip viral, đa phần tò mò chưa có ý định khám. Cho giá trị trước, đừng vồ vập xin số (làm theo mục 1B).',
   '386613267864665': '[TỆP PAGE: CHỦ ĐÍCH — page Phòng khám] Khách chủ đích tìm phòng khám. Vào việc nhanh, trả lời thẳng, chốt lịch + xin số sớm (làm theo mục 1B).',
+
+  // ── THÊM 17/09/2026 — 2 page mới đang chạy ads mà bot CHƯA từng phục vụ ──────
+  // Đo 16-17/09 (HiepLoi-Ads): 2 camp đổ 1.142.509đ/7 ngày vào đúng 2 page này, nhưng
+  // cả hai KHÔNG có trong PANCAKE_PAGE_*_ID ⇒ isPageEnabled()=false ⇒ webhook bị bỏ ở
+  // MỌI cửa (index.js, handleIncoming, comment.js, care-send.js). Bot chưa từng nghe.
+  // Tệp khách 2 page này KHÁC page Bs Trình: khách tới từ ad CLIP THEO MẶT BỆNH (không
+  // phải clip viral), nên đã có sẵn một triệu chứng cụ thể trong đầu — nhưng đo được
+  // click→nhắn tin chỉ 3,18–5,44% (page cũ 10,04%) ⇒ phần lớn còn đang DÒ, chưa chốt.
+  '1122755484264475': '[TỆP PAGE: ADS MỘT MẶT BỆNH — page Điều trị thoái hoá khớp gối] Khách bấm từ quảng cáo clip về KHỚP GỐI, hầu hết đang có sẵn triệu chứng gối và muốn biết mình bị gì. Bám đúng trục GỐI, hỏi triệu chứng gối trước (đau khi nào, lên xuống cầu thang, cứng khớp buổi sáng) rồi mới mời khám. Đừng mở rộng sang mặt bệnh khác khi khách chưa nhắc.',
+  '1226601910533190': '[TỆP PAGE: ADS TRIỆU CHỨNG — page BS Nhật Trình Cơ Xương Khớp] Khách bấm từ quảng cáo clip triệu chứng cơ xương khớp (vai, lưng, cổ tay, gối). Vào bằng đúng triệu chứng họ vừa xem, xác nhận "có phải tôi bị cái này không", rồi dẫn sang khám. Nhịp giữa: chủ đích hơn page clip viral nhưng chưa bằng page Phòng khám.',
 };
 
 // Chuẩn hóa câu để so trùng nguyên văn (chống bot lặp lại chính mình — lộ máy).
